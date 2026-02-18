@@ -29,7 +29,7 @@ use crate::{
 
 use bytes::Bytes;
 use hashbrown::{HashMap, HashSet};
-use rand_core::RngCore;
+use rand::Rng;
 
 #[cfg(feature = "std")]
 use parking_lot::RwLock;

@@ -25,7 +25,7 @@ use crate::{
 use futures::{future::FutureExt, Stream};
 use futures_channel::oneshot;
 use hashbrown::{HashMap, HashSet};
-use rand_core::RngCore;
+use rand::Rng;
 use thingbuf::mpsc;
 
 use alloc::{vec, vec::Vec};

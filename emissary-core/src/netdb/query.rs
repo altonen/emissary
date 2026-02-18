@@ -34,7 +34,7 @@ use crate::{
 use bytes::{BufMut, Bytes, BytesMut};
 use futures_channel::oneshot;
 use hashbrown::HashSet;
-use rand_core::RngCore;
+use rand::Rng;
 
 use alloc::{vec, vec::Vec};
 use core::{fmt, time::Duration};

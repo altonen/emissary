@@ -39,7 +39,7 @@ use crate::{
 
 use bytes::{BufMut, Bytes, BytesMut};
 use hashbrown::{HashMap, HashSet};
-use rand_core::RngCore;
+use rand::Rng;
 
 #[cfg(feature = "std")]
 use parking_lot::RwLock;

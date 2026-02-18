@@ -233,7 +233,7 @@ mod tests {
         },
     };
     use bytes::Bytes;
-    use rand_core::RngCore;
+    use rand::Rng;
     use std::time::Duration;
 
     #[tokio::test]

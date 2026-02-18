@@ -383,7 +383,7 @@ impl RouterInfoBuilder {
     /// Build [`RouterInfoBuilder`] into a [`RouterInfo].
     pub fn build(&mut self) -> (RouterInfo, StaticPrivateKey, SigningPrivateKey) {
         use crate::{runtime::mock::MockRuntime, Ntcp2Config, Ssu2Config};
-        use rand_core::RngCore;
+        use rand::Rng;
 
         let static_key = match self.static_key.take() {
             Some(key) => StaticPrivateKey::from_bytes(&key).unwrap(),

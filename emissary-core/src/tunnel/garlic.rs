@@ -37,7 +37,7 @@ use crate::{
 };
 
 #[cfg(test)]
-use rand_core::RngCore;
+use rand::Rng;
 #[cfg(test)]
 use zeroize::Zeroize;
 
@@ -258,7 +258,7 @@ mod tests {
         runtime::mock::MockRuntime,
     };
     use bytes::{BufMut, Bytes, BytesMut};
-    use rand_core::RngCore;
+    use rand::Rng;
     use std::time::Duration;
 
     #[test]

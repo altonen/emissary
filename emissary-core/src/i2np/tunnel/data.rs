@@ -30,7 +30,7 @@ use nom::{
     number::complete::{be_u16, be_u32, be_u8},
     Err, IResult,
 };
-use rand_core::RngCore;
+use rand::Rng;
 
 use alloc::{vec, vec::Vec};
 use core::{fmt, iter};

@@ -47,7 +47,7 @@ use crate::{
 use bytes::{Bytes, BytesMut};
 use futures::{Stream, StreamExt};
 use hashbrown::HashMap;
-use rand_core::RngCore;
+use rand::Rng;
 use thingbuf::mpsc::{channel, errors::TrySendError, Sender};
 
 use alloc::{collections::VecDeque, vec, vec::Vec};

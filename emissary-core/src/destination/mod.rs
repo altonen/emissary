@@ -44,7 +44,7 @@ use crate::{
 use bytes::Bytes;
 use futures::{FutureExt, Stream, StreamExt};
 use hashbrown::{HashMap, HashSet};
-use rand_core::RngCore;
+use rand::Rng;
 
 use alloc::{collections::VecDeque, vec::Vec};
 use core::{

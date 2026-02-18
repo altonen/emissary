@@ -59,7 +59,7 @@ impl BloomFilter {
 mod tests {
     use super::*;
     use crate::runtime::{mock::MockRuntime, Runtime};
-    use rand_core::RngCore;
+    use rand::Rng;
 
     #[test]
     fn insert_and_decay() {

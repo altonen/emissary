@@ -379,7 +379,7 @@ mod tests {
         tunnel::tests::{build_inbound_tunnel, connect_routers},
     };
     use core::time::Duration;
-    use rand_core::RngCore;
+    use rand::Rng;
 
     #[test]
     fn hop_roles() {

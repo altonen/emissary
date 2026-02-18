@@ -39,7 +39,7 @@ use crate::{
 
 use bytes::{BufMut, Bytes, BytesMut};
 use hashbrown::HashSet;
-use rand_core::RngCore;
+use rand::Rng;
 
 use alloc::{collections::VecDeque, vec::Vec};
 use core::{iter, marker::PhantomData, num::NonZeroUsize, time::Duration};

@@ -25,7 +25,7 @@ use crate::{
 };
 
 use hashbrown::HashSet;
-use rand_core::RngCore;
+use rand::Rng;
 
 use alloc::vec::Vec;
 use core::{

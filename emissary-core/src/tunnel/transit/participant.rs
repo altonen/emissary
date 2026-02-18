@@ -34,7 +34,7 @@ use crate::{
 
 use bytes::{BufMut, BytesMut};
 use futures::FutureExt;
-use rand_core::RngCore;
+use rand::Rng;
 use thingbuf::mpsc::Receiver;
 
 use core::{

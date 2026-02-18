@@ -249,7 +249,7 @@ impl Runtime for NoopRuntime {
     }
 
     fn rng() -> impl RngCore + CryptoRng {
-        rand_core::OsRng
+        rand::rngs::SysRng
     }
 
     fn join_set<T: Send + 'static>() -> Self::JoinSet<T> {

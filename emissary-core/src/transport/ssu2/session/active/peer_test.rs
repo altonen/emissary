@@ -518,7 +518,7 @@ mod tests {
         },
     };
     use bytes::{BufMut, Bytes, BytesMut};
-    use rand_core::RngCore;
+    use rand::Rng;
     use std::{
         net::{IpAddr, Ipv4Addr},
         time::Duration,

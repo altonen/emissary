@@ -33,7 +33,7 @@ use crate::{
 
 use bytes::{BufMut, Bytes, BytesMut};
 use curve25519_elligator2::{MapToPointVariant, Randomized};
-use rand_core::RngCore;
+use rand::Rng;
 use zeroize::Zeroize;
 
 use alloc::vec::Vec;

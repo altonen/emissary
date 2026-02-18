@@ -33,7 +33,7 @@ use crate::{
 use bytes::{BufMut, BytesMut};
 use futures::{FutureExt, Stream};
 use hashbrown::{HashMap, HashSet};
-use rand_core::RngCore;
+use rand::Rng;
 use thingbuf::mpsc::{with_recycle, Receiver, Sender};
 
 use alloc::{boxed::Box, collections::VecDeque, vec::Vec};

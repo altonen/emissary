@@ -46,7 +46,7 @@ use bytes::Bytes;
 use futures::FutureExt;
 use futures_channel::oneshot;
 use hashbrown::HashMap;
-use rand_core::RngCore;
+use rand::Rng;
 use thingbuf::mpsc::{channel, with_recycle, Receiver, Sender};
 
 use core::{

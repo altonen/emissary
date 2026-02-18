@@ -38,7 +38,7 @@ use bytes::{BufMut, Bytes, BytesMut};
 use futures::{FutureExt, StreamExt};
 use futures_channel::oneshot;
 use hashbrown::{HashMap, HashSet};
-use rand_core::RngCore;
+use rand::Rng;
 
 use alloc::vec::Vec;
 use core::{

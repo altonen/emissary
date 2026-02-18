@@ -24,7 +24,7 @@ use crate::{
     sam::protocol::streaming::packet::{Packet, PacketBuilder},
 };
 
-use rand_core::RngCore;
+use rand::Rng;
 
 use alloc::{collections::VecDeque, vec::Vec};
 

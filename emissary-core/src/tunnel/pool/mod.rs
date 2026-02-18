@@ -52,7 +52,7 @@ use futures::{
 use futures_channel::oneshot;
 use hashbrown::{HashMap, HashSet};
 use listener::ReceiveKind;
-use rand_core::RngCore;
+use rand::Rng;
 
 use alloc::vec::Vec;
 use core::{

@@ -28,7 +28,7 @@ use crate::{
 };
 
 use bytes::{BufMut, BytesMut};
-use rand_core::RngCore;
+use rand::Rng;
 
 use alloc::{format, vec, vec::Vec};
 

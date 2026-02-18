@@ -38,7 +38,7 @@ use crate::{
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
-use rand_core::RngCore;
+use rand::Rng;
 use zeroize::Zeroize;
 
 use alloc::{boxed::Box, vec::Vec};

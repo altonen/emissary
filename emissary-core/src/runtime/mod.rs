@@ -19,7 +19,7 @@
 // TODO: documentation
 
 use futures::Stream;
-use rand_core::{CryptoRng, RngCore};
+use rand::CryptoRng;
 
 use alloc::{boxed::Box, string::String, vec::Vec};
 use core::{
@@ -183,7 +183,7 @@ pub trait Runtime: Clone + Unpin + Send + 'static {
     fn now() -> Self::Instant;
 
     /// Return opaque type for generating random bytes.
-    fn rng() -> impl RngCore + CryptoRng;
+    fn rng() -> impl CryptoRng;
 
     /// Create new instance of a join set which contains a collection
     /// of futures that are polled together.

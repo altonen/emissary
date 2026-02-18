@@ -38,7 +38,7 @@ use crate::{
 };
 
 use futures::FutureExt;
-use rand_core::RngCore;
+use rand::Rng;
 use thingbuf::mpsc::Receiver;
 
 use alloc::vec::Vec;

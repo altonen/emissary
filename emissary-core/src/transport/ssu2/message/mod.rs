@@ -38,7 +38,7 @@ use nom::{
     number::complete::{be_u16, be_u32, be_u64, be_u8},
     Err, IResult,
 };
-use rand_core::RngCore;
+use rand::Rng;
 
 use alloc::{boxed::Box, vec, vec::Vec};
 use core::{

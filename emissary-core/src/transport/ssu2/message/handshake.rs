@@ -26,7 +26,7 @@ use crate::{
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
-use rand_core::RngCore;
+use rand::Rng;
 
 use alloc::{vec, vec::Vec};
 use core::net::SocketAddr;

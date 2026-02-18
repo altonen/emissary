@@ -852,7 +852,7 @@ mod tests {
         runtime::mock::MockRuntime,
         transport::ssu2::session::pending::inbound::{InboundSsu2Context, InboundSsu2Session},
     };
-    use rand_core::RngCore;
+    use rand::Rng;
     use std::{net::Ipv4Addr, time::Duration};
     use thingbuf::mpsc::channel;
 

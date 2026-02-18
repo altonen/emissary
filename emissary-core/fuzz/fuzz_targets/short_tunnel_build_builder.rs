@@ -25,7 +25,7 @@ fuzz_target!(|buffer: Vec<(u32, u32, [u8; 32], u32, u32, u32)>| {
             .with_request_time(values.3)
             .with_request_expiration(values.4)
             .with_next_message_id(MessageId::from(values.5))
-            .serialize(&mut rand_core::OsRng);
+            .serialize(&mut rand::rngs::SysRng);
 
         assert!(TunnelBuildRecord::parse(&serialized).is_ok());
     }

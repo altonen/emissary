@@ -927,7 +927,7 @@ mod tests {
         },
     };
     use bytes::Bytes;
-    use rand_core::RngCore;
+    use rand::Rng;
     use thingbuf::mpsc::{channel, Sender};
 
     #[tokio::test]

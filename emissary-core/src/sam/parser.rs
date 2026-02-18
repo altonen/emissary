@@ -33,7 +33,7 @@ use nom::{
     sequence::{delimited, pair, preceded, separated_pair, tuple},
     Err, IResult, Parser,
 };
-use rand_core::RngCore;
+use rand::Rng;
 
 use alloc::{
     borrow::ToOwned,

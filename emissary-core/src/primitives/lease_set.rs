@@ -494,7 +494,7 @@ mod tests {
         error::parser::OfflineSignatureParseError,
         runtime::{mock::MockRuntime, Runtime},
     };
-    use rand_core::RngCore;
+    use rand::Rng;
 
     #[test]
     fn serialize_and_parse_leaset() {

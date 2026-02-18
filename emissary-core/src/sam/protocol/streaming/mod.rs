@@ -40,7 +40,7 @@ use crate::{
 use bytes::{BufMut, BytesMut};
 use futures::{FutureExt, StreamExt};
 use hashbrown::{HashMap, HashSet};
-use rand_core::RngCore;
+use rand::Rng;
 use thingbuf::mpsc::{channel, Receiver, Sender};
 
 use alloc::{boxed::Box, collections::VecDeque, format, string::String, vec, vec::Vec};

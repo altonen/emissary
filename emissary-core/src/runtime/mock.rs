@@ -362,7 +362,7 @@ impl Runtime for MockRuntime {
 
     /// Return opaque type for generating random bytes.
     fn rng() -> impl RngCore + CryptoRng {
-        rand_core::OsRng
+        rand::rngs::SysRng
     }
 
     /// Create new instance of a join set which contains a collection

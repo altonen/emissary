@@ -25,7 +25,7 @@ use data_encoding::{Encoding, Specification};
 use ed25519_dalek::Signer;
 use lazy_static::lazy_static;
 use p256::ecdsa::signature::Verifier as _;
-use rand_core::{CryptoRng, RngCore};
+use rand::rand_core::{CryptoRng, RngCore};
 use zeroize::Zeroize;
 
 use alloc::{string::String, vec::Vec};
@@ -192,8 +192,8 @@ pub enum StaticPrivateKey {
 
 impl StaticPrivateKey {
     /// Create new [`StaticPrivateKey`].
-    pub fn random(csprng: impl RngCore + CryptoRng) -> Self {
-        Self::X25519(x25519_dalek::StaticSecret::random_from_rng(csprng))
+    pub fn random(mut csprng: impl CryptoRng) -> Self {
+        Self::X25519(x25519_dalek::StaticSecret::random_from_rng(&mut csprng))
     }
 
     /// Get public key.
@@ -250,8 +250,8 @@ pub enum EphemeralPrivateKey {
 
 impl EphemeralPrivateKey {
     /// Create new [`EphemeralPrivateKey`].
-    pub fn random(csprng: impl RngCore + CryptoRng) -> Self {
-        Self::X25519(x25519_dalek::ReusableSecret::random_from_rng(csprng))
+    pub fn random(mut csprng: impl CryptoRng) -> Self {
+        Self::X25519(x25519_dalek::ReusableSecret::random_from_rng(&mut csprng))
     }
 
     /// Get associated public key.
@@ -340,7 +340,7 @@ pub enum SigningPrivateKey {
 
 impl SigningPrivateKey {
     /// Generate random [`SigningPrivateKey`].
-    pub fn random(mut csprng: impl RngCore + CryptoRng) -> Self {
+    pub fn random(mut csprng: impl CryptoRng + RngCore) -> Self {
         Self::Ed25519(ed25519_dalek::SigningKey::generate(&mut csprng))
     }
 

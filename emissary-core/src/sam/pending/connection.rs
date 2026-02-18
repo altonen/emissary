@@ -30,7 +30,7 @@ use crate::{
 use bytes::{BufMut, BytesMut};
 use futures::{FutureExt, StreamExt};
 use hashbrown::HashMap;
-use rand_core::RngCore;
+use rand::Rng;
 
 use alloc::{boxed::Box, format, string::String, sync::Arc};
 use core::{

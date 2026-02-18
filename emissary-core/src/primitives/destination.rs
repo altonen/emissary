@@ -36,7 +36,7 @@ use nom::{
     sequence::tuple,
     Err, IResult,
 };
-use rand_core::RngCore;
+use rand::Rng;
 
 use alloc::{string::String, sync::Arc, vec::Vec};
 use core::fmt;
