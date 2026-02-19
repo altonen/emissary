@@ -708,7 +708,6 @@ impl NoiseContext {
 
         temp_key.zeroize();
         shared_secret.zeroize();
-        local_ephemeral.zeroize();
 
         OutboundSession {
             tunnel_keys: TunnelKeys::new(chaining_key, hop_role),
@@ -807,7 +806,6 @@ impl NoiseContext {
         temp_key.zeroize();
         shared_secret.zeroize();
         chaining_key.zeroize();
-        ephemeral_secret.zeroize();
 
         (aead_key, state)
     }

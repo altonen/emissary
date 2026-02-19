@@ -267,13 +267,6 @@ impl EphemeralPrivateKey {
             Self::X25519(key) => key.diffie_hellman(public_key.as_ref()).to_bytes().to_vec(),
         }
     }
-
-    /// Zeroize private key.
-    pub fn zeroize(self) {
-        match self {
-            Self::X25519(mut key) => key.zeroize(),
-        }
-    }
 }
 
 impl SecretKey for EphemeralPrivateKey {
