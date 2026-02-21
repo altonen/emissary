@@ -30,6 +30,7 @@ use crate::{
             message::{Block, HeaderKind, HeaderReader},
             metrics::*,
             peer_test::types::PeerTestHandle,
+            relay::types::RelayHandle,
             session::{
                 active::{
                     ack::RemoteAckManager, fragment::FragmentHandler,
@@ -62,6 +63,7 @@ use core::{
 mod ack;
 mod fragment;
 mod peer_test;
+mod relay;
 mod transmission;
 
 // TODO: move code from `TransmissionManager` into here?
@@ -217,6 +219,12 @@ pub struct Ssu2Session<R: Runtime> {
     /// Key context for inbound packets.
     recv_key_ctx: KeyContext,
 
+    /// Relay handle.
+    relay_handle: RelayHandle,
+
+    /// Remote ACK manager.
+    remote_ack: RemoteAckManager,
+
     /// Resend timer.
     resend_timer: Option<R::Timer>,
 
@@ -253,6 +261,7 @@ impl<R: Runtime> Ssu2Session<R> {
         transport_tx: Sender<SubsystemEvent>,
         router_ctx: RouterContext<R>,
         peer_test_handle: PeerTestHandle<R>,
+        relay_handle: RelayHandle,
     ) -> Self {
         let (msg_tx, msg_rx) = with_recycle(CMD_CHANNEL_SIZE, OutboundMessageRecycle::default());
         let metrics = router_ctx.metrics_handle().clone();
@@ -278,6 +287,8 @@ impl<R: Runtime> Ssu2Session<R> {
             pending_router_info: None,
             pkt_rx: context.pkt_rx,
             recv_key_ctx: context.recv_key_ctx,
+            relay_handle,
+            remote_ack: RemoteAckManager::new(),
             resend_timer: None,
             router_ctx,
             router_id: context.router_id.clone(),
@@ -475,6 +486,26 @@ impl<R: Runtime> Ssu2Session<R> {
 
                     self.pending_router_info = Some(router_info);
                 }
+                Block::RelayRequest {
+                    nonce,
+                    relay_tag,
+                    timestamp,
+                    address,
+                    message,
+                    signature,
+                } => {
+                    self.remote_ack.register_pkt(pkt_num);
+                    self.ack_timer.schedule_ack(self.transmission.round_trip_time());
+                    self.relay_handle.handle_relay_request(
+                        self.router_id.clone(),
+                        nonce,
+                        relay_tag,
+                        timestamp,
+                        address,
+                        message,
+                        signature,
+                    );
+                }
                 block => {
                     tracing::warn!(
                         target: LOG_TARGET,
@@ -618,7 +649,7 @@ impl<R: Runtime> Future for Ssu2Session<R> {
             self.resend_timer = Some(R::timer(SSU2_RESEND_TIMEOUT));
         }
 
-        // poll command from `PeerTestManager`
+        // poll commands from `PeerTestManager`
         //
         // handling a command (most often) results in outbound message which is why this
         // is done before draining transmission from pending packets
@@ -627,6 +658,18 @@ impl<R: Runtime> Future for Ssu2Session<R> {
                 Poll::Pending => break,
                 Poll::Ready(None) => return Poll::Ready(TerminationReason::RouterShutdown),
                 Poll::Ready(Some(command)) => self.handle_peer_test_command(command),
+            }
+        }
+
+        // poll commands from `RelayManager`
+        //
+        // same not as above, commands result in outbound messages which is why they should be
+        // handled before sending any packets
+        loop {
+            match self.relay_handle.poll_next_unpin(cx) {
+                Poll::Pending => break,
+                Poll::Ready(None) => return Poll::Ready(TerminationReason::RouterShutdown),
+                Poll::Ready(Some(command)) => self.handle_relay_command(command),
             }
         }
 
@@ -758,15 +801,25 @@ mod tests {
             },
             verifying_key: remote_signing_key.public(),
         };
-        let (event_tx, _event_rx) = with_recycle(16, PeerTestEventRecycle::default());
-        let handle = PeerTestHandle::new(event_tx);
+        let (peer_test_event_tx, _peer_test_event_rx) =
+            with_recycle(16, PeerTestEventRecycle::default());
+        let peer_test_handle = PeerTestHandle::new(peer_test_event_tx);
+        let (relay_event_tx, _relay_event_rx) = channel(16);
+        let relay_handle = RelayHandle::new(relay_event_tx);
 
         let cmd_tx = {
             let (transport_tx, transport_rx) = channel(16);
 
             tokio::spawn(
-                Ssu2Session::<MockRuntime>::new(ctx, socket, transport_tx, router_ctx, handle)
-                    .run(),
+                Ssu2Session::<MockRuntime>::new(
+                    ctx,
+                    socket,
+                    transport_tx,
+                    router_ctx,
+                    peer_test_handle,
+                    relay_handle,
+                )
+                .run(),
             );
 
             match transport_rx.recv().await.unwrap() {
@@ -916,13 +969,23 @@ mod tests {
             },
             verifying_key: remote_signing_key.public(),
         };
-        let (event_tx, _event_rx) = with_recycle(16, PeerTestEventRecycle::default());
-        let handle = PeerTestHandle::new(event_tx);
+        let (peer_test_event_tx, _peer_test_event_rx) =
+            with_recycle(16, PeerTestEventRecycle::default());
+        let peer_test_handle = PeerTestHandle::new(peer_test_event_tx);
+        let (relay_event_tx, _relay_event_rx) = channel(16);
+        let relay_handle = RelayHandle::new(relay_event_tx);
 
         let (cmd_tx, handle) = {
             let handle = tokio::spawn(
-                Ssu2Session::<MockRuntime>::new(ctx, socket, transport_tx, router_ctx, handle)
-                    .run(),
+                Ssu2Session::<MockRuntime>::new(
+                    ctx,
+                    socket,
+                    transport_tx,
+                    router_ctx,
+                    peer_test_handle,
+                    relay_handle,
+                )
+                .run(),
             );
 
             match transport_rx.recv().await.unwrap() {

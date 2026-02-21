@@ -21,7 +21,7 @@ use crate::{
     primitives::RouterId,
     runtime::{Counter, Histogram, Instant, MetricsHandle, Runtime},
     transport::ssu2::{
-        message::data::{DataMessageBuilder, MessageKind, PeerTestBlock},
+        message::data::{DataMessageBuilder, MessageKind, PeerTestBlock, RelayBlock},
         metrics::*,
         session::{
             active::{ack::AckInfo, RemoteAckManager},
@@ -210,6 +210,12 @@ enum SegmentKind {
         router_info: Option<Vec<u8>>,
     },
 
+    /// Relay block.
+    Relay {
+        /// Relay block.
+        relay_block: RelayBlock,
+    },
+
     /// `RouterInfo` block.
     RouterInfo {
         /// Serialized `RouterInfo`.
@@ -250,6 +256,7 @@ impl<'a> From<&'a SegmentKind> for MessageKind<'a> {
                 peer_test_block,
                 router_info: router_info.as_deref(),
             },
+            SegmentKind::Relay { relay_block } => Self::Relay { relay_block },
             SegmentKind::RouterInfo { router_info } => Self::RouterInfo { router_info },
         }
     }
@@ -318,6 +325,9 @@ pub enum TransmissionMessage {
     /// Peer test message.
     PeerTest(PeerTestBlock),
 
+    /// Relay message.
+    Relay(RelayBlock),
+
     /// Peer test message with `RouterInfo`.
     ///
     /// May be split into two datagrams.
@@ -336,6 +346,12 @@ impl From<PeerTestBlock> for TransmissionMessage {
     }
 }
 
+impl From<RelayBlock> for TransmissionMessage {
+    fn from(value: RelayBlock) -> Self {
+        Self::Relay(value)
+    }
+}
+
 impl From<(PeerTestBlock, Vec<u8>)> for TransmissionMessage {
     fn from(value: (PeerTestBlock, Vec<u8>)) -> Self {
         Self::PeerTestWithRouterInfo(value)
@@ -351,6 +367,8 @@ impl fmt::Debug for TransmissionMessage {
                 .finish(),
             Self::PeerTest(block) =>
                 f.debug_struct("TransmissionMessage::PeerTest").field("block", &block).finish(),
+            Self::Relay(block) =>
+                f.debug_struct("TransmissionMessage::Relay").field("block", &block).finish(),
             Self::PeerTestWithRouterInfo((block, _)) => f
                 .debug_struct("TransmissionMessage::PeerTestWithRouterInfo")
                 .field("block", &block)
@@ -464,6 +482,11 @@ impl<R: Runtime> TransmissionManager<R> {
                     peer_test_block,
                     router_info: None,
                 });
+            }
+            TransmissionMessage::Relay(relay_block) => {
+                debug_assert!(self.fits_in_datagram(relay_block.serialized_len()));
+
+                self.pending.push_back(SegmentKind::Relay { relay_block });
             }
             TransmissionMessage::PeerTestWithRouterInfo((peer_test_block, router_info)) => {
                 if self.fits_in_datagram(

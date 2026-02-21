@@ -208,17 +208,25 @@ pub struct Reader<'a> {
     /// Read access to router infos.
     router_infos: RwLockReadGuard<'a, HashMap<RouterId, RouterInfo>>,
 
+    /// Read access to serialized router infos.
+    raw_router_infos: RwLockReadGuard<'a, HashMap<RouterId, Vec<u8>>>,
+
     /// Read access to profiles.
     profiles: RwLockReadGuard<'a, HashMap<RouterId, Profile>>,
 }
 
 impl Reader<'_> {
-    /// Get reference to [`RouterInfo`].
+    /// Get reference to router's router info.
     pub fn router_info(&self, router_id: &RouterId) -> Option<&RouterInfo> {
         self.router_infos.get(router_id)
     }
 
-    /// Get reference to [`Profile`]
+    /// Get a copy of serialized router info.
+    pub fn raw_router_info(&self, router_id: &RouterId) -> Option<Vec<u8>> {
+        self.raw_router_infos.get(router_id).cloned()
+    }
+
+    /// Get reference to router's profile.
     pub fn profile(&self, router_id: &RouterId) -> Option<&Profile> {
         self.profiles.get(router_id)
     }
@@ -237,6 +245,8 @@ pub struct ProfileStorage<R: Runtime> {
     profiles: Arc<RwLock<HashMap<RouterId, Profile>>>,
 
     /// Raw router infos.
+    //
+    // TODO: store as `Bytes`
     raw_router_infos: Arc<RwLock<HashMap<RouterId, Vec<u8>>>>,
 
     /// Router infos.
@@ -566,6 +576,7 @@ impl<R: Runtime> ProfileStorage<R> {
     pub fn reader(&self) -> Reader<'_> {
         Reader {
             router_infos: self.routers.read(),
+            raw_router_infos: self.raw_router_infos.read(),
             profiles: self.profiles.read(),
         }
     }

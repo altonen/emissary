@@ -46,7 +46,7 @@ use crate::{
 };
 
 use bytes::{Bytes, BytesMut};
-use futures::{Stream, StreamExt};
+use futures::{FutureExt, Stream, StreamExt};
 use hashbrown::HashMap;
 use rand::Rng;
 use thingbuf::mpsc::{channel, errors::TrySendError, Sender};
@@ -539,11 +539,13 @@ impl<R: Runtime> Ssu2Socket<R> {
             }
         };
 
-        // get handle to peer test manager.
-        let handle = self.peer_test_manager.handle();
+        // get handles to `PeerTestManager` and `RelayManager`
+        let peer_test_handle = self.peer_test_manager.handle();
+        let relay_handle = self.relay_manager.handle();
 
         // register session to `PeerTestManager`
-        self.peer_test_manager.add_session(&context.router_id, handle.cmd_tx());
+        self.peer_test_manager
+            .add_session(&context.router_id, peer_test_handle.cmd_tx());
 
         self.active_sessions.push(
             Ssu2Session::<R>::new(
@@ -551,7 +553,8 @@ impl<R: Runtime> Ssu2Socket<R> {
                 self.socket.clone(),
                 self.transport_tx.clone(),
                 self.router_ctx.clone(),
-                handle,
+                peer_test_handle,
+                relay_handle,
             )
             .run(),
         );
@@ -985,6 +988,10 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
             }
         }
 
+        if this.relay_manager.poll_unpin(cx).is_ready() {
+            return Poll::Ready(None);
+        }
+
         self.waker = Some(cx.waker().clone());
         Poll::Pending
     }
@@ -1057,14 +1064,16 @@ mod tests {
             },
             verifying_key: SigningPublicKey::from_bytes(&[0x22; 32]).unwrap(),
         };
-        let handle = socket.peer_test_manager.handle();
+        let peer_test_handle = socket.peer_test_manager.handle();
+        let relay_handle = socket.relay_manager.handle();
         socket.active_sessions.push(
             Ssu2Session::<MockRuntime>::new(
                 context,
                 udp_socket,
                 socket.transport_tx.clone(),
                 socket.router_ctx.clone(),
-                handle,
+                peer_test_handle,
+                relay_handle,
             )
             .run(),
         );

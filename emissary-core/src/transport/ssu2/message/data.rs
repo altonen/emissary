@@ -22,7 +22,10 @@ use crate::{
     primitives::RouterId,
     runtime::Runtime,
     transport::{
-        ssu2::{message::*, peer_test::types::RejectionReason, session::KeyContext},
+        ssu2::{
+            message::*, peer_test::types::RejectionReason as PeerTestRejectionReason,
+            relay::types::RejectionReason as RelayRejectionReason, session::KeyContext,
+        },
         TerminationReason,
     },
 };
@@ -91,6 +94,12 @@ pub enum MessageKind<'a> {
         router_info: Option<&'a [u8]>,
     },
 
+    /// Relay block.
+    Relay {
+        /// Relay block.
+        relay_block: &'a RelayBlock,
+    },
+
     /// Router info block.
     RouterInfo {
         /// Serialized `RouterInfo`.
@@ -112,7 +121,7 @@ pub enum PeerTestBlock {
     /// Bob rejected Alice's peer test request.
     BobReject {
         /// Rejection reason.
-        reason: RejectionReason,
+        reason: PeerTestRejectionReason,
 
         /// Message.
         ///
@@ -144,7 +153,7 @@ pub enum PeerTestBlock {
         /// Rejection reason.
         ///
         /// `None` if Charlie accepted the peer test request.
-        rejection: Option<RejectionReason>,
+        rejection: Option<PeerTestRejectionReason>,
     },
 
     /// Relay Charlie's response to Alice's request as Bob.
@@ -155,7 +164,7 @@ pub enum PeerTestBlock {
         /// Rejection reason.
         ///
         /// `None` if Charlie accepted the peer test request.
-        rejection: Option<RejectionReason>,
+        rejection: Option<PeerTestRejectionReason>,
 
         /// Router ID of Charlie.
         router_id: RouterId,
@@ -192,7 +201,6 @@ impl fmt::Debug for PeerTestBlock {
     }
 }
 
-#[allow(unused)]
 impl PeerTestBlock {
     /// Get serialized length of the block.
     pub fn serialized_len(&self) -> usize {
@@ -206,6 +214,48 @@ impl PeerTestBlock {
             Self::CharlieResponse { message, .. } => overhead + message.len(),
             Self::RelayCharlieResponse { message, .. } =>
                 overhead + message.len() + ROUTER_HASH_LEN,
+        }
+    }
+}
+
+/// Relay block.
+pub enum RelayBlock {
+    /// Relay response from Bob or Charlie.
+    Response {
+        /// Rejection reason.
+        ///
+        /// `None` if accepted.
+        rejection: Option<RelayRejectionReason>,
+
+        /// Message.
+        message: Vec<u8>,
+
+        ///
+        signature: Vec<u8>,
+    },
+}
+
+impl RelayBlock {
+    /// Get serialized length of the block.
+    pub fn serialized_len(&self) -> usize {
+        // block type + block length + flag + code;
+        let overhead = 1 + 2 + 1 + 1;
+
+        match self {
+            Self::Response {
+                message, signature, ..
+            } => overhead + message.len() + signature.len(),
+        }
+    }
+}
+
+impl fmt::Debug for RelayBlock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Response { rejection, .. } => f
+                .debug_struct("RelayBlock::Response")
+                .field("rejection", &rejection)
+                .finish_non_exhaustive(),
         }
     }
 }
@@ -431,6 +481,20 @@ impl<'a> DataMessageBuilder<'a> {
                         }
                     }
                 }
+                Some(MessageKind::Relay { relay_block }) => match relay_block {
+                    RelayBlock::Response {
+                        rejection,
+                        message,
+                        signature,
+                    } => {
+                        out.put_u8(BlockType::RelayResponse.as_u8());
+                        out.put_u16((2 + message.len() + signature.len()) as u16);
+                        out.put_u8(0);
+                        out.put_u8(rejection.map_or(0, |reason| reason.as_bob()));
+                        out.put_slice(&message);
+                        out.put_slice(&signature);
+                    }
+                },
                 Some(MessageKind::RouterInfo { router_info }) => {
                     out.put_u8(BlockType::RouterInfo.as_u8());
                     out.put_u16((2 + router_info.len()) as u16);

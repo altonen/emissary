@@ -366,8 +366,25 @@ pub enum Block {
     },
 
     /// Relay request.
-    #[allow(unused)]
-    RelayRequest {},
+    RelayRequest {
+        /// Random nonce
+        nonce: u32,
+
+        /// Relay tag from Charlie's router info.
+        relay_tag: u32,
+
+        /// Timestamp as seconds since UNIX epoch.
+        timestamp: u32,
+
+        /// Alice's socket address.
+        address: SocketAddr,
+
+        /// Message, i.e., the part of `RelayRequest` covered by `signature`.
+        message: Vec<u8>,
+
+        /// Signature for `message`.
+        signature: Vec<u8>,
+    },
 
     /// Relay response.
     #[allow(unused)]
@@ -1042,6 +1059,65 @@ impl Block {
         Ok((rest, Block::RelayTagRequest))
     }
 
+    /// Parse [`MessageBlock::RelayRequest`].
+    fn parse_relay_request(input: &[u8]) -> IResult<&[u8], Block, Ssu2ParseError> {
+        let (rest, size) = be_u16(input)?;
+        let (rest, flag) = be_u8(rest)?;
+
+        // keep track of message start so it can be sent unmodified to alice/charlie
+        //
+        // <https://i2p.net/en/docs/specs/ssu2/#relayrequest>
+        let message_start = rest;
+
+        let (rest, nonce) = be_u32(rest)?;
+        let (rest, relay_tag) = be_u32(rest)?;
+        let (rest, timestamp) = be_u32(rest)?;
+        let (rest, _version) = be_u8(rest)?;
+        let (rest, address_size) = be_u8(rest)?;
+        let (rest, address) = match address_size {
+            6 => {
+                let (rest, port) = be_u16(rest)?;
+                let (rest, address) = be_u32(rest)?;
+
+                (
+                    rest,
+                    SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(address), port)),
+                )
+            }
+            18 => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    "ipv6 not supported"
+                );
+                return Err(Err::Error(Ssu2ParseError::InvalidBitstream));
+            }
+            _ => return Err(Err::Error(Ssu2ParseError::InvalidBitstream)),
+        };
+        let (rest, signature) = take(ED25519_SIGNATURE_LEN)(rest)?;
+
+        Ok((
+            rest,
+            Block::RelayRequest {
+                nonce,
+                relay_tag,
+                timestamp,
+                address,
+                message: {
+                    let message_end =
+                        4usize // nonce
+                            .saturating_add(4) // relay tag
+                            .saturating_add(4) // timestamp
+                            .saturating_add(1) // version
+                            .saturating_add(1) // address size
+                            .saturating_add(address_size as usize);
+
+                    message_start[..message_end].to_vec()
+                },
+                signature: signature.to_vec(),
+            },
+        ))
+    }
+
     /// Attempt to parse unsupported block from `input`
     fn parse_unsupported_block(input: &[u8]) -> IResult<&[u8], Block, Ssu2ParseError> {
         let (rest, size) = be_u16(input)?;
@@ -1073,6 +1149,7 @@ impl Block {
             Some(BlockType::PeerTest) => Self::parse_peer_test(rest),
             Some(BlockType::Address) => Self::parse_address(rest),
             Some(BlockType::RelayTagRequest) => Self::parse_relay_tag_request(rest),
+            Some(BlockType::RelayRequest) => Self::parse_relay_request(rest),
             Some(block_type) => {
                 tracing::warn!(
                     target: LOG_TARGET,
@@ -1136,7 +1213,14 @@ impl Block {
                     IpAddr::V4(_) => 2usize + 4usize, // port + address
                     IpAddr::V6(_) => 2usize + 16usize, // port + address
                 },
-                block_type => todo!("unsupported block type: {block_type:?}"),
+                Block::RelayTag { relay_tag } => 4, // relay tag (u32)
+                Block::RelayTagRequest => 0,
+                Block::RelayRequest { .. } => todo!("Block::RelayRequest"),
+                Block::RelayResponse {  } => todo!("Block::RelayResponse"),
+                Block::RelayIntro {  } => todo!("Block::RelayIntro"),
+                Block::PeerTest { .. } => todo!("Block::PeerTest"),
+                Block::NextNonce {  } => todo!("Block::NextNonce"),
+                Block::Unsupported => unreachable!(),
             }
     }
 

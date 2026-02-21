@@ -472,6 +472,14 @@ impl<R: Runtime> InboundSsu2Session<R> {
                 let relay_tag = self.relay_tag_requested.tag();
                 self.relay_tag_requested = RelayTagRequested::Yes(relay_tag);
 
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    dst_id = ?self.dst_id,
+                    src_id = ?self.src_id,
+                    ?relay_tag,
+                    "include relay tag in SessionCreated",
+                );
+
                 message.with_relay_tag(relay_tag)
             } else {
                 message
