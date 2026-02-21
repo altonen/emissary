@@ -30,6 +30,7 @@ use crate::{
                 handshake::{RetryBuilder, SessionCreatedBuilder},
                 Block, HeaderKind, HeaderReader,
             },
+            relay::types::RelayTagRequested,
             session::{
                 active::Ssu2SessionContext,
                 pending::{
@@ -89,6 +90,9 @@ pub struct InboundSsu2Context<R: Runtime> {
 
     /// Packet number.
     pub pkt_num: u32,
+
+    /// Relay tag, if requested by remote router.
+    pub relay_tag: u32,
 
     /// RX channel for receiving datagrams from `Ssu2Socket`.
     pub rx: Receiver<Packet>,
@@ -174,6 +178,12 @@ pub struct InboundSsu2Session<R: Runtime> {
     /// Packet retransmitter.
     pkt_retransmitter: PacketRetransmitter<R>,
 
+    /// Has remote router requested a relay tag from us?
+    ///
+    /// Initialized to `RelayTagRequested::No(tag)` and upgraded to `RelayTagRequested::Yes(tag)`
+    /// if a tag request is received.
+    relay_tag_requested: RelayTagRequested,
+
     /// RX channel for receiving datagrams from `Ssu2Socket`.
     rx: Option<Receiver<Packet>>,
 
@@ -214,6 +224,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
             net_id,
             pkt,
             pkt_num,
+            relay_tag,
             rx,
             socket,
             src_id,
@@ -248,6 +259,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
                 TryInto::<[u8; 32]>::try_into(state.to_vec()).expect("to succeed"),
             ),
             pkt_retransmitter: PacketRetransmitter::inactive(SESSION_REQUEST_TIMEOUT),
+            relay_tag_requested: RelayTagRequested::No(relay_tag),
             rx: Some(rx),
             socket,
             src_id,
@@ -450,7 +462,20 @@ impl<R: Runtime> InboundSsu2Session<R> {
             .with_dst_id(self.src_id)
             .with_src_id(self.dst_id)
             .with_net_id(self.net_id)
-            .with_ephemeral_key(pk.clone())
+            .with_ephemeral_key(pk.clone());
+
+        // check if remoted requested relay from us
+        //
+        // if so, include the relay tag in the `SessionCreated` message
+        let mut message =
+            if blocks.iter().any(|block| core::matches!(block, Block::RelayTagRequest)) {
+                let relay_tag = self.relay_tag_requested.tag();
+                self.relay_tag_requested = RelayTagRequested::Yes(relay_tag);
+
+                message.with_relay_tag(relay_tag)
+            } else {
+                message
+            }
             .build::<R>();
 
         // MixHash(header), MixHash(bepk)
@@ -630,6 +655,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
             k_header_2,
             pkt,
             router_info,
+            relay_tag_request: self.relay_tag_requested,
             serialized,
             started: self.started,
             target: self.address,
@@ -664,8 +690,9 @@ impl<R: Runtime> InboundSsu2Session<R> {
                 Ok(Some(PendingSsu2SessionStatus::SessionTerminated {
                     address: None,
                     connection_id: self.dst_id,
-                    started: self.started,
+                    relay_tag: Some(self.relay_tag_requested.tag()),
                     router_id: None,
+                    started: self.started,
                 }))
             }
         }
@@ -694,6 +721,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
                         return PendingSsu2SessionStatus::SessionTerminated {
                             address: None,
                             connection_id: self.dst_id,
+                            relay_tag: Some(self.relay_tag_requested.tag()),
                             router_id: None,
                             started: self.started,
                         };
@@ -786,6 +814,7 @@ impl<R: Runtime> Future for InboundSsu2Session<R> {
                     return Poll::Ready(PendingSsu2SessionStatus::SessionTerminated {
                         address: None,
                         connection_id: self.dst_id,
+                        relay_tag: Some(self.relay_tag_requested.tag()),
                         router_id: None,
                         started: self.started,
                     });
@@ -981,8 +1010,9 @@ mod tests {
             net_id: 2u8,
             pkt,
             pkt_num,
-            socket: inbound_socket.clone(),
+            relay_tag: 1337,
             rx: inbound_session_rx,
+            socket: inbound_socket.clone(),
             src_id,
             state: Bytes::from(inbound_state),
             static_key: inbound_static_key.clone(),

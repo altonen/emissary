@@ -405,12 +405,13 @@ pub enum Block {
     },
 
     /// Relay tag request.
-    #[allow(unused)]
-    RelayTagRequest {},
+    RelayTagRequest,
 
     /// Relay tag.
-    #[allow(unused)]
-    RelayTag {},
+    RelayTag {
+        /// Relay tag.
+        relay_tag: u32,
+    },
 
     /// New token.
     NewToken {
@@ -1034,6 +1035,13 @@ impl Block {
         ))
     }
 
+    /// Parse [`MessageBlock::RelayTagRequest`].
+    fn parse_relay_tag_request(input: &[u8]) -> IResult<&[u8], Block, Ssu2ParseError> {
+        let (rest, _size) = be_u16(input)?;
+
+        Ok((rest, Block::RelayTagRequest))
+    }
+
     /// Attempt to parse unsupported block from `input`
     fn parse_unsupported_block(input: &[u8]) -> IResult<&[u8], Block, Ssu2ParseError> {
         let (rest, size) = be_u16(input)?;
@@ -1064,6 +1072,7 @@ impl Block {
             Some(BlockType::Padding) => Self::parse_padding(rest),
             Some(BlockType::PeerTest) => Self::parse_peer_test(rest),
             Some(BlockType::Address) => Self::parse_address(rest),
+            Some(BlockType::RelayTagRequest) => Self::parse_relay_tag_request(rest),
             Some(block_type) => {
                 tracing::warn!(
                     target: LOG_TARGET,
@@ -1192,6 +1201,12 @@ impl Block {
                 out.put_u16(9u16);
                 out.put_u64(num_valid_pkts);
                 out.put_u8(reason);
+                out
+            }
+            Self::RelayTag { relay_tag } => {
+                out.put_u8(BlockType::RelayTag.as_u8());
+                out.put_u16(4);
+                out.put_u32(relay_tag);
                 out
             }
             block_type => todo!("unsupported block type: {block_type:?}"),

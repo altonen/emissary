@@ -19,7 +19,7 @@
 use crate::{
     primitives::{RouterId, RouterInfo},
     runtime::{Instant, Runtime},
-    transport::ssu2::session::active::Ssu2SessionContext,
+    transport::ssu2::{relay::types::RelayTagRequested, session::active::Ssu2SessionContext},
 };
 
 use bytes::{Bytes, BytesMut};
@@ -74,6 +74,9 @@ pub enum PendingSsu2SessionStatus<R: Runtime> {
 
         /// Socket address of the remote router.
         target: SocketAddr,
+
+        /// Did remote router request a relay tag from us during handshake?
+        relay_tag_request: RelayTagRequested,
     },
 
     /// New outbound session.
@@ -109,6 +112,13 @@ pub enum PendingSsu2SessionStatus<R: Runtime> {
 
         /// When was the handshake started.
         started: R::Instant,
+
+        /// Relay tag that was allocated for the session.
+        ///
+        /// Always `None` for outbound sessions.
+        ///
+        /// Always `Some(tag)` for inbound sessions.
+        relay_tag: Option<u32>,
     },
 
     /// Pending session terminated due to timeout.

@@ -718,6 +718,7 @@ impl<R: Runtime> OutboundSsu2Session<R> {
                 Ok(Some(PendingSsu2SessionStatus::SessionTerminated {
                     address: Some(self.address),
                     connection_id: self.src_id,
+                    relay_tag: None,
                     router_id: Some(self.router_id.clone()),
                     started: self.started,
                 }))
@@ -795,6 +796,7 @@ impl<R: Runtime> Future for OutboundSsu2Session<R> {
                     return Poll::Ready(PendingSsu2SessionStatus::SessionTerminated {
                         address: Some(self.address),
                         connection_id: self.src_id,
+                        relay_tag: None,
                         router_id: Some(self.router_id.clone()),
                         started: self.started,
                     });
@@ -990,6 +992,7 @@ mod tests {
             pkt,
             pkt_num,
             socket: inbound_socket.clone(),
+            relay_tag: 1337,
             rx: inbound_session_rx,
             src_id,
             state: Bytes::from(inbound_state),

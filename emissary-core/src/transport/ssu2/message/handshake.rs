@@ -580,7 +580,13 @@ impl RetryBuilder {
 
             padding
         };
-        let payload_size = 3 * 3 + 4 + 6 + padding.len() + POLY13055_MAC_LEN;
+        // TODO: this is confusing, fix
+        let payload_size = 3 * 3
+            + 4
+            + 6
+            + padding.len()
+            + POLY13055_MAC_LEN
+            + self.termination.as_ref().map_or(0, |_| TERMINATION_MIN_SIZE as usize);
         let k_header_1 = self.k_header_1.expect("to exist");
 
         let mut payload = if let Some(reason) = self.termination {
@@ -730,6 +736,9 @@ pub struct SessionCreatedBuilder {
     /// Defaults to 2.
     net_id: u8,
 
+    /// Optional relay tag, if requested by remote router.
+    relay_tag: Option<u32>,
+
     /// Source connection ID.
     src_id: Option<u64>,
 }
@@ -741,6 +750,7 @@ impl Default for SessionCreatedBuilder {
             dst_id: None,
             ephemeral_key: None,
             net_id: 2u8,
+            relay_tag: None,
             src_id: None,
         }
     }
@@ -777,6 +787,12 @@ impl SessionCreatedBuilder {
         self
     }
 
+    /// Specify relay tag.
+    pub fn with_relay_tag(mut self, relay_tag: u32) -> Self {
+        self.relay_tag = Some(relay_tag);
+        self
+    }
+
     /// Build [`SessionCreatedBuilder`] into [`SessionCreated`] by creating a long header
     /// and a payload with needed blocks.
     ///
@@ -806,17 +822,32 @@ impl SessionCreatedBuilder {
 
             padding
         };
-        let payload_size = 3 * 3 + 4 + 6 + padding.len() + POLY13055_MAC_LEN;
+        // TODO: these numbers are confusing, fix
+        let mut payload_size =
+            3 * 3 + 4 + 6 + padding.len() + POLY13055_MAC_LEN + self.relay_tag.map_or(0, |_| 7);
 
-        let payload = [
-            Block::DateTime {
-                timestamp: R::time_since_epoch().as_secs() as u32,
-            },
-            Block::Address {
-                address: self.address.expect("to exist"),
-            },
-            Block::Padding { padding },
-        ]
+        let mut payload = if let Some(relay_tag) = self.relay_tag {
+            vec![
+                Block::DateTime {
+                    timestamp: R::time_since_epoch().as_secs() as u32,
+                },
+                Block::Address {
+                    address: self.address.expect("to exist"),
+                },
+                Block::RelayTag { relay_tag },
+                Block::Padding { padding },
+            ]
+        } else {
+            vec![
+                Block::DateTime {
+                    timestamp: R::time_since_epoch().as_secs() as u32,
+                },
+                Block::Address {
+                    address: self.address.expect("to exist"),
+                },
+                Block::Padding { padding },
+            ]
+        }
         .into_iter()
         .fold(BytesMut::with_capacity(payload_size), |mut out, block| {
             out.put_slice(&block.serialize());

@@ -42,6 +42,7 @@ mod duplicate;
 mod message;
 mod metrics;
 mod peer_test;
+mod relay;
 mod session;
 mod socket;
 
