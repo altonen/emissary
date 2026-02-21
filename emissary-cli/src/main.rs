@@ -31,11 +31,14 @@ use crate::{
 use anyhow::anyhow;
 use clap::Parser;
 use emissary_core::{
-    events::EventSubscriber, primitives::RouterId, router::Router, runtime::AddressBook,
+    events::EventSubscriber,
+    primitives::RouterId,
+    router::Router,
+    runtime::{AddressBook, Runtime},
 };
 use emissary_util::{
-    port_mapper::PortMapper, reseeder::Reseeder, runtime::tokio::Runtime, storage::Storage,
-    su3::ReseedRouterInfo,
+    port_mapper::PortMapper, reseeder::Reseeder, runtime::tokio::Runtime as TokioRuntime,
+    storage::Storage, su3::ReseedRouterInfo,
 };
 use futures::{channel::oneshot, StreamExt};
 use tokio::sync::mpsc::{channel, Receiver};
@@ -64,7 +67,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// Router context.
 struct RouterContext {
     /// Router.
-    router: Router<Runtime>,
+    router: Router<TokioRuntime>,
 
     /// Base path.
     #[allow(unused)]
@@ -110,15 +113,15 @@ async fn parse_arguments() -> Arguments {
 }
 
 /// Setup router and related subsystems.
-async fn setup_router(arguments: Arguments) -> anyhow::Result<RouterContext> {
+async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<RouterContext> {
     // initialize logger with any logging directive given as a cli argument
     let handle = init_logger!(arguments.log.clone());
 
     // initialize storage for the router
-    let storage = Storage::new(arguments.base_path.clone()).await?;
+    let storage = Storage::new::<R>(arguments.base_path.clone()).await?;
 
     // parse router config and merge it with cli options
-    let mut config = Config::parse(&arguments, &storage).await.map_err(|error| {
+    let mut config = Config::parse::<R>(&arguments, &storage).await.map_err(|error| {
         tracing::warn!(
             target: LOG_TARGET,
             ?error,
@@ -147,7 +150,7 @@ async fn setup_router(arguments: Arguments) -> anyhow::Result<RouterContext> {
             "reseed router"
         );
 
-        match Reseeder::reseed(
+        match Reseeder::reseed::<R>(
             config.reseed.as_ref().and_then(|config| config.hosts.clone()),
             !arguments.reseed.disable_force_ipv4.unwrap_or(false),
         )
@@ -199,7 +202,7 @@ async fn setup_router(arguments: Arguments) -> anyhow::Result<RouterContext> {
 
     let (router, events, local_router_info, address_book_manager) =
         match config.address_book.take() {
-            None => Router::<Runtime>::new(config.into(), None, Some(Arc::new(storage)))
+            None => Router::<TokioRuntime>::new(config.into(), None, Some(Arc::new(storage)))
                 .await
                 .map(|(router, event_subscriber, info)| (router, event_subscriber, info, None)),
 
@@ -209,7 +212,7 @@ async fn setup_router(arguments: Arguments) -> anyhow::Result<RouterContext> {
                     AddressBookManager::new(config.base_path.clone(), address_book_config).await;
                 let address_book_handle = address_book_manager.handle();
 
-                Router::<Runtime>::new(
+                Router::<TokioRuntime>::new(
                     config.into(),
                     Some(address_book_handle),
                     Some(Arc::new(storage)),
@@ -348,7 +351,7 @@ async fn setup_router(arguments: Arguments) -> anyhow::Result<RouterContext> {
 ///  * [`PortMapper`]'s event loop
 ///  * RX channel for receiving a shutdown signal from router UI
 async fn router_event_loop(
-    mut router: Router<Runtime>,
+    mut router: Router<TokioRuntime>,
     mut port_mapper: PortMapper,
     mut shutdown_rx: Receiver<()>,
 ) {
@@ -386,7 +389,7 @@ fn main() -> anyhow::Result<()> {
         port_mapper,
         router,
         ..
-    } = runtime.block_on(setup_router(arguments))?;
+    } = runtime.block_on(setup_router::<TokioRuntime>(arguments))?;
 
     runtime.block_on(router_event_loop(router, port_mapper, shutdown_rx));
 
@@ -404,7 +407,7 @@ fn main() -> anyhow::Result<()> {
         router,
         router_ui_config,
         ..
-    } = runtime.block_on(setup_router(arguments))?;
+    } = runtime.block_on(setup_router::<TokioRuntime>(arguments))?;
 
     match router_ui_config {
         None => {
@@ -439,7 +442,7 @@ fn main() -> anyhow::Result<()> {
         base_path,
         address_book_handle,
         router_id,
-    } = runtime.block_on(setup_router(arguments))?;
+    } = runtime.block_on(setup_router::<TokioRuntime>(arguments))?;
 
     match router_ui_config {
         None => {

@@ -22,7 +22,8 @@ use crate::{
 };
 
 use anyhow::anyhow;
-use rand::{thread_rng, Rng};
+use emissary_core::runtime::Runtime;
+use rand::RngExt;
 use reqwest::{
     header::{HeaderMap, HeaderValue, CONNECTION, USER_AGENT},
     Certificate, ClientBuilder,
@@ -65,7 +66,7 @@ pub struct Reseeder;
 
 impl Reseeder {
     /// Attempt to reseed from `hosts` and parse response into a vector of serialized router infos.
-    async fn reseed_inner(
+    async fn reseed_inner<R: Runtime>(
         hosts: &[&str],
         force_ipv4: bool,
     ) -> anyhow::Result<Vec<ReseedRouterInfo>> {
@@ -94,7 +95,7 @@ impl Reseeder {
 
         for _ in 0..NUM_RETRIES {
             let server = loop {
-                let server = thread_rng().gen_range(0..hosts.len());
+                let server = R::rng().random_range(0..hosts.len());
 
                 if already_tried.insert(server) {
                     break server;
@@ -178,14 +179,14 @@ impl Reseeder {
     }
 
     /// Reseed from `hosts` or from `RESEED_SERVERS` if `hosts` are not specified.
-    pub async fn reseed(
+    pub async fn reseed<R: Runtime>(
         hosts: Option<Vec<String>>,
         force_ipv4: bool,
     ) -> anyhow::Result<Vec<ReseedRouterInfo>> {
         match hosts {
-            None => Self::reseed_inner(RESEED_SERVERS, force_ipv4).await,
+            None => Self::reseed_inner::<R>(RESEED_SERVERS, force_ipv4).await,
             Some(hosts) =>
-                Self::reseed_inner(
+                Self::reseed_inner::<R>(
                     &hosts.iter().map(AsRef::as_ref).collect::<Vec<_>>(),
                     force_ipv4,
                 )

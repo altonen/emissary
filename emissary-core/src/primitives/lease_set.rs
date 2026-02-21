@@ -426,13 +426,11 @@ impl LeaseSet2 {
     #[cfg(test)]
     pub fn random() -> (LeaseSet2, SigningPrivateKey) {
         use crate::{crypto::StaticPrivateKey, runtime::mock::MockRuntime};
-        use rand::{Rng, RngCore};
+        use rand::{Rng, RngExt};
         use std::time::SystemTime;
 
-        let mut rng = rand::thread_rng();
-
         let public_key = {
-            let sk = StaticPrivateKey::random(rng.clone());
+            let sk = StaticPrivateKey::random(MockRuntime::rng());
 
             sk.public()
         };
@@ -441,8 +439,8 @@ impl LeaseSet2 {
             let mut static_key = [0u8; 32];
             let mut signing_key = [0u8; 32];
 
-            rng.fill_bytes(&mut static_key);
-            rng.fill_bytes(&mut signing_key);
+            MockRuntime::rng().fill_bytes(&mut static_key);
+            MockRuntime::rng().fill_bytes(&mut signing_key);
 
             (
                 Destination::new::<MockRuntime>(
@@ -452,10 +450,10 @@ impl LeaseSet2 {
             )
         };
 
-        let leases = (0..rng.gen_range(1..16))
+        let leases = (0..MockRuntime::rng().random_range(1..16))
             .map(|_| Lease {
                 router_id: RouterId::random(),
-                tunnel_id: TunnelId::from(rng.next_u32()),
+                tunnel_id: TunnelId::from(MockRuntime::rng().next_u32()),
                 expires: Duration::from_secs(
                     (SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap()
                         + Duration::from_secs(9 * 60))

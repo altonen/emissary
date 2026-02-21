@@ -22,7 +22,7 @@ use crate::runtime::{
 };
 
 use futures::Stream;
-use rand_core::{CryptoRng, RngCore};
+use rand::{CryptoRng, RngExt};
 use tokio::task;
 
 use std::{
@@ -248,8 +248,8 @@ impl Runtime for NoopRuntime {
         NoopInstant(Instant::now())
     }
 
-    fn rng() -> impl RngCore + CryptoRng {
-        rand::rngs::SysRng
+    fn rng() -> impl CryptoRng + RngExt {
+        rand::rng()
     }
 
     fn join_set<T: Send + 'static>() -> Self::JoinSet<T> {

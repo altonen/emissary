@@ -22,11 +22,12 @@ use crate::{
     LOG_TARGET,
 };
 
+use emissary_core::runtime::Runtime;
 use emissary_util::{
     port_mapper::PortMapperConfig,
     storage::{Storage, StorageBundle},
 };
-use rand::{thread_rng, Rng};
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
@@ -197,8 +198,8 @@ pub struct EmissaryConfig {
     pub router_ui: Option<RouterUiConfig>,
 }
 
-impl Default for EmissaryConfig {
-    fn default() -> Self {
+impl EmissaryConfig {
+    fn new<R: Runtime>() -> Self {
         Self {
             address_book: Some(AddressBookConfig {
                 default: Some(String::from(
@@ -221,7 +222,7 @@ impl Default for EmissaryConfig {
             ntcp2: Some(Ntcp2Config {
                 port: {
                     loop {
-                        let port: u16 = thread_rng().gen_range(9151..=30777);
+                        let port: u16 = R::rng().random_range(9151..=30777);
 
                         if !RESERVED_PORTS.iter().any(|reserved_port| reserved_port == &port) {
                             break port;
@@ -385,7 +386,10 @@ impl Config {
     ///
     /// If the configuratin file exists but it's invalid, exit early, unless `--overwrite-config`
     /// has been passed in which case create new default configuration.
-    pub async fn parse(arguments: &Arguments, storage: &Storage) -> Result<Self, Error> {
+    pub async fn parse<R: Runtime>(
+        arguments: &Arguments,
+        storage: &Storage,
+    ) -> Result<Self, Error> {
         let path = storage.base_path();
 
         tracing::trace!(
@@ -420,7 +424,7 @@ impl Config {
             ssu2_static_key,
         } = storage.load().await;
 
-        let mut config = Config::new(
+        let mut config = Config::new::<R>(
             path.clone(),
             static_key,
             signing_key,
@@ -459,7 +463,7 @@ impl Config {
     }
 
     /// Create new [`Config`].
-    async fn new(
+    async fn new<R: Runtime>(
         base_path: PathBuf,
         static_key: [u8; 32],
         signing_key: [u8; 32],
@@ -473,7 +477,7 @@ impl Config {
         let config = match config {
             Some(config) => config,
             None => {
-                let config = EmissaryConfig::default();
+                let config = EmissaryConfig::new::<R>();
                 let toml_config = toml::to_string(&config).expect("to succeed");
                 let mut file = tokio::fs::File::create(base_path.join("router.toml")).await?;
                 file.write_all(toml_config.as_bytes()).await?;
@@ -832,6 +836,7 @@ mod tests {
     };
 
     use super::*;
+    use emissary_util::runtime::tokio::Runtime as TokioRuntime;
     use tempfile::tempdir;
     use tokio::io::AsyncReadExt;
 
@@ -897,8 +902,8 @@ mod tests {
     #[tokio::test]
     async fn fresh_boot_directory_created() {
         let dir = tempdir().unwrap();
-        let storage = Storage::new(Some(dir.path().to_owned())).await.unwrap();
-        let config = Config::parse(&make_arguments(), &storage).await.unwrap();
+        let storage = Storage::new::<TokioRuntime>(Some(dir.path().to_owned())).await.unwrap();
+        let config = Config::parse::<TokioRuntime>(&make_arguments(), &storage).await.unwrap();
 
         assert!(config.routers.is_empty());
         assert_eq!(config.static_key.len(), 32);
@@ -934,14 +939,14 @@ mod tests {
     #[tokio::test]
     async fn load_configs_correctly() {
         let dir = tempdir().unwrap();
-        let storage = Storage::new(Some(dir.path().to_owned())).await.unwrap();
+        let storage = Storage::new::<TokioRuntime>(Some(dir.path().to_owned())).await.unwrap();
 
         let (static_key, signing_key, ntcp2_config) = {
-            let config = Config::parse(&make_arguments(), &storage).await.unwrap();
+            let config = Config::parse::<TokioRuntime>(&make_arguments(), &storage).await.unwrap();
             (config.static_key, config.signing_key, config.ntcp2_config)
         };
 
-        let config = Config::parse(&make_arguments(), &storage).await.unwrap();
+        let config = Config::parse::<TokioRuntime>(&make_arguments(), &storage).await.unwrap();
         assert_eq!(config.static_key, static_key);
         assert_eq!(config.signing_key, signing_key);
         assert_eq!(
@@ -965,11 +970,11 @@ mod tests {
     #[tokio::test]
     async fn config_update_works() {
         let dir = tempdir().unwrap();
-        let storage = Storage::new(Some(dir.path().to_owned())).await.unwrap();
+        let storage = Storage::new::<TokioRuntime>(Some(dir.path().to_owned())).await.unwrap();
 
         // create default config, verify the default ntcp2 port is 8888
         let (ntcp2_key, ntcp2_iv) = {
-            let config = Config::parse(&make_arguments(), &storage).await.unwrap();
+            let config = Config::parse::<TokioRuntime>(&make_arguments(), &storage).await.unwrap();
             let ntcp2_config = config.ntcp2_config.unwrap();
 
             assert!(ntcp2_config.port >= 9151 && ntcp2_config.port <= 30777);
@@ -989,7 +994,7 @@ mod tests {
                 host: None,
                 publish: None,
             }),
-            ..Default::default()
+            ..EmissaryConfig::new::<TokioRuntime>()
         };
         let config = toml::to_string(&config).expect("to succeed");
         let mut file = tokio::fs::File::create(dir.path().to_owned().join("router.toml"))
@@ -1001,7 +1006,7 @@ mod tests {
         // load the new config
         //
         // verify that ntcp2 key & iv are the same but port is new
-        let config = Config::parse(&make_arguments(), &storage).await.unwrap();
+        let config = Config::parse::<TokioRuntime>(&make_arguments(), &storage).await.unwrap();
         let ntcp2_config = config.ntcp2_config.unwrap();
 
         assert_eq!(ntcp2_config.port, 1337u16);
@@ -1012,7 +1017,7 @@ mod tests {
     #[tokio::test]
     async fn overwrite_config() {
         let dir = tempdir().unwrap();
-        let storage = Storage::new(Some(dir.path().to_owned())).await.unwrap();
+        let storage = Storage::new::<TokioRuntime>(Some(dir.path().to_owned())).await.unwrap();
 
         let mut file = tokio::fs::File::create(dir.path().to_owned().join("router.toml"))
             .await
@@ -1023,7 +1028,7 @@ mod tests {
         let mut args = make_arguments();
 
         // create default config, verify the default ntcp2 port is 8888
-        match Config::parse(&args, &storage).await {
+        match Config::parse::<TokioRuntime>(&args, &storage).await {
             Err(Error::InvalidData) => {}
             _ => panic!("invalid result"),
         }
@@ -1032,7 +1037,7 @@ mod tests {
         args.overwrite_config = Some(true);
 
         // verify default config is created
-        let config = Config::parse(&args, &storage).await.unwrap();
+        let config = Config::parse::<TokioRuntime>(&args, &storage).await.unwrap();
 
         assert!(config.ntcp2_config.is_some());
         assert!(config.sam_config.is_some());
@@ -1046,7 +1051,7 @@ mod tests {
     #[tokio::test]
     async fn client_tunnels_with_same_names() {
         let dir = tempdir().unwrap();
-        let storage = Storage::new(Some(dir.path().to_owned())).await.unwrap();
+        let storage = Storage::new::<TokioRuntime>(Some(dir.path().to_owned())).await.unwrap();
 
         // create new ntcp2 config where the port is different
         let config = EmissaryConfig {
@@ -1066,7 +1071,7 @@ mod tests {
                     destination_port: None,
                 },
             ]),
-            ..Default::default()
+            ..EmissaryConfig::new::<TokioRuntime>()
         };
 
         let config = toml::to_string(&config).expect("to succeed");
@@ -1076,7 +1081,7 @@ mod tests {
         file.write_all(config.as_bytes()).await.unwrap();
         file.flush().await.unwrap();
 
-        match Config::parse(&make_arguments(), &storage).await {
+        match Config::parse::<TokioRuntime>(&make_arguments(), &storage).await {
             Err(Error::InvalidData) => {}
             _ => panic!("invalid result"),
         }
@@ -1085,7 +1090,7 @@ mod tests {
     #[tokio::test]
     async fn client_tunnels_with_same_ports() {
         let dir = tempdir().unwrap();
-        let storage = Storage::new(Some(dir.path().to_owned())).await.unwrap();
+        let storage = Storage::new::<TokioRuntime>(Some(dir.path().to_owned())).await.unwrap();
 
         // create new ntcp2 config where the port is different
         let config = EmissaryConfig {
@@ -1105,7 +1110,7 @@ mod tests {
                     destination_port: None,
                 },
             ]),
-            ..Default::default()
+            ..EmissaryConfig::new::<TokioRuntime>()
         };
 
         let config = toml::to_string(&config).expect("to succeed");
@@ -1115,7 +1120,7 @@ mod tests {
         file.write_all(config.as_bytes()).await.unwrap();
         file.flush().await.unwrap();
 
-        match Config::parse(&make_arguments(), &storage).await {
+        match Config::parse::<TokioRuntime>(&make_arguments(), &storage).await {
             Err(Error::InvalidData) => {}
             _ => panic!("invalid result"),
         }

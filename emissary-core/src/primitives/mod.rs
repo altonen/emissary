@@ -33,6 +33,9 @@ pub use string::Str;
 #[cfg(test)]
 pub use router_info::RouterInfoBuilder;
 
+#[cfg(test)]
+use crate::runtime::Runtime;
+
 mod capabilities;
 mod datagram_flags;
 mod date;
@@ -55,9 +58,10 @@ pub struct TunnelId(u32);
 impl TunnelId {
     #[cfg(test)]
     pub fn random() -> TunnelId {
-        use rand::RngCore;
+        use crate::runtime::mock::MockRuntime;
+        use rand::Rng;
 
-        TunnelId::from(rand::thread_rng().next_u32())
+        TunnelId::from(MockRuntime::rng().next_u32())
     }
 }
 
@@ -94,9 +98,10 @@ pub struct MessageId(u32);
 impl MessageId {
     #[cfg(test)]
     pub fn random() -> MessageId {
-        use rand::RngCore;
+        use crate::runtime::mock::MockRuntime;
+        use rand::Rng;
 
-        MessageId::from(rand::thread_rng().next_u32())
+        MessageId::from(MockRuntime::rng().next_u32())
     }
 }
 

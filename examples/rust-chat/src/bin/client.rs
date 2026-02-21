@@ -324,7 +324,7 @@ async fn main() -> anyhow::Result<()> {
             routers
         }
         // reseed the router
-        None => Reseeder::reseed(None, false)
+        None => Reseeder::reseed::<Runtime>(None, false)
             .await?
             .into_iter()
             .map(|ReseedRouterInfo { router_info, .. }| router_info)

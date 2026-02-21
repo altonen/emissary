@@ -53,7 +53,7 @@ async fn main() -> anyhow::Result<()> {
     // for router infos and profiles, and generates transport and router keys
     //
     // if `None` is passed, `Storage` defaults to using `$HOME/.emissary`
-    let storage = Storage::new(Some(base_path)).await?;
+    let storage = Storage::new::<Runtime>(Some(base_path)).await?;
 
     // read storage bundle from disk
     //
@@ -73,7 +73,7 @@ async fn main() -> anyhow::Result<()> {
 
     // reseed if there are no routers
     if routers.is_empty() {
-        match Reseeder::reseed(None, false).await {
+        match Reseeder::reseed::<Runtime>(None, false).await {
             // if reseeding succeeded, store the router infos to disk so next time the
             // router starts, it doesn't have to reeseed
             Ok(reseed_routers) =>

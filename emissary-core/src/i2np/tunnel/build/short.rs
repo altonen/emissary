@@ -237,6 +237,7 @@ impl TunnelBuildRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::{mock::MockRuntime, Runtime};
 
     #[test]
     fn all_zero_bytes() {
@@ -248,7 +249,7 @@ mod tests {
             .with_request_time(0)
             .with_request_expiration(0)
             .with_next_message_id(MessageId::from(0))
-            .serialize(&mut rand::rngs::SysRng);
+            .serialize(&mut MockRuntime::rng());
 
         assert!(TunnelBuildRecord::parse(&serialized).is_ok());
     }
@@ -270,7 +271,7 @@ mod tests {
         out.put_u16(0u16); // options
 
         let mut padding = vec![0u8; out.capacity() - out.len() - AES256_IV_LEN];
-        rand::rngs::SysRng.fill_bytes(&mut padding);
+        MockRuntime::rng().fill_bytes(&mut padding);
         out.put_slice(&padding);
 
         let serialized = out.freeze().to_vec();
@@ -311,7 +312,7 @@ mod tests {
         }
 
         let mut padding = vec![0u8; out.capacity() - out.len() - AES256_IV_LEN];
-        rand::rngs::SysRng.fill_bytes(&mut padding);
+        MockRuntime::rng().fill_bytes(&mut padding);
         out.put_slice(&padding);
 
         let serialized = out.freeze().to_vec();

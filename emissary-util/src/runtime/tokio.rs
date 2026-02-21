@@ -25,7 +25,7 @@ use flate2::{
     Compression,
 };
 use futures::{AsyncRead as _, AsyncWrite as _, Stream};
-use rand_core::{CryptoRng, RngCore};
+use rand::{CryptoRng, RngExt};
 use tokio::{
     io::ReadBuf,
     net, task,
@@ -407,8 +407,8 @@ impl RuntimeT for Runtime {
     }
 
     #[inline]
-    fn rng() -> impl RngCore + CryptoRng {
-        rand_core::OsRng
+    fn rng() -> impl CryptoRng + RngExt {
+        rand::rng()
     }
 
     #[inline]

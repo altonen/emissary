@@ -447,7 +447,7 @@ impl DatabaseStoreBuilder {
 mod tests {
     use super::*;
     use crate::runtime::mock::MockRuntime;
-    use rand::RngCore;
+    use rand::Rng;
 
     #[test]
     fn parse_database_store() {
@@ -561,7 +561,7 @@ mod tests {
         let (leaseset, signing_key) = LeaseSet2::random();
         let key = {
             let mut key = vec![0u8; 32];
-            rand::thread_rng().fill_bytes(&mut key);
+            MockRuntime::rng().fill_bytes(&mut key);
 
             Bytes::from(key)
         };
@@ -595,7 +595,7 @@ mod tests {
         let reply_router = RouterId::random();
         let key = {
             let mut key = vec![0u8; 32];
-            rand::thread_rng().fill_bytes(&mut key);
+            MockRuntime::rng().fill_bytes(&mut key);
 
             Bytes::from(key)
         };

@@ -27,7 +27,7 @@ use flate2::{
 use futures::{
     future::BoxFuture, ready, stream::FuturesUnordered, AsyncRead as _, AsyncWrite as _, Stream,
 };
-use rand_core::{CryptoRng, RngCore};
+use rand::{CryptoRng, RngExt};
 use smol::{future::FutureExt, stream::StreamExt, Async};
 
 #[cfg(feature = "metrics")]
@@ -515,8 +515,8 @@ impl RuntimeT for Runtime {
     }
 
     #[inline]
-    fn rng() -> impl RngCore + CryptoRng {
-        rand_core::OsRng
+    fn rng() -> impl CryptoRng + RngExt {
+        rand::rng()
     }
 
     #[inline]

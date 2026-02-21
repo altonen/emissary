@@ -1354,7 +1354,6 @@ mod tests {
     };
     use bytes::{BufMut, Bytes};
     use futures::StreamExt;
-    use rand::RngCore;
     use std::time::Duration;
     use thingbuf::mpsc::channel;
 

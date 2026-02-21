@@ -727,7 +727,7 @@ mod tests {
             <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
                 .await
                 .unwrap();
-        let remote_signing_key = SigningPrivateKey::random(&mut rand::thread_rng());
+        let remote_signing_key = SigningPrivateKey::random(rand::rng());
         let (router_info, static_key, signing_key) = RouterInfoBuilder::default().build();
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
@@ -885,7 +885,7 @@ mod tests {
             <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
                 .await
                 .unwrap();
-        let remote_signing_key = SigningPrivateKey::random(&mut rand::thread_rng());
+        let remote_signing_key = SigningPrivateKey::random(rand::rng());
         let (router_info, static_key, signing_key) = RouterInfoBuilder::default().build();
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));

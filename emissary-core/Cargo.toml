@@ -12,67 +12,38 @@ categories.workspace = true
 
 [dependencies]
 aes = { version = "0.8.4", default-features = false }
-bytes = { version = "1.10.1", default-features = false }
+bytes = { version = "1.11.1", default-features = false }
 cbc = { version = "0.1.2", default-features = false, features = ["alloc"] }
-chacha20poly1305 = { version = "0.10.1", default-features = false, features = [
-    "alloc",
-] }
-chacha20 = { version = "0.9.1", default-features = false, features = [
-    "zeroize",
-] }
-curve25519-elligator2 = { version = "0.1.0-alpha.2", default-features = false, features = [
-    "elligator2",
-    "alloc",
-] }
-data-encoding = { version = "2.9.0", default-features = false, features = [
-    "alloc",
-] }
+chacha20poly1305 = { version = "0.10.1", default-features = false, features = ["alloc"] }
+chacha20 = { version = "0.9.1", default-features = false, features = ["zeroize"] }
+curve25519-elligator2 = { version = "0.1.0-alpha.2", default-features = false, features = ["elligator2", "alloc"] }
+data-encoding = { version = "2.9.0", default-features = false, features = ["alloc"] }
 ecb = { version = "0.1.2", default-features = false, features = ["alloc"] }
 ethbloom = { version = "0.14.1", default-features = false }
-futures-channel = { version = "0.3.31", default-features = false, features = [
-    "alloc",
-] }
-futures = { package = "futures-util", version = "0.3.31", default-features = false, features = [
-    "alloc",
-] }
+futures-channel = { version = "0.3.31", default-features = false, features = ["alloc"] }
+futures = { package = "futures-util", version = "0.3.31", default-features = false, features = ["alloc"] }
 hashbrown = "0.15.4"
 hmac = { version = "0.12.1", default-features = false }
 lazy_static = { version = "1.5.0", default-features = false }
 num-bigint = { version = "0.4.6", default-features = false }
 num-traits = { version = "0.2.19", default-features = false }
-p256 = { version = "0.13.2", default-features = false, features = [
-    "alloc",
-    "ecdsa",
-    "ecdsa-core",
-] }
+p256 = { version = "0.13.2", default-features = false, features = ["alloc", "ecdsa", "ecdsa-core"] }
 sha1 = { version = "0.10.6", default-features = false }
 siphasher = { version = "1.0.1", default-features = false }
-spin = { version = "0.10.0", default-features = false, features = [
-    "rwlock",
-], optional = true }
+spin = { version = "0.10.0", default-features = false, features = ["rwlock"], optional = true }
 subtle = { version = "2.6.1", default-features = false }
 thingbuf = { version = "0.1.6", default-features = false, features = ["alloc"] }
 uint = { version = "0.9.5", default-features = false }
 zeroize = { version = "1.8.1", default-features = false, features = ["alloc"] }
 
 # workspace dependencies
-ed25519-dalek = { workspace = true, features = [
-    "alloc",
-    "rand_core",
-    "fast",
-    "zeroize",
-] }
+ed25519-dalek = { workspace = true, features = ["alloc", "rand_core", "fast", "zeroize"] }
 nom = { workspace = true, features = ["alloc"] }
 parking_lot = { workspace = true, optional = true }
-rand = { workspace = true, features = ["alloc"] }
+rand = { workspace = true, features = ["alloc", "thread_rng"] }
 sha2 = { workspace = true }
 tracing = { workspace = true }
-x25519-dalek = { workspace = true, features = [
-    "reusable_secrets",
-    "static_secrets",
-    "zeroize",
-    "precomputed-tables",
-] }
+x25519-dalek = { workspace = true, features = ["reusable_secrets", "static_secrets", "zeroize", "precomputed-tables"] }
 
 [dev-dependencies]
 futures-io = "0.3.31"

@@ -31,7 +31,7 @@ use flate2::{
 use futures::Stream;
 use futures_io::{AsyncRead as _, AsyncWrite as _};
 use parking_lot::RwLock;
-use rand_core::{CryptoRng, RngCore};
+use rand::{CryptoRng, RngExt};
 use tokio::{
     io::ReadBuf,
     net, task,
@@ -308,7 +308,7 @@ impl InstantT for MockInstant {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct MockRuntime {}
 
 impl MockRuntime {
@@ -361,8 +361,8 @@ impl Runtime for MockRuntime {
     }
 
     /// Return opaque type for generating random bytes.
-    fn rng() -> impl RngCore + CryptoRng {
-        rand::rngs::SysRng
+    fn rng() -> impl CryptoRng + RngExt {
+        rand::rng()
     }
 
     /// Create new instance of a join set which contains a collection

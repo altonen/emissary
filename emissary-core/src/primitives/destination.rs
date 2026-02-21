@@ -79,9 +79,9 @@ pub struct DestinationId(Arc<String>);
 impl DestinationId {
     #[cfg(test)]
     pub fn random() -> DestinationId {
-        use rand::Rng;
+        use rand::RngExt;
 
-        DestinationId::from(rand::thread_rng().gen::<[u8; 32]>())
+        DestinationId::from(crate::runtime::mock::MockRuntime::rng().random::<[u8; 32]>())
     }
 
     /// Copy [`DestinationId`] into a byte vector.
@@ -316,11 +316,10 @@ impl Destination {
     /// Create random [`Destination`] for testing.
     #[cfg(test)]
     pub fn random() -> (Self, crate::crypto::SigningPrivateKey) {
-        let signing_key = crate::crypto::SigningPrivateKey::random(rand::thread_rng());
-        (
-            Self::new::<crate::runtime::mock::MockRuntime>(signing_key.public()),
-            signing_key,
-        )
+        use crate::runtime::mock::MockRuntime;
+
+        let signing_key = crate::crypto::SigningPrivateKey::random(MockRuntime::rng());
+        (Self::new::<MockRuntime>(signing_key.public()), signing_key)
     }
 }
 

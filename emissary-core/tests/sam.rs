@@ -17,11 +17,14 @@
 // DEALINGS IN THE SOFTWARE.
 
 use emissary_core::{
-    crypto::base32_encode, events::EventSubscriber, router::Router, runtime::AddressBook, Config,
-    Ntcp2Config, SamConfig, Ssu2Config, TransitConfig,
+    crypto::base32_encode,
+    events::EventSubscriber,
+    router::Router,
+    runtime::{AddressBook, Runtime},
+    Config, Ntcp2Config, SamConfig, Ssu2Config, TransitConfig,
 };
-use emissary_util::runtime::tokio::Runtime;
-use rand::{thread_rng, RngCore};
+use emissary_util::runtime::tokio::Runtime as TokioRuntime;
+use rand::Rng;
 use sha2::{Digest, Sha256};
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
@@ -46,19 +49,19 @@ async fn make_router(
     net_id: u8,
     routers: Vec<Vec<u8>>,
     kind: TransportKind,
-) -> (Router<Runtime>, EventSubscriber, Vec<u8>) {
+) -> (Router<TokioRuntime>, EventSubscriber, Vec<u8>) {
     let (ntcp2, ssu2) = match kind {
         TransportKind::Ntcp2 => (
             Some(Ntcp2Config {
                 port: 0u16,
                 iv: {
                     let mut iv = [0u8; 16];
-                    thread_rng().fill_bytes(&mut iv);
+                    TokioRuntime::rng().fill_bytes(&mut iv);
                     iv
                 },
                 key: {
                     let mut key = [0u8; 32];
-                    thread_rng().fill_bytes(&mut key);
+                    TokioRuntime::rng().fill_bytes(&mut key);
                     key
                 },
                 host: Some("127.0.0.1".parse().unwrap()),
@@ -75,12 +78,12 @@ async fn make_router(
 
                 static_key: {
                     let mut iv = [0u8; 32];
-                    thread_rng().fill_bytes(&mut iv);
+                    TokioRuntime::rng().fill_bytes(&mut iv);
                     iv
                 },
                 intro_key: {
                     let mut key = [0u8; 32];
-                    thread_rng().fill_bytes(&mut key);
+                    TokioRuntime::rng().fill_bytes(&mut key);
                     key
                 },
             }),
@@ -107,7 +110,7 @@ async fn make_router(
         ..Default::default()
     };
 
-    Router::<Runtime>::new(config, None, None).await.unwrap()
+    Router::<TokioRuntime>::new(config, None, None).await.unwrap()
 }
 
 #[tokio::test(start_paused = true)]
@@ -126,7 +129,7 @@ async fn generate_destination(kind: TransportKind) {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..4 {
         let (router, _events, router_info) =
@@ -182,7 +185,7 @@ async fn streaming_works(kind: TransportKind) {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..4 {
         let (router, _events, router_info) =
@@ -277,7 +280,7 @@ async fn repliable_datagrams_work(kind: TransportKind) {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..4 {
         let (router, _event, router_info) =
@@ -375,7 +378,7 @@ async fn anonymous_datagrams_work(kind: TransportKind) {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..4 {
         let (router, _events, router_info) =
@@ -472,7 +475,7 @@ async fn open_stream_to_self(kind: TransportKind) {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..4 {
         let (router, _events, router_info) =
@@ -527,7 +530,7 @@ async fn create_same_session_twice_transient(kind: TransportKind) {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..4 {
         let (router, _events, router_info) =
@@ -589,7 +592,7 @@ async fn create_same_session_twice_persistent(kind: TransportKind) {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..4 {
         let (router, _events, router_info) =
@@ -662,7 +665,7 @@ async fn duplicate_session_id(kind: TransportKind) {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..4 {
         let (router, _events, router_info) =
@@ -727,7 +730,7 @@ async fn stream_lots_of_data(kind: TransportKind) {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..4 {
         let (router, _events, router_info) =
@@ -767,7 +770,7 @@ async fn stream_lots_of_data(kind: TransportKind) {
 
     let (data, digest) = {
         let mut data = vec![0u8; 256 * 1024];
-        thread_rng().fill_bytes(&mut data);
+        TokioRuntime::rng().fill_bytes(&mut data);
 
         let mut hasher = Sha256::new();
         hasher.update(&data);
@@ -831,7 +834,7 @@ async fn forward_stream(kind: TransportKind) {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..4 {
         let (router, _events, router_info) =
@@ -926,7 +929,7 @@ async fn connect_to_inactive_destination(kind: TransportKind) {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..4 {
         let (router, _events, router_info) =
@@ -989,7 +992,7 @@ async fn closed_stream_detected(kind: TransportKind) {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..4 {
         let (router, _events, router_info) =
@@ -1093,7 +1096,7 @@ async fn close_and_reconnect(kind: TransportKind) {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..4 {
         let (router, _events, router_info) =
@@ -1201,7 +1204,7 @@ async fn create_multiple_sessions(kind: TransportKind) {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..6 {
         let (router, _events, router_info) =
@@ -1273,7 +1276,7 @@ async fn send_data_to_destroyed_session(kind: TransportKind) {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..4 {
         let (router, _events, router_info) =
@@ -1372,7 +1375,7 @@ async fn connect_using_b32_i2p(kind: TransportKind) {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..4 {
         let (router, _events, router_info) =
@@ -1479,7 +1482,7 @@ async fn unpublished_destination(kind: TransportKind) {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..4 {
         let (router, _events, router_info) =
@@ -1560,7 +1563,7 @@ async fn host_lookup(kind: TransportKind) {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..6 {
         let (router, _events, router_info) =
@@ -1614,12 +1617,12 @@ async fn host_lookup(kind: TransportKind) {
                 port: 0u16,
                 iv: {
                     let mut iv = [0u8; 16];
-                    thread_rng().fill_bytes(&mut iv);
+                    TokioRuntime::rng().fill_bytes(&mut iv);
                     iv
                 },
                 key: {
                     let mut key = [0u8; 32];
-                    thread_rng().fill_bytes(&mut key);
+                    TokioRuntime::rng().fill_bytes(&mut key);
                     key
                 },
                 host: Some("127.0.0.1".parse().unwrap()),
@@ -1636,12 +1639,12 @@ async fn host_lookup(kind: TransportKind) {
 
                 static_key: {
                     let mut iv = [0u8; 32];
-                    thread_rng().fill_bytes(&mut iv);
+                    TokioRuntime::rng().fill_bytes(&mut iv);
                     iv
                 },
                 intro_key: {
                     let mut key = [0u8; 32];
-                    thread_rng().fill_bytes(&mut key);
+                    TokioRuntime::rng().fill_bytes(&mut key);
                     key
                 },
             }),
@@ -1687,7 +1690,7 @@ async fn host_lookup(kind: TransportKind) {
     }
 
     let (router, _events, _) =
-        Router::<Runtime>::new(config, Some(Arc::new(AddressBookImpl { dest })), None)
+        Router::<TokioRuntime>::new(config, Some(Arc::new(AddressBookImpl { dest })), None)
             .await
             .unwrap();
     let sam_port = router.protocol_address_info().sam_tcp.unwrap().port();
@@ -1737,7 +1740,7 @@ async fn open_parallel_streams(kind: TransportKind) {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..4 {
         let (router, _events, router_info) =
@@ -1855,7 +1858,7 @@ async fn duplicate_sub_session_id(kind: TransportKind) {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..4 {
         let (router, _events, router_info) =
@@ -1939,7 +1942,7 @@ async fn primary_session_with_stream_and_repliable(kind: TransportKind) {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..4 {
         let (router, _events, router_info) =
@@ -2102,7 +2105,7 @@ async fn primary_session_with_stream_and_anonymous(kind: TransportKind) {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..4 {
         let (router, _events, router_info) =
@@ -2257,7 +2260,7 @@ async fn two_primary_sessions(kind: TransportKind) {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..4 {
         let (router, _events, router_info) =
@@ -2438,7 +2441,7 @@ async fn primary_session_with_repliable_and_anonymous(kind: TransportKind) {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..4 {
         let (router, _events, router_info) =
@@ -2511,7 +2514,7 @@ async fn active_session_destroyed_and_recreated() {
         .try_init();
 
     let mut router_infos = Vec::<Vec<u8>>::new();
-    let net_id = (thread_rng().next_u32() % 255) as u8;
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
 
     for i in 0..4 {
         let (router, _events, router_info) =

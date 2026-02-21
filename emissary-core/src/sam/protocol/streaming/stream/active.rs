@@ -1500,9 +1500,9 @@ mod tests {
     };
     use futures::StreamExt;
     use rand::{
-        distributions::{Alphanumeric, DistString},
+        distr::{Alphanumeric, SampleString},
         seq::SliceRandom,
-        thread_rng, Rng,
+        Rng, RngExt,
     };
     use thingbuf::mpsc::channel;
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -2076,7 +2076,7 @@ mod tests {
         // ignore syn packet
         let _ = event_rx.recv().await.unwrap();
 
-        let test_string = Alphanumeric.sample_string(&mut thread_rng(), 256);
+        let test_string = Alphanumeric.sample_string(&mut MockRuntime::rng(), 256);
 
         let mut packets = test_string
             .clone()
@@ -2094,13 +2094,16 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(packets.len(), 64);
-        packets.shuffle(&mut thread_rng());
+        packets.shuffle(&mut MockRuntime::rng());
 
         // send packet to stream with random sleeps
         for packet in packets {
             cmd_tx.try_send(StreamEvent::Packet { packet }).unwrap();
 
-            tokio::time::sleep(Duration::from_millis(thread_rng().gen_range(5..100))).await;
+            tokio::time::sleep(Duration::from_millis(
+                MockRuntime::rng().random_range(5..100),
+            ))
+            .await;
         }
 
         // ignore acks received from the stream
@@ -2239,7 +2242,7 @@ mod tests {
         // ignore syn packet
         let _ = event_rx.recv().await.unwrap();
 
-        let test_string = Alphanumeric.sample_string(&mut thread_rng(), 128);
+        let test_string = Alphanumeric.sample_string(&mut MockRuntime::rng(), 128);
 
         let mut packets = test_string
             .clone()
@@ -2263,13 +2266,16 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(packets.len(), 32);
-        packets.shuffle(&mut thread_rng());
+        packets.shuffle(&mut MockRuntime::rng());
 
         // send packet to stream with random sleeps
         for packet in packets {
             cmd_tx.try_send(StreamEvent::Packet { packet }).unwrap();
 
-            tokio::time::sleep(Duration::from_millis(thread_rng().gen_range(5..100))).await;
+            tokio::time::sleep(Duration::from_millis(
+                MockRuntime::rng().random_range(5..100),
+            ))
+            .await;
         }
 
         // read back response which is exactly 256 bytes long

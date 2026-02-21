@@ -494,28 +494,30 @@ mod tests {
     use bytes::Bytes;
     use futures::StreamExt;
     use hashbrown::HashMap;
-    use rand::{thread_rng, RngCore};
-    use std::time::Duration;
+    use std::{marker::PhantomData, time::Duration};
     use thingbuf::mpsc::channel;
     use tokio::net::TcpListener;
 
-    struct Ntcp2Builder {
+    struct Ntcp2Builder<R: Runtime> {
         net_id: u8,
         router_address: Option<RouterAddress>,
         ntcp2_iv: [u8; 16],
         ntcp2_key: [u8; 32],
+        _runtime: PhantomData<R>,
     }
 
-    impl Ntcp2Builder {
+    impl<R: Runtime> Ntcp2Builder<R> {
         fn new() -> Self {
+            use rand::Rng;
+
             let ntcp2_key = {
                 let mut local_key = [0u8; 32];
-                thread_rng().fill_bytes(&mut local_key);
+                R::rng().fill_bytes(&mut local_key);
                 local_key
             };
             let ntcp2_iv = {
                 let mut local_iv = [0u8; 16];
-                thread_rng().fill_bytes(&mut local_iv);
+                R::rng().fill_bytes(&mut local_iv);
                 local_iv
             };
 
@@ -524,6 +526,7 @@ mod tests {
                 router_address: None,
                 ntcp2_iv,
                 ntcp2_key,
+                _runtime: PhantomData::default(),
             }
         }
 
@@ -543,8 +546,8 @@ mod tests {
         }
 
         fn build(mut self) -> Ntcp2 {
-            let signing_key = SigningPrivateKey::random(thread_rng());
-            let static_key = StaticPrivateKey::random(thread_rng());
+            let signing_key = SigningPrivateKey::random(R::rng());
+            let static_key = StaticPrivateKey::random(R::rng());
             let identity =
                 RouterIdentity::from_keys::<MockRuntime>(&static_key, &signing_key).unwrap();
             let router_info = RouterInfo {
@@ -591,7 +594,7 @@ mod tests {
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let (transport_tx1, _transport_rx1) = channel(16);
-        let local = Ntcp2Builder::new().build();
+        let local = Ntcp2Builder::<MockRuntime>::new().build();
         let local_manager = SessionManager::new(
             local.ntcp2_key,
             local.ntcp2_iv,
@@ -610,7 +613,7 @@ mod tests {
         );
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let remote = Ntcp2Builder::new()
+        let remote = Ntcp2Builder::<MockRuntime>::new()
             .with_router_address(listener.local_addr().unwrap().port())
             .build();
         let (transport_tx2, _transport_rx2) = channel(16);
@@ -653,7 +656,7 @@ mod tests {
     async fn invalid_network_id_initiator() {
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
-        let local = Ntcp2Builder::new().with_net_id(128).build();
+        let local = Ntcp2Builder::<MockRuntime>::new().with_net_id(128).build();
         let (transport_tx1, _transport_rx1) = channel(16);
         let local_manager = SessionManager::new(
             local.ntcp2_key,
@@ -674,7 +677,7 @@ mod tests {
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let (transport_tx2, _transport_rx2) = channel(16);
-        let remote = Ntcp2Builder::new()
+        let remote = Ntcp2Builder::<MockRuntime>::new()
             .with_router_address(listener.local_addr().unwrap().port())
             .build();
         let remote_manager = SessionManager::new(
@@ -713,7 +716,7 @@ mod tests {
     async fn invalid_network_id_responder() {
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
-        let local = Ntcp2Builder::new().build();
+        let local = Ntcp2Builder::<MockRuntime>::new().build();
         let (transport_tx1, _transport_rx1) = channel(16);
         let local_manager = SessionManager::new(
             local.ntcp2_key,
@@ -733,7 +736,7 @@ mod tests {
         );
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let remote = Ntcp2Builder::new()
+        let remote = Ntcp2Builder::<MockRuntime>::new()
             .with_net_id(128)
             .with_router_address(listener.local_addr().unwrap().port())
             .build();
@@ -775,7 +778,7 @@ mod tests {
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let (transport_tx1, _transport_rx1) = channel(16);
-        let local = Ntcp2Builder::new().build();
+        let local = Ntcp2Builder::<MockRuntime>::new().build();
         let local_manager = SessionManager::new(
             local.ntcp2_key,
             local.ntcp2_iv,
@@ -794,7 +797,7 @@ mod tests {
         );
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let remote = Ntcp2Builder::new()
+        let remote = Ntcp2Builder::<MockRuntime>::new()
             .with_net_id(128)
             .with_router_address(listener.local_addr().unwrap().port())
             .build();
@@ -835,7 +838,7 @@ mod tests {
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let (transport_tx1, _transport_rx1) = channel(16);
-        let local = Ntcp2Builder::new().build();
+        let local = Ntcp2Builder::<MockRuntime>::new().build();
         let local_manager = SessionManager::new(
             local.ntcp2_key,
             local.ntcp2_iv,
@@ -855,7 +858,7 @@ mod tests {
 
         let listener = MockTcpListener::bind("127.0.0.1:0".parse().unwrap()).await.unwrap();
         let mut listener = Ntcp2Listener::<MockRuntime>::new(listener, false);
-        let remote = Ntcp2Builder::new()
+        let remote = Ntcp2Builder::<MockRuntime>::new()
             .with_net_id(128)
             .with_router_address(listener.local_address().port())
             .build();
@@ -867,7 +870,7 @@ mod tests {
 
     #[tokio::test]
     async fn received_expired_message() {
-        let local = Ntcp2Builder::new().build();
+        let local = Ntcp2Builder::<MockRuntime>::new().build();
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let (local_tx, local_rx) = channel(16);
@@ -889,7 +892,7 @@ mod tests {
         );
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let remote = Ntcp2Builder::new()
+        let remote = Ntcp2Builder::<MockRuntime>::new()
             .with_router_address(listener.local_addr().unwrap().port())
             .build();
         let (remote_tx, remote_rx) = channel(16);
@@ -1030,7 +1033,7 @@ mod tests {
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let (transport_tx1, _transport_rx1) = channel(16);
-        let remote = Ntcp2Builder::new()
+        let remote = Ntcp2Builder::<MockRuntime>::new()
             .with_router_address(listener.local_addr().unwrap().port())
             .build();
         let remote_manager = SessionManager::new(
@@ -1061,7 +1064,7 @@ mod tests {
                 ));
 
                 let (transport_tx1, _transport_rx1) = channel(16);
-                let local = Ntcp2Builder::new().build();
+                let local = Ntcp2Builder::<MockRuntime>::new().build();
                 let local_manager = SessionManager::new(
                     local.ntcp2_key,
                     local.ntcp2_iv,
@@ -1102,7 +1105,7 @@ mod tests {
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let (transport_tx1, _transport_rx1) = channel(16);
-        let remote = Ntcp2Builder::new()
+        let remote = Ntcp2Builder::<MockRuntime>::new()
             .with_router_address(listener.local_addr().unwrap().port())
             .build();
         let remote_manager = SessionManager::new(
@@ -1133,7 +1136,7 @@ mod tests {
                 ));
 
                 let (transport_tx1, _transport_rx1) = channel(16);
-                let local = Ntcp2Builder::new().build();
+                let local = Ntcp2Builder::<MockRuntime>::new().build();
                 let local_manager = SessionManager::new(
                     local.ntcp2_key,
                     local.ntcp2_iv,

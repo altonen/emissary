@@ -17,9 +17,9 @@
 // DEALINGS IN THE SOFTWARE.
 
 use anyhow::anyhow;
+use emissary_core::runtime::Runtime;
 use home::home_dir;
-use rand::RngCore;
-use rand_core::OsRng;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
@@ -113,7 +113,7 @@ pub struct Storage {
 
 impl Storage {
     /// Create new [`Storage`].
-    pub async fn new(base_path: Option<PathBuf>) -> anyhow::Result<Self> {
+    pub async fn new<R: Runtime>(base_path: Option<PathBuf>) -> anyhow::Result<Self> {
         let base_path = base_path
             .map_or_else(
                 || {
@@ -158,7 +158,7 @@ impl Storage {
             let key = x25519_dalek::StaticSecret::random().to_bytes().to_vec();
             let iv = {
                 let mut iv = [0u8; 16];
-                rand_core::OsRng.fill_bytes(&mut iv);
+                R::rng().fill_bytes(&mut iv);
 
                 iv
             };
@@ -191,7 +191,7 @@ impl Storage {
             let static_key = x25519_dalek::StaticSecret::random().to_bytes().to_vec();
             let intro_key = {
                 let mut intro_key = [0u8; 32];
-                rand_core::OsRng.fill_bytes(&mut intro_key);
+                R::rng().fill_bytes(&mut intro_key);
 
                 intro_key
             };
@@ -226,7 +226,7 @@ impl Storage {
         }
 
         if !base_path.join("signing.key").exists() {
-            let key = ed25519_dalek::SigningKey::generate(&mut OsRng);
+            let key = ed25519_dalek::SigningKey::generate(&mut R::rng());
             tokio::fs::write(base_path.join("signing.key"), key.as_bytes()).await?;
         }
 
@@ -256,7 +256,7 @@ impl Storage {
         };
 
         let (ntcp2_key, ntcp2_iv) = {
-            // `Storage::new()` created ntcp2 key and iv if they didn't exist
+            // `Storage::new::<TokioRuntime>()` created ntcp2 key and iv if they didn't exist
             let key_bytes = tokio::fs::read(self.base_path.join("ntcp2.keys"))
                 .await
                 .expect("ntcp2 keys to exist");
@@ -268,7 +268,7 @@ impl Storage {
         };
 
         let (ssu2_static_key, ssu2_intro_key) = {
-            // `Storage::new()` created ssu2 keys if they didn't exist
+            // `Storage::new::<TokioRuntime>()` created ssu2 keys if they didn't exist
             let key_bytes = tokio::fs::read(self.base_path.join("ssu2.keys"))
                 .await
                 .expect("ssu2.keys to exist");
@@ -280,7 +280,7 @@ impl Storage {
         };
 
         let static_key = {
-            // `Storage::new()` created the static key if it didn't exist
+            // `Storage::new::<TokioRuntime>()` created the static key if it didn't exist
             let key_bytes = tokio::fs::read(self.base_path.join("static.key"))
                 .await
                 .expect("static.key to exist");
@@ -289,7 +289,7 @@ impl Storage {
         };
 
         let signing_key = {
-            // `Storage::new()` created the signing key if it didn't exist
+            // `Storage::new::<TokioRuntime>()` created the signing key if it didn't exist
             let key_bytes = tokio::fs::read(self.base_path.join("signing.key"))
                 .await
                 .expect("signing.key to exist");
@@ -517,6 +517,7 @@ impl emissary_core::runtime::Storage for Storage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::tokio::Runtime as TokioRuntime;
     use tempfile::tempdir;
 
     #[tokio::test]
@@ -525,7 +526,7 @@ mod tests {
         let path = dir.path().join("testdir");
 
         assert!(tokio::fs::read_dir(&path).await.is_err());
-        let storage = Storage::new(Some(path.clone())).await.unwrap();
+        let storage = Storage::new::<TokioRuntime>(Some(path.clone())).await.unwrap();
 
         // ensure router info directory has been created
         let chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-~";
@@ -562,7 +563,7 @@ mod tests {
         tokio::fs::create_dir_all(&path).await.unwrap();
 
         assert!(tokio::fs::read_dir(&path).await.is_ok());
-        let storage = Storage::new(Some(path.clone())).await.unwrap();
+        let storage = Storage::new::<TokioRuntime>(Some(path.clone())).await.unwrap();
 
         // ensure router info directory has been created
         let chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-~";
@@ -599,7 +600,7 @@ mod tests {
         tokio::fs::create_dir_all(&path).await.unwrap();
 
         assert!(tokio::fs::read_dir(&path).await.is_ok());
-        let _storage = Storage::new(Some(path.clone())).await.unwrap();
+        let _storage = Storage::new::<TokioRuntime>(Some(path.clone())).await.unwrap();
 
         // ensure router info directory has been created
         let chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-~";
@@ -630,7 +631,7 @@ mod tests {
         assert!(!path.join("netDb").exists());
 
         // reinitialize `Storage` and verify netDb has been created
-        let _storage = Storage::new(Some(path.clone())).await.unwrap();
+        let _storage = Storage::new::<TokioRuntime>(Some(path.clone())).await.unwrap();
 
         // ensure router info directory has been created
         let chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-~";
@@ -650,7 +651,7 @@ mod tests {
         tokio::fs::create_dir_all(&path).await.unwrap();
 
         assert!(tokio::fs::read_dir(&path).await.is_ok());
-        let _storage = Storage::new(Some(path.clone())).await.unwrap();
+        let _storage = Storage::new::<TokioRuntime>(Some(path.clone())).await.unwrap();
 
         // ensure router info directory has been created
         let chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-~";
@@ -681,7 +682,7 @@ mod tests {
         assert!(!path.join("peerProfiles").exists());
 
         // reinitialize `Storage` and verify netDb has been created
-        let _storage = Storage::new(Some(path.clone())).await.unwrap();
+        let _storage = Storage::new::<TokioRuntime>(Some(path.clone())).await.unwrap();
 
         // ensure router info directory has been created
         let chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-~";
@@ -702,7 +703,7 @@ mod tests {
         tokio::fs::create_dir_all(&path).await.unwrap();
 
         assert!(tokio::fs::read_dir(&path).await.is_ok());
-        let storage = Storage::new(Some(path.clone())).await.unwrap();
+        let storage = Storage::new::<TokioRuntime>(Some(path.clone())).await.unwrap();
 
         // ensure router info directory has been created
         let chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-~";
@@ -741,7 +742,7 @@ mod tests {
         let path = dir.path().join("testdir");
 
         assert!(tokio::fs::read_dir(&path).await.is_err());
-        let storage = Storage::new(Some(path.clone())).await.unwrap();
+        let storage = Storage::new::<TokioRuntime>(Some(path.clone())).await.unwrap();
 
         assert!(!path
             .join("netDb/rr/routerInfo-r6H3ithwF0-Uh5Ll9XXkRZLnSCXDeKrEbnQM6pw9YMc=.dat")

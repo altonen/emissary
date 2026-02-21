@@ -33,7 +33,7 @@ use crate::{
 
 use futures_channel::oneshot;
 use hashbrown::HashMap;
-use rand::Rng;
+use rand::{CryptoRng, Rng};
 use thingbuf::mpsc::{channel, errors::TrySendError, with_recycle, Receiver, Sender};
 use zeroize::Zeroize;
 
@@ -244,7 +244,10 @@ impl SubsystemHandle {
 
     /// Register listener into `SubsystemManager`'s routing table and return the unique
     /// message ID and the receive half of the registered channel.
-    pub fn insert_listener(&self, rng: &mut impl Rng) -> (MessageId, oneshot::Receiver<Message>) {
+    pub fn insert_listener(
+        &self,
+        rng: &mut impl CryptoRng,
+    ) -> (MessageId, oneshot::Receiver<Message>) {
         let (tx, rx) = oneshot::channel();
         let mut listeners = self.listeners.write();
 
@@ -262,7 +265,7 @@ impl SubsystemHandle {
     /// tunnel ID and the channel the IBGW will use to receive messages.
     pub fn insert_tunnel<const SIZE: usize>(
         &self,
-        rng: &mut impl Rng,
+        rng: &mut impl CryptoRng,
     ) -> (TunnelId, Receiver<Message>) {
         let (tx, rx) = channel(SIZE);
         let mut tunnels = self.tunnels.write();
@@ -944,7 +947,7 @@ mod tests {
 
     #[test]
     fn no_bandwidth_shared() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext { manager, .. } = SubsystemManager::<MockRuntime>::new(
             100 * 1024,
@@ -959,7 +962,7 @@ mod tests {
 
     #[test]
     fn all_bandwidth_shared() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext { manager, .. } = SubsystemManager::<MockRuntime>::new(
             100 * 1024,
@@ -974,7 +977,7 @@ mod tests {
 
     #[tokio::test]
     async fn inbound_router_connection_disconnection() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx: _netdb_rx,
@@ -1016,7 +1019,7 @@ mod tests {
 
     #[tokio::test]
     async fn dial_router() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx: _netdb_rx,
@@ -1069,7 +1072,7 @@ mod tests {
 
     #[tokio::test]
     async fn dial_fails() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx: _netdb_rx,
@@ -1122,7 +1125,7 @@ mod tests {
 
     #[tokio::test]
     async fn dial_fails_with_feedback() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx: _netdb_rx,
@@ -1173,7 +1176,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_message_to_router() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx: _netdb_rx,
@@ -1288,7 +1291,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_pending_messages_to_router() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx: _netdb_rx,
@@ -1405,7 +1408,7 @@ mod tests {
 
     #[tokio::test]
     async fn install_listener_through_handle() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx: _netdb_rx,
@@ -1426,7 +1429,7 @@ mod tests {
         assert!(handle.listeners.read().is_empty());
         assert!(handle_clone.listeners.read().is_empty());
 
-        let (message_id, _rx) = handle.insert_listener(&mut rand::rngs::SysRng);
+        let (message_id, _rx) = handle.insert_listener(&mut MockRuntime::rng());
 
         assert!(manager.listeners.read().contains_key(&message_id));
         assert!(handle.listeners.read().contains_key(&message_id));
@@ -1435,7 +1438,7 @@ mod tests {
 
     #[tokio::test]
     async fn no_active_listener_variable_tunnel_build() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx: _netdb_rx,
@@ -1471,7 +1474,7 @@ mod tests {
 
     #[tokio::test]
     async fn no_listener_short_tunnel_build() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx: _netdb_rx,
@@ -1507,7 +1510,7 @@ mod tests {
 
     #[tokio::test]
     async fn no_listener_outbound_tunnel_build_reply() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx: _netdb_rx,
@@ -1546,7 +1549,7 @@ mod tests {
 
     #[tokio::test]
     async fn active_listener_short_tunnel_build() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx: _netdb_rx,
@@ -1563,7 +1566,7 @@ mod tests {
         );
 
         // register listener through handle
-        let (message_id, rx) = handle.insert_listener(&mut rand::rngs::SysRng);
+        let (message_id, rx) = handle.insert_listener(&mut MockRuntime::rng());
 
         // create mock `ShortTunnelBuid`
         let message = Message {
@@ -1591,7 +1594,7 @@ mod tests {
 
     #[tokio::test]
     async fn active_listener_outbound_tunnel_build_reply() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx: _netdb_rx,
@@ -1608,7 +1611,7 @@ mod tests {
         );
 
         // register listener through handle
-        let (message_id, rx) = handle.insert_listener(&mut rand::rngs::SysRng);
+        let (message_id, rx) = handle.insert_listener(&mut MockRuntime::rng());
 
         // create mock `OutboundTunnelBuildReply`
         let message = Message {
@@ -1636,7 +1639,7 @@ mod tests {
 
     #[tokio::test]
     async fn register_tunnel_through_handle() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx: _netdb_rx,
@@ -1653,7 +1656,7 @@ mod tests {
         );
 
         // register tunnel through handle
-        let (tunnel_id, _rx) = handle.insert_tunnel::<16>(&mut rand::rngs::SysRng);
+        let (tunnel_id, _rx) = handle.insert_tunnel::<16>(&mut MockRuntime::rng());
 
         assert!(handle.tunnels.read().contains_key(&tunnel_id));
         assert!(manager.tunnels.read().contains_key(&tunnel_id));
@@ -1667,7 +1670,7 @@ mod tests {
 
     #[tokio::test]
     async fn route_tunnel_data() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx: _netdb_rx,
@@ -1684,7 +1687,7 @@ mod tests {
         );
 
         // register tunnel through handle
-        let (tunnel_id, rx) = handle.insert_tunnel::<16>(&mut rand::rngs::SysRng);
+        let (tunnel_id, rx) = handle.insert_tunnel::<16>(&mut MockRuntime::rng());
 
         // create mock tunnel data message
         let message = {
@@ -1719,7 +1722,7 @@ mod tests {
 
     #[tokio::test]
     async fn route_tunnel_gateway() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx: _netdb_rx,
@@ -1736,7 +1739,7 @@ mod tests {
         );
 
         // register tunnel through handle
-        let (tunnel_id, rx) = handle.insert_tunnel::<16>(&mut rand::rngs::SysRng);
+        let (tunnel_id, rx) = handle.insert_tunnel::<16>(&mut MockRuntime::rng());
 
         // create mock tunnel data message
         let message = {
@@ -1770,7 +1773,7 @@ mod tests {
 
     #[tokio::test]
     async fn route_tunnel_data_of_non_existent_tunnel() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx,
@@ -1818,7 +1821,7 @@ mod tests {
 
     #[tokio::test]
     async fn route_tunnel_gateway_of_non_existent_tunnel() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx,
@@ -1867,7 +1870,7 @@ mod tests {
     #[tokio::test]
     #[should_panic]
     async fn route_message_to_closed_tunnel() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx: _netdb_rx,
@@ -1884,7 +1887,7 @@ mod tests {
         );
 
         // register tunnel through handle
-        let (tunnel_id, rx) = handle.insert_tunnel::<16>(&mut rand::rngs::SysRng);
+        let (tunnel_id, rx) = handle.insert_tunnel::<16>(&mut MockRuntime::rng());
         drop(rx);
 
         // create mock tunnel data message
@@ -1932,7 +1935,7 @@ mod tests {
         let mut out = BytesMut::with_capacity(message.len() + 16 + 32 + 4);
 
         // derive outbound garlic context
-        let ephemeral_secret = EphemeralPrivateKey::random(rand::thread_rng());
+        let ephemeral_secret = EphemeralPrivateKey::random(MockRuntime::rng());
         let ephemeral_public = ephemeral_secret.public();
         let (local_key, local_state) =
             noise.derive_outbound_garlic_key(remote_key, ephemeral_secret);
@@ -1957,7 +1960,7 @@ mod tests {
         remote_key: StaticPublicKey,
         cloves: Vec<(MessageType, MessageId, CloveDeliveryInstructions, &[u8])>,
     ) -> Message {
-        let key = StaticPrivateKey::random(rand::thread_rng());
+        let key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = Bytes::from(RouterId::random().to_vec());
         let noise = NoiseContext::new(key, router_id);
 
@@ -1966,7 +1969,7 @@ mod tests {
 
     #[tokio::test]
     async fn outbound_garlic_message_triggers_a_dial() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx: _netdb_rx,
@@ -2016,7 +2019,7 @@ mod tests {
 
     #[tokio::test]
     async fn outbound_garlic_message_pending_dial() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx: _netdb_rx,
@@ -2090,7 +2093,7 @@ mod tests {
 
     #[tokio::test]
     async fn outbound_garlic_message_for_tunnel() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx: _netdb_rx,
@@ -2159,7 +2162,7 @@ mod tests {
 
     #[tokio::test]
     async fn outbound_garlic_message_for_router() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx: _netdb_rx,
@@ -2218,7 +2221,7 @@ mod tests {
 
     #[tokio::test]
     async fn multiple_inbound_cloves() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx,
@@ -2239,8 +2242,8 @@ mod tests {
         //  - one for transit tunnel manager
         //  - one for an active tunnel
         //  - one for an active listener
-        let (message_id, mut listener_rx) = handle.insert_listener(&mut rand::rngs::SysRng);
-        let (tunnel_id, tunnel_rx) = handle.insert_tunnel::<16>(&mut rand::rngs::SysRng);
+        let (message_id, mut listener_rx) = handle.insert_listener(&mut MockRuntime::rng());
+        let (tunnel_id, tunnel_rx) = handle.insert_tunnel::<16>(&mut MockRuntime::rng());
         let message = {
             let mut data = BytesMut::with_capacity(4 + 16 + 1008);
             data.put_u32(*tunnel_id);
@@ -2323,7 +2326,7 @@ mod tests {
 
     #[tokio::test]
     async fn inbound_and_outbound_cloves() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx,
@@ -2363,7 +2366,7 @@ mod tests {
         //  - one for netdb
         //  - tunnel delivery for connected router
         //  - router delivery for an unconnected router
-        let (tunnel_id, tunnel_rx) = handle.insert_tunnel::<16>(&mut rand::rngs::SysRng);
+        let (tunnel_id, tunnel_rx) = handle.insert_tunnel::<16>(&mut MockRuntime::rng());
         let remote_tunnel_id = TunnelId::random();
         let message = {
             let mut data = BytesMut::with_capacity(4 + 16 + 1008);
@@ -2469,7 +2472,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn recursive_inbound_garlic_message() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx,
@@ -2487,7 +2490,7 @@ mod tests {
 
         // create noise context
         let noise = NoiseContext::new(
-            StaticPrivateKey::random(rand::thread_rng()),
+            StaticPrivateKey::random(MockRuntime::rng()),
             Bytes::from(RouterId::random().to_vec()),
         );
 
@@ -2538,7 +2541,7 @@ mod tests {
 
     #[tokio::test]
     async fn route_message_locally() {
-        let private_key = StaticPrivateKey::random(rand::rngs::SysRng);
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
         let SubsystemManagerContext {
             netdb_rx: _netdb_rx,
@@ -2554,7 +2557,7 @@ mod tests {
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
         );
 
-        let (tunnel_id, tunnel_rx) = handle.insert_tunnel::<16>(&mut rand::rngs::SysRng);
+        let (tunnel_id, tunnel_rx) = handle.insert_tunnel::<16>(&mut MockRuntime::rng());
         let message = {
             let mut data = BytesMut::with_capacity(4 + 16 + 1008);
             data.put_u32(*tunnel_id);

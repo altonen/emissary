@@ -63,9 +63,10 @@ pub struct RouterId(Arc<String>);
 impl RouterId {
     #[cfg(test)]
     pub fn random() -> RouterId {
-        use rand::Rng;
+        use crate::runtime::mock::MockRuntime;
+        use rand::RngExt;
 
-        let bytes = rand::thread_rng().gen::<[u8; 32]>();
+        let bytes = MockRuntime::rng().random::<[u8; 32]>();
         RouterId::from(bytes)
     }
 
@@ -256,17 +257,16 @@ impl RouterIdentity {
     #[cfg(test)]
     pub fn random() -> (Self, StaticPrivateKey, SigningPrivateKey) {
         use crate::runtime::mock::MockRuntime;
-        use rand::{thread_rng, RngCore};
 
         let sk = {
             let mut out = [0u8; 32];
-            thread_rng().fill_bytes(&mut out);
+            MockRuntime::rng().fill_bytes(&mut out);
 
             StaticPrivateKey::from(out)
         };
         let sgk = {
             let mut out = [0u8; 32];
-            thread_rng().fill_bytes(&mut out);
+            MockRuntime::rng().fill_bytes(&mut out);
 
             SigningPrivateKey::from(out)
         };
