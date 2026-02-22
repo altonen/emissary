@@ -23,7 +23,7 @@ use crate::{
 };
 
 use futures::FutureExt;
-use rand::Rng;
+use rand::CryptoRng;
 
 use core::{
     future::Future,
@@ -169,7 +169,7 @@ impl<T: AsyncWrite + Unpin> AsyncWriteExt for T {
 }
 
 /// Fisher-Yates shuffle.
-pub fn shuffle<T>(array: &mut [T], rng: &mut impl Rng) {
+pub fn shuffle<T>(array: &mut [T], rng: &mut impl CryptoRng) {
     let len = array.len();
 
     for i in (1..len).rev() {

@@ -25,7 +25,7 @@ use data_encoding::{Encoding, Specification};
 use ed25519_dalek::Signer;
 use lazy_static::lazy_static;
 use p256::ecdsa::signature::Verifier as _;
-use rand::rand_core::{CryptoRng, RngCore};
+use rand::rand_core::CryptoRng;
 use zeroize::Zeroize;
 
 use alloc::{string::String, vec::Vec};
@@ -333,7 +333,7 @@ pub enum SigningPrivateKey {
 
 impl SigningPrivateKey {
     /// Generate random [`SigningPrivateKey`].
-    pub fn random(mut csprng: impl CryptoRng + RngCore) -> Self {
+    pub fn random(mut csprng: impl CryptoRng) -> Self {
         Self::Ed25519(ed25519_dalek::SigningKey::generate(&mut csprng))
     }
 

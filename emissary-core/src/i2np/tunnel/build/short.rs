@@ -28,7 +28,7 @@ use nom::{
     number::complete::{be_u32, be_u8},
     Err, IResult,
 };
-use rand::Rng;
+use rand::CryptoRng;
 
 use alloc::{vec, vec::Vec};
 
@@ -122,7 +122,7 @@ impl<'a> TunnelBuildRecordBuilder<'a> {
     }
 
     /// Returns a full-length build record (218) of random bytes.
-    pub fn random<R: Rng>(rng: &mut R) -> Vec<u8> {
+    pub fn random<R: CryptoRng>(rng: &mut R) -> Vec<u8> {
         let mut out = vec![0u8; 218];
         rng.fill_bytes(&mut out);
 
@@ -130,7 +130,7 @@ impl<'a> TunnelBuildRecordBuilder<'a> {
     }
 
     /// Serialize `TunnelBuildRecordBuilder`.
-    pub fn serialize(self, rng: &mut impl Rng) -> Vec<u8> {
+    pub fn serialize(self, rng: &mut impl CryptoRng) -> Vec<u8> {
         let mut out = BytesMut::with_capacity(154 + AES256_IV_LEN);
 
         out.put_u32(*self.tunnel_id.expect("to exist"));
@@ -256,6 +256,8 @@ mod tests {
 
     #[test]
     fn invalid_role() {
+        use rand::Rng;
+
         let mut out = BytesMut::with_capacity(154 + AES256_IV_LEN);
 
         out.put_u32(0u32);
@@ -284,6 +286,8 @@ mod tests {
 
     #[test]
     fn options_parsed_correctly() {
+        use rand::Rng;
+
         let mut out = BytesMut::with_capacity(154 + AES256_IV_LEN);
 
         out.put_u32(0u32);

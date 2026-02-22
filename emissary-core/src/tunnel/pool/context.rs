@@ -29,7 +29,7 @@ use bytes::Bytes;
 use futures::Stream;
 use futures_channel::oneshot;
 use hashbrown::HashMap;
-use rand::Rng;
+use rand::CryptoRng;
 use thingbuf::mpsc;
 
 #[cfg(feature = "std")]
@@ -226,7 +226,10 @@ impl TunnelPoolContextHandle {
     }
 
     /// Allocate new (MessageId, Receiver<Message>)` tuple for an inbound build response.
-    pub fn add_listener(&self, rng: &mut impl Rng) -> (MessageId, oneshot::Receiver<Message>) {
+    pub fn add_listener(
+        &self,
+        rng: &mut impl CryptoRng,
+    ) -> (MessageId, oneshot::Receiver<Message>) {
         let mut inner = self.listeners.write();
         let (tx, rx) = oneshot::channel();
 
@@ -371,7 +374,10 @@ pub struct TunnelPoolContext {
 impl TunnelPoolContext {
     /// Allocate new (`MessageId`, `oneshot::Receiver<Message>)` tuple for an inbound build
     /// response.
-    pub fn add_listener(&self, rng: &mut impl Rng) -> (MessageId, oneshot::Receiver<Message>) {
+    pub fn add_listener(
+        &self,
+        rng: &mut impl CryptoRng,
+    ) -> (MessageId, oneshot::Receiver<Message>) {
         let mut inner = self.listeners.write();
         let (tx, rx) = oneshot::channel();
 
