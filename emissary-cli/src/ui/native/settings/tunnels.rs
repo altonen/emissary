@@ -17,6 +17,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::ui::native::{types::Message, RouterUi};
+use std::num::NonZeroUsize;
 
 use iced::{
     advanced::widget::Text,
@@ -85,24 +86,24 @@ impl TryInto<Option<crate::config::ExploratoryConfig>> for ExploratoryConfig {
         Ok(Some(crate::config::ExploratoryConfig {
             inbound_len: self
                 .inbound_len
-                .map(|inbound_len| inbound_len.parse::<usize>())
-                .transpose()
-                .map_err(|_| String::from("Invalid inbound length"))?,
+                .and_then(|x| x.parse::<NonZeroUsize>().ok())
+                .ok_or(String::from("Invalid inbound length"))?
+                .into(),
             inbound_count: self
                 .inbound_count
-                .map(|inbound_count| inbound_count.parse::<usize>())
-                .transpose()
-                .map_err(|_| String::from("Invalid inbound count"))?,
+                .and_then(|x| x.parse::<NonZeroUsize>().ok())
+                .ok_or(String::from("Invalid inbound count"))?
+                .into(),
             outbound_len: self
                 .outbound_len
-                .map(|outbound_len| outbound_len.parse::<usize>())
-                .transpose()
-                .map_err(|_| String::from("Invalid outbound length"))?,
+                .and_then(|x| x.parse::<NonZeroUsize>().ok())
+                .ok_or(String::from("Invalid outbound length"))?
+                .into(),
             outbound_count: self
                 .outbound_count
-                .map(|outbound_count| outbound_count.parse::<usize>())
-                .transpose()
-                .map_err(|_| String::from("Invalid outbound count"))?,
+                .and_then(|x| x.parse::<NonZeroUsize>().ok())
+                .ok_or(String::from("Invalid outbound count"))?
+                .into(),
         }))
     }
 }
@@ -119,10 +120,10 @@ impl From<&Option<crate::config::ExploratoryConfig>> for ExploratoryConfig {
         };
 
         Self {
-            inbound_len: value.inbound_len.map(|value| value.to_string()),
-            inbound_count: value.inbound_count.map(|value| value.to_string()),
-            outbound_len: value.outbound_len.map(|value| value.to_string()),
-            outbound_count: value.outbound_count.map(|value| value.to_string()),
+            inbound_len: Some(value.inbound_len.to_string()),
+            inbound_count: Some(value.inbound_count.to_string()),
+            outbound_len: Some(value.outbound_len.to_string()),
+            outbound_count: Some(value.outbound_count.to_string()),
         }
     }
 }
@@ -162,7 +163,7 @@ impl TryInto<Option<crate::config::TransitConfig>> for TransitConfig {
         Ok(Some(crate::config::TransitConfig {
             max_tunnels: self
                 .max_tunnels
-                .map(|max_tunnels| max_tunnels.parse::<usize>())
+                .map(|max_tunnels| max_tunnels.parse::<NonZeroUsize>().map(usize::from))
                 .transpose()
                 .map_err(|_| String::from("Invalid transit tunnel max count"))?,
         }))
@@ -194,7 +195,7 @@ impl RouterUi {
                     Text::new("Inbound length").size(15).color(Color::from_rgb8(0x9b, 0xa2, 0xae)),
                 )
                 .push(
-                    TextInput::new("2", self.exploratory.inbound_len())
+                    TextInput::new("3", self.exploratory.inbound_len())
                         .size(15)
                         .on_input(Message::ExploratoryInboundLengthChanged)
                         .padding(10)
@@ -217,7 +218,7 @@ impl RouterUi {
                 )
                 .push(Text::new("Inbound count").size(15).color(Color::from_rgb8(0x9b, 0xa2, 0xae)))
                 .push(
-                    TextInput::new("3", self.exploratory.inbound_count())
+                    TextInput::new("2", self.exploratory.inbound_count())
                         .size(15)
                         .on_input(Message::ExploratoryInboundCountChanged)
                         .padding(10)
@@ -242,7 +243,7 @@ impl RouterUi {
                     Text::new("Outbound length").size(15).color(Color::from_rgb8(0x9b, 0xa2, 0xae)),
                 )
                 .push(
-                    TextInput::new("2", self.exploratory.outbound_len())
+                    TextInput::new("3", self.exploratory.outbound_len())
                         .size(15)
                         .on_input(Message::ExploratoryOutboundLengthChanged)
                         .padding(10)
@@ -267,7 +268,7 @@ impl RouterUi {
                     Text::new("Outbound count").size(15).color(Color::from_rgb8(0x9b, 0xa2, 0xae)),
                 )
                 .push(
-                    TextInput::new("3", self.exploratory.outbound_count())
+                    TextInput::new("2", self.exploratory.outbound_count())
                         .size(15)
                         .on_input(Message::ExploratoryOutboundCountChanged)
                         .padding(10)

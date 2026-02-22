@@ -45,12 +45,26 @@ const RESERVED_PORTS: [u16; 57] = [
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExploratoryConfig {
-    pub inbound_len: Option<usize>,
-    pub inbound_count: Option<usize>,
-    pub outbound_len: Option<usize>,
-    pub outbound_count: Option<usize>,
+pub struct TunnelConfig {
+    pub inbound_len: usize,
+    pub inbound_count: usize,
+    pub outbound_len: usize,
+    pub outbound_count: usize,
 }
+
+/// Copied from yosemite.
+impl Default for TunnelConfig {
+    fn default() -> Self {
+        Self {
+            inbound_len: 3,
+            inbound_count: 2,
+            outbound_len: 3,
+            outbound_count: 2,
+        }
+    }
+}
+
+pub type ExploratoryConfig = TunnelConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ntcp2Config {
@@ -90,6 +104,8 @@ pub struct HttpProxyConfig {
     pub port: u16,
     pub host: String,
     pub outproxy: Option<String>,
+    #[serde(flatten)]
+    pub tunnel_config: Option<TunnelConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -212,6 +228,7 @@ impl EmissaryConfig {
                 host: "127.0.0.1".to_string(),
                 port: 4444u16,
                 outproxy: None,
+                tunnel_config: Some(TunnelConfig::default()),
             }),
             socks_proxy: None,
             i2cp: Some(I2cpConfig {
@@ -558,10 +575,10 @@ impl Config {
             caps: config.caps,
             client_tunnels: config.client_tunnels.unwrap_or(Vec::new()),
             exploratory: config.exploratory.map(|config| emissary_core::ExploratoryConfig {
-                inbound_len: config.inbound_len,
-                inbound_count: config.inbound_count,
-                outbound_len: config.outbound_len,
-                outbound_count: config.outbound_count,
+                inbound_len: Some(config.inbound_len),
+                inbound_count: Some(config.inbound_count),
+                outbound_len: Some(config.outbound_len),
+                outbound_count: Some(config.outbound_count),
             }),
             floodfill: config.floodfill,
             http_proxy: config.http_proxy,
@@ -719,6 +736,7 @@ impl Config {
                     port: *port,
                     host: host.clone(),
                     outproxy: http_outproxy.clone(),
+                    tunnel_config: Some(TunnelConfig::default()),
                 });
             }
             _ => {}
@@ -845,10 +863,6 @@ mod tests {
             base_path: None,
             command: None,
             log: None,
-            #[cfg(any(
-                all(feature = "native-ui", not(feature = "web-ui")),
-                all(not(feature = "native-ui"), feature = "web-ui")
-            ))]
             router_ui: crate::cli::RouterUiOptions {
                 disable_ui: None,
                 refresh_interval: None,

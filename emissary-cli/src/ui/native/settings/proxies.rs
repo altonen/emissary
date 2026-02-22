@@ -25,11 +25,69 @@ use iced::{
     Background, Border, Color, Theme,
 };
 
+#[derive(Clone, Default)]
+struct TunnelConfig {
+    inbound_len: Option<String>,
+    inbound_count: Option<String>,
+    outbound_len: Option<String>,
+    outbound_count: Option<String>,
+}
+
+impl From<crate::config::TunnelConfig> for TunnelConfig {
+    fn from(value: crate::config::TunnelConfig) -> Self {
+        Self {
+            inbound_len: Some(value.inbound_len.to_string()),
+            inbound_count: Some(value.inbound_count.to_string()),
+            outbound_len: Some(value.outbound_len.to_string()),
+            outbound_count: Some(value.outbound_count.to_string()),
+        }
+    }
+}
+
+impl From<Option<crate::config::TunnelConfig>> for TunnelConfig {
+    fn from(value: Option<crate::config::TunnelConfig>) -> Self {
+        match value {
+            Some(v) => v.into(),
+            None => Self::default(),
+        }
+    }
+}
+
+impl TryInto<crate::config::TunnelConfig> for TunnelConfig {
+    type Error = String;
+
+    fn try_into(self) -> Result<crate::config::TunnelConfig, Self::Error> {
+        let inbound_len = self
+            .inbound_len
+            .and_then(|x| x.parse::<usize>().ok())
+            .ok_or(String::from("Invalid inbound length"))?;
+        let inbound_count = self
+            .inbound_count
+            .and_then(|x| x.parse::<usize>().ok())
+            .ok_or(String::from("Invalid inbound count"))?;
+        let outbound_len = self
+            .outbound_len
+            .and_then(|x| x.parse::<usize>().ok())
+            .ok_or(String::from("Invalid outbound length"))?;
+        let outbound_count = self
+            .outbound_count
+            .and_then(|x| x.parse::<usize>().ok())
+            .ok_or(String::from("Invalid outbound count"))?;
+        Ok(crate::config::TunnelConfig {
+            inbound_len,
+            inbound_count,
+            outbound_len,
+            outbound_count,
+        })
+    }
+}
+
 #[derive(Clone)]
 pub struct HttpProxyConfig {
     port: Option<String>,
     host: Option<String>,
     outproxy: Option<String>,
+    tunnel_config: TunnelConfig,
     enabled: bool,
 }
 
@@ -44,6 +102,22 @@ impl HttpProxyConfig {
 
     fn outproxy(&self) -> &str {
         self.outproxy.as_ref().map_or("", |outproxy| outproxy.as_str())
+    }
+
+    fn inbound_len(&self) -> &str {
+        self.tunnel_config.inbound_len.as_ref().map_or("", |il| il.as_str())
+    }
+
+    fn inbound_count(&self) -> &str {
+        self.tunnel_config.inbound_count.as_ref().map_or("", |ic| ic.as_str())
+    }
+
+    fn outbound_len(&self) -> &str {
+        self.tunnel_config.outbound_len.as_ref().map_or("", |ol| ol.as_str())
+    }
+
+    fn outbound_count(&self) -> &str {
+        self.tunnel_config.outbound_count.as_ref().map_or("", |oc| oc.as_str())
     }
 
     pub fn enabled(&self) -> bool {
@@ -64,6 +138,22 @@ impl HttpProxyConfig {
 
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
+    }
+
+    pub fn set_inbound_len(&mut self, inbound_len: String) {
+        self.tunnel_config.inbound_len = Some(inbound_len);
+    }
+
+    pub fn set_inbound_count(&mut self, inbound_count: String) {
+        self.tunnel_config.inbound_count = Some(inbound_count);
+    }
+
+    pub fn set_outbound_len(&mut self, outbound_len: String) {
+        self.tunnel_config.outbound_len = Some(outbound_len);
+    }
+
+    pub fn set_outbound_count(&mut self, outbound_count: String) {
+        self.tunnel_config.outbound_count = Some(outbound_count);
     }
 }
 
@@ -91,6 +181,7 @@ impl TryInto<Option<crate::config::HttpProxyConfig>> for HttpProxyConfig {
                 host
             },
             outproxy: self.outproxy,
+            tunnel_config: Some(self.tunnel_config.try_into()?),
         }))
     }
 }
@@ -102,12 +193,14 @@ impl From<&Option<crate::config::HttpProxyConfig>> for HttpProxyConfig {
                 port: Some(value.port.to_string()),
                 host: Some(value.host.clone()),
                 outproxy: value.outproxy.clone(),
+                tunnel_config: value.tunnel_config.clone().into(),
                 enabled: true,
             },
             None => Self {
                 port: None,
                 host: None,
                 outproxy: None,
+                tunnel_config: TunnelConfig::default(),
                 enabled: false,
             },
         }
@@ -247,6 +340,114 @@ impl RouterUi {
                     TextInput::new("Outproxy", self.http_proxy.outproxy())
                         .size(15)
                         .on_input(Message::OutproxyChanged)
+                        .padding(10)
+                        .style(
+                            |_theme: &Theme, _status: _| iced::widget::text_input::Style {
+                                border: Border {
+                                    radius: Radius::from(6.0),
+                                    width: 1.0,
+                                    color: Color::from_rgb8(28, 36, 49),
+                                },
+                                background: iced::Background::Color(iced::Color::from_rgb8(
+                                    0x37, 0x41, 0x51,
+                                )),
+                                icon: Color::WHITE,
+                                placeholder: Color::from_rgb8(0x9b, 0xa2, 0xae),
+                                value: Color::from_rgb8(0xf3, 0xf3, 0xf2),
+                                selection: Color::from_rgb8(0x9b, 0xa2, 0xae),
+                            },
+                        ),
+                )
+                .push(
+                    Text::new("Inbound tunnel length")
+                        .size(15)
+                        .color(Color::from_rgb8(0x9b, 0xa2, 0xae)),
+                )
+                .push(
+                    TextInput::new("3", self.http_proxy.inbound_len())
+                        .size(15)
+                        .on_input(Message::HttpInboundLenChanged)
+                        .padding(10)
+                        .style(
+                            |_theme: &Theme, _status: _| iced::widget::text_input::Style {
+                                border: Border {
+                                    radius: Radius::from(6.0),
+                                    width: 1.0,
+                                    color: Color::from_rgb8(28, 36, 49),
+                                },
+                                background: iced::Background::Color(iced::Color::from_rgb8(
+                                    0x37, 0x41, 0x51,
+                                )),
+                                icon: Color::WHITE,
+                                placeholder: Color::from_rgb8(0x9b, 0xa2, 0xae),
+                                value: Color::from_rgb8(0xf3, 0xf3, 0xf2),
+                                selection: Color::from_rgb8(0x9b, 0xa2, 0xae),
+                            },
+                        ),
+                )
+                .push(
+                    Text::new("Inbound tunnel count")
+                        .size(15)
+                        .color(Color::from_rgb8(0x9b, 0xa2, 0xae)),
+                )
+                .push(
+                    TextInput::new("2", self.http_proxy.inbound_count())
+                        .size(15)
+                        .on_input(Message::HttpInboundCountChanged)
+                        .padding(10)
+                        .style(
+                            |_theme: &Theme, _status: _| iced::widget::text_input::Style {
+                                border: Border {
+                                    radius: Radius::from(6.0),
+                                    width: 1.0,
+                                    color: Color::from_rgb8(28, 36, 49),
+                                },
+                                background: iced::Background::Color(iced::Color::from_rgb8(
+                                    0x37, 0x41, 0x51,
+                                )),
+                                icon: Color::WHITE,
+                                placeholder: Color::from_rgb8(0x9b, 0xa2, 0xae),
+                                value: Color::from_rgb8(0xf3, 0xf3, 0xf2),
+                                selection: Color::from_rgb8(0x9b, 0xa2, 0xae),
+                            },
+                        ),
+                )
+                .push(
+                    Text::new("Outbound tunnel length")
+                        .size(15)
+                        .color(Color::from_rgb8(0x9b, 0xa2, 0xae)),
+                )
+                .push(
+                    TextInput::new("3", self.http_proxy.outbound_len())
+                        .size(15)
+                        .on_input(Message::HttpOutboundLenChanged)
+                        .padding(10)
+                        .style(
+                            |_theme: &Theme, _status: _| iced::widget::text_input::Style {
+                                border: Border {
+                                    radius: Radius::from(6.0),
+                                    width: 1.0,
+                                    color: Color::from_rgb8(28, 36, 49),
+                                },
+                                background: iced::Background::Color(iced::Color::from_rgb8(
+                                    0x37, 0x41, 0x51,
+                                )),
+                                icon: Color::WHITE,
+                                placeholder: Color::from_rgb8(0x9b, 0xa2, 0xae),
+                                value: Color::from_rgb8(0xf3, 0xf3, 0xf2),
+                                selection: Color::from_rgb8(0x9b, 0xa2, 0xae),
+                            },
+                        ),
+                )
+                .push(
+                    Text::new("Outbound tunnel count")
+                        .size(15)
+                        .color(Color::from_rgb8(0x9b, 0xa2, 0xae)),
+                )
+                .push(
+                    TextInput::new("2", self.http_proxy.outbound_count())
+                        .size(15)
+                        .on_input(Message::HttpOutboundCountChanged)
                         .padding(10)
                         .style(
                             |_theme: &Theme, _status: _| iced::widget::text_input::Style {
