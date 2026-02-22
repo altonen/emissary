@@ -98,6 +98,9 @@ pub enum MessageKind<'a> {
     Relay {
         /// Relay block.
         relay_block: &'a RelayBlock,
+
+        /// Serialized `RouterInfo`.
+        router_info: Option<&'a [u8]>,
     },
 
     /// Router info block.
@@ -230,7 +233,26 @@ pub enum RelayBlock {
         /// Message.
         message: Vec<u8>,
 
+        /// Signature for `message`.
         ///
+        /// `None` if rejected by Bob.
+        signature: Option<Vec<u8>>,
+
+        /// Token.
+        ///
+        /// `None` if rejected by Bob/Charlie.
+        token: Option<u64>,
+    },
+
+    /// Relay intro from Bob to Charlie.
+    Intro {
+        /// Alice's router info.
+        router_id: Vec<u8>,
+
+        /// Message received from Alice.
+        message: Vec<u8>,
+
+        /// Signature for `message`.
         signature: Vec<u8>,
     },
 }
@@ -238,13 +260,26 @@ pub enum RelayBlock {
 impl RelayBlock {
     /// Get serialized length of the block.
     pub fn serialized_len(&self) -> usize {
-        // block type + block length + flag + code;
-        let overhead = 1 + 2 + 1 + 1;
+        // block type + block length + flag;
+        let overhead = 1 + 2 + 1;
 
         match self {
             Self::Response {
-                message, signature, ..
-            } => overhead + message.len() + signature.len(),
+                message,
+                signature,
+                token,
+                rejection: _,
+            } =>
+                overhead
+                    + 1
+                    + message.len()
+                    + signature.as_ref().map_or(0, |s| s.len())
+                    + token.map_or(0, |_| TOKEN_LEN),
+            Self::Intro {
+                message,
+                signature,
+                router_id: _,
+            } => overhead + ROUTER_HASH_LEN + message.len() + signature.len(),
         }
     }
 }
@@ -256,6 +291,7 @@ impl fmt::Debug for RelayBlock {
                 .debug_struct("RelayBlock::Response")
                 .field("rejection", &rejection)
                 .finish_non_exhaustive(),
+            Self::Intro { .. } => f.debug_struct("RelayBlock::Intro").finish_non_exhaustive(),
         }
     }
 }
@@ -481,20 +517,60 @@ impl<'a> DataMessageBuilder<'a> {
                         }
                     }
                 }
-                Some(MessageKind::Relay { relay_block }) => match relay_block {
-                    RelayBlock::Response {
-                        rejection,
-                        message,
-                        signature,
-                    } => {
-                        out.put_u8(BlockType::RelayResponse.as_u8());
-                        out.put_u16((2 + message.len() + signature.len()) as u16);
-                        out.put_u8(0);
-                        out.put_u8(rejection.map_or(0, |reason| reason.as_bob()));
-                        out.put_slice(&message);
-                        out.put_slice(&signature);
+                Some(MessageKind::Relay {
+                    relay_block,
+                    router_info,
+                }) => {
+                    if let Some(router_info) = router_info {
+                        out.put_u8(BlockType::RouterInfo.as_u8());
+                        out.put_u16((2 + router_info.len()) as u16);
+                        out.put_u8(0u8);
+                        out.put_u8(1u8);
+                        out.put_slice(router_info);
                     }
-                },
+
+                    match relay_block {
+                        RelayBlock::Response {
+                            rejection,
+                            message,
+                            signature,
+                            token,
+                        } => {
+                            out.put_u8(BlockType::RelayResponse.as_u8());
+                            out.put_u16(
+                                (2 + message.len()
+                                    + signature.as_ref().map_or(0, |s| s.len())
+                                    + token.map_or(0, |_| TOKEN_LEN))
+                                    as u16,
+                            );
+                            out.put_u8(0);
+                            out.put_u8(rejection.map_or(0, |reason| reason.as_u8()));
+                            out.put_slice(&message);
+
+                            if let Some(signature) = signature {
+                                out.put_slice(&signature);
+                            }
+
+                            if let Some(token) = token {
+                                out.put_u64_le(*token);
+                            }
+                        }
+                        RelayBlock::Intro {
+                            router_id,
+                            message,
+                            signature,
+                        } => {
+                            out.put_u8(BlockType::RelayIntro.as_u8());
+                            out.put_u16(
+                                (1 + ROUTER_HASH_LEN + message.len() + signature.len()) as u16,
+                            );
+                            out.put_u8(0); // flag
+                            out.put_slice(&router_id);
+                            out.put_slice(&message);
+                            out.put_slice(&signature);
+                        }
+                    }
+                }
                 Some(MessageKind::RouterInfo { router_info }) => {
                     out.put_u8(BlockType::RouterInfo.as_u8());
                     out.put_u16((2 + router_info.len()) as u16);

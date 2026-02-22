@@ -214,6 +214,9 @@ enum SegmentKind {
     Relay {
         /// Relay block.
         relay_block: RelayBlock,
+
+        /// Serialized `RouterInfo`, if sent.
+        router_info: Option<Vec<u8>>,
     },
 
     /// `RouterInfo` block.
@@ -256,7 +259,13 @@ impl<'a> From<&'a SegmentKind> for MessageKind<'a> {
                 peer_test_block,
                 router_info: router_info.as_deref(),
             },
-            SegmentKind::Relay { relay_block } => Self::Relay { relay_block },
+            SegmentKind::Relay {
+                relay_block,
+                router_info,
+            } => Self::Relay {
+                relay_block,
+                router_info: router_info.as_deref(),
+            },
             SegmentKind::RouterInfo { router_info } => Self::RouterInfo { router_info },
         }
     }
@@ -332,6 +341,11 @@ pub enum TransmissionMessage {
     ///
     /// May be split into two datagrams.
     PeerTestWithRouterInfo((PeerTestBlock, Vec<u8>)),
+
+    /// Relay message with `RouterInfo`.
+    ///
+    /// May be split into two datagrams.
+    RelayWithRouterInfo((RelayBlock, Vec<u8>)),
 }
 
 impl From<Message> for TransmissionMessage {
@@ -358,6 +372,12 @@ impl From<(PeerTestBlock, Vec<u8>)> for TransmissionMessage {
     }
 }
 
+impl From<(RelayBlock, Vec<u8>)> for TransmissionMessage {
+    fn from(value: (RelayBlock, Vec<u8>)) -> Self {
+        Self::RelayWithRouterInfo(value)
+    }
+}
+
 impl fmt::Debug for TransmissionMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -371,6 +391,10 @@ impl fmt::Debug for TransmissionMessage {
                 f.debug_struct("TransmissionMessage::Relay").field("block", &block).finish(),
             Self::PeerTestWithRouterInfo((block, _)) => f
                 .debug_struct("TransmissionMessage::PeerTestWithRouterInfo")
+                .field("block", &block)
+                .finish_non_exhaustive(),
+            Self::RelayWithRouterInfo((block, _)) => f
+                .debug_struct("TransmissionMessage::RelayWithRouterInfo")
                 .field("block", &block)
                 .finish_non_exhaustive(),
         }
@@ -483,11 +507,6 @@ impl<R: Runtime> TransmissionManager<R> {
                     router_info: None,
                 });
             }
-            TransmissionMessage::Relay(relay_block) => {
-                debug_assert!(self.fits_in_datagram(relay_block.serialized_len()));
-
-                self.pending.push_back(SegmentKind::Relay { relay_block });
-            }
             TransmissionMessage::PeerTestWithRouterInfo((peer_test_block, router_info)) => {
                 if self.fits_in_datagram(
                     peer_test_block.serialized_len() + router_info.len() + RI_BLOCK_OVERHEAD,
@@ -506,6 +525,36 @@ impl<R: Runtime> TransmissionManager<R> {
                     self.pending.push_back(SegmentKind::RouterInfo { router_info });
                     self.pending.push_back(SegmentKind::PeerTest {
                         peer_test_block,
+                        router_info: None,
+                    });
+                }
+            }
+            TransmissionMessage::Relay(relay_block) => {
+                debug_assert!(self.fits_in_datagram(relay_block.serialized_len()));
+
+                self.pending.push_back(SegmentKind::Relay {
+                    relay_block,
+                    router_info: None,
+                });
+            }
+            TransmissionMessage::RelayWithRouterInfo((relay_block, router_info)) => {
+                if self.fits_in_datagram(
+                    relay_block.serialized_len() + router_info.len() + RI_BLOCK_OVERHEAD,
+                ) {
+                    self.pending.push_back(SegmentKind::Relay {
+                        relay_block,
+                        router_info: Some(router_info),
+                    });
+                } else {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        router_id = %self.router_id,
+                        "fragmenting relay with router info into two packets",
+                    );
+
+                    self.pending.push_back(SegmentKind::RouterInfo { router_info });
+                    self.pending.push_back(SegmentKind::Relay {
+                        relay_block,
                         router_info: None,
                     });
                 }

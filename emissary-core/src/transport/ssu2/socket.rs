@@ -46,8 +46,8 @@ use crate::{
 };
 
 use bytes::{Bytes, BytesMut};
-use futures::{FutureExt, Stream, StreamExt};
-use hashbrown::HashMap;
+use futures::{Stream, StreamExt};
+use hashbrown::{HashMap, HashSet};
 use rand::Rng;
 use thingbuf::mpsc::{channel, errors::TrySendError, Sender};
 
@@ -219,6 +219,9 @@ pub struct Ssu2Socket<R: Runtime> {
     /// Terminating sessions.
     terminating_session: R::JoinSet<(RouterId, u64)>,
 
+    /// Tokens.
+    tokens: HashSet<u64>,
+
     /// TX channel for sending events to `SubsystemManager`.
     #[allow(unused)]
     transport_tx: Sender<SubsystemEvent>,
@@ -262,12 +265,13 @@ impl<R: Runtime> Ssu2Socket<R> {
             pending_pkts: VecDeque::new(),
             pending_sessions: R::join_set(),
             read_buffer: vec![0u8; DATAGRAM_MAX_SIZE],
-            relay_manager: RelayManager::new(router_ctx.clone()),
+            relay_manager: RelayManager::new(router_ctx.clone(), socket.clone()),
             router_ctx,
             sessions: HashMap::new(),
             socket,
             static_key,
             terminating_session: R::join_set(),
+            tokens: HashSet::new(),
             transport_tx,
             unvalidated_sessions: HashMap::new(),
             waker: None,
@@ -349,7 +353,7 @@ impl<R: Runtime> Ssu2Socket<R> {
                 self.pending_sessions.push(session.run());
                 self.router_ctx.metrics_handle().counter(NUM_INBOUND_SSU2).increment(1);
 
-                Ok(None)
+                return Ok(None);
             }
             Ok(HeaderKind::PeerTest {
                 net_id,
@@ -375,53 +379,65 @@ impl<R: Runtime> Ssu2Socket<R> {
                             "failed to handle out-of-session peer test message",
                         );
 
-                        Err(error)
+                        return Err(error);
                     }
-                    Ok(None) => Ok(None),
-                    Ok(Some(PeerTestManagerEvent::PeerTestResult { results })) => Ok(results
-                        .into_iter()
-                        .fold(None, |prev, result| {
-                            match (
-                                prev,
-                                self.detector.add_peer_test_result(result.0, result.1, result.2),
-                            ) {
-                                (None, None) => None,
-                                (None, Some(event)) => Some(event),
-                                (Some(_), Some(event)) => Some(event),
-                                (Some(event), None) => Some(event),
-                            }
-                        })
-                        .map(|status| TransportEvent::FirewallStatus { status })),
+                    Ok(None) => return Ok(None),
+                    Ok(Some(PeerTestManagerEvent::PeerTestResult { results })) =>
+                        return Ok(results
+                            .into_iter()
+                            .fold(None, |prev, result| {
+                                match (
+                                    prev,
+                                    self.detector
+                                        .add_peer_test_result(result.0, result.1, result.2),
+                                ) {
+                                    (None, None) => None,
+                                    (None, Some(event)) => Some(event),
+                                    (Some(_), Some(event)) => Some(event),
+                                    (Some(event), None) => Some(event),
+                                }
+                            })
+                            .map(|status| TransportEvent::FirewallStatus { status })),
                 }
             }
-            _ => match self.pending_outbound.get(&address) {
-                Some(intro_key) =>
-                    match self.sessions.get_mut(&reader.reset_key(*intro_key).dst_id()) {
-                        Some(tx) => tx
-                            .try_send(Packet {
-                                pkt: datagram,
-                                address,
-                            })
-                            .map(|_| None)
-                            .map_err(From::from),
-                        None => {
-                            tracing::debug!(
-                                target: LOG_TARGET,
-                                ?address,
-                                "pending connection found but no associated session",
-                            );
-                            Ok(None)
-                        }
-                    },
-                None => {
-                    tracing::trace!(
-                        target: LOG_TARGET,
-                        message_type = ?datagram.get(12),
-                        "unrecognized message type",
-                    );
-                    Err(Ssu2Error::Malformed)
-                }
-            },
+            Ok(HeaderKind::SessionRequest {
+                token,
+                ephemeral_key: _,
+                net_id: _,
+                pkt_num: _,
+            }) =>
+                if self.tokens.contains(&token) {
+                    // TODO: start inbound session with this
+                    return Ok(None);
+                },
+            _ => {}
+        }
+
+        let Some(intro_key) = self.pending_outbound.get(&address) else {
+            tracing::error!(
+                target: "emissary::ssu2::relay",
+                message_type = ?datagram.get(12),
+                "unrecognized message type",
+            );
+            return Err(Ssu2Error::Malformed);
+        };
+
+        match self.sessions.get_mut(&reader.reset_key(*intro_key).dst_id()) {
+            Some(tx) => tx
+                .try_send(Packet {
+                    pkt: datagram,
+                    address,
+                })
+                .map(|_| None)
+                .map_err(From::from),
+            None => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?address,
+                    "pending connection found but no associated session",
+                );
+                Ok(None)
+            }
         }
     }
 
@@ -502,7 +518,7 @@ impl<R: Runtime> Ssu2Socket<R> {
             return;
         };
 
-        let context = match kind {
+        let (context, relay_tag_request) = match kind {
             PendingSessionKind::Inbound {
                 pkt,
                 address,
@@ -517,12 +533,10 @@ impl<R: Runtime> Ssu2Socket<R> {
                     "inbound session accepted",
                 );
 
-                // register request to relay manager so it can update its bookkeeping
-                self.relay_manager.register_relay_tag_request_result(relay_tag_request);
-
                 // TODO: retransmissiosn?
                 self.pending_pkts.push_back((pkt, address));
-                context
+
+                (context, Some(relay_tag_request))
             }
             PendingSessionKind::Outbound {
                 address, context, ..
@@ -535,13 +549,38 @@ impl<R: Runtime> Ssu2Socket<R> {
                 );
 
                 self.pending_outbound.remove(&address);
-                context
+
+                (context, None)
             }
         };
 
         // get handles to `PeerTestManager` and `RelayManager`
         let peer_test_handle = self.peer_test_manager.handle();
         let relay_handle = self.relay_manager.handle();
+
+        // TODO: test code remove
+        if context.router_id
+            == RouterId::from(
+                crate::crypto::base64_decode("1CpmD8LwgUGrx4GSh9hdIpaX068Tqm4UbFb5oe6pw20=")
+                    .unwrap(),
+            )
+        {
+            self.relay_manager.register_relay_client(
+                context.router_id.clone(),
+                1337,
+                relay_handle.cmd_tx(),
+            );
+        }
+
+        match relay_tag_request {
+            Some(RelayTagRequested::Yes(tag)) => self.relay_manager.register_relay_client(
+                router_id.clone(),
+                tag,
+                relay_handle.cmd_tx(),
+            ),
+            Some(RelayTagRequested::No(tag)) => self.relay_manager.deallocate_relay_tag(tag),
+            None => {}
+        }
 
         // register session to `PeerTestManager`
         self.peer_test_manager
@@ -704,6 +743,7 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
                 );
 
                 this.peer_test_manager.remove_session(&router_id);
+                this.relay_manager.register_closed_connection(&router_id);
                 this.terminating_session.push(TerminatingSsu2Session::<R>::new(termination_ctx));
                 this.router_ctx.metrics_handle().gauge(NUM_CONNECTIONS).decrement(1);
 
@@ -847,6 +887,7 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
                             if let Some(address) = external_address {
                                 if let Some(address) = this.detector.add_external_address(address) {
                                     this.peer_test_manager.add_external_address(address);
+                                    this.relay_manager.add_external_address(address);
                                 }
                             }
 
@@ -988,8 +1029,14 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
             }
         }
 
-        if this.relay_manager.poll_unpin(cx).is_ready() {
-            return Poll::Ready(None);
+        loop {
+            match this.relay_manager.poll_next_unpin(cx) {
+                Poll::Pending => break,
+                Poll::Ready(None) => {}
+                Poll::Ready(Some(token)) => {
+                    this.tokens.insert(token);
+                }
+            }
         }
 
         self.waker = Some(cx.waker().clone());

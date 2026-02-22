@@ -37,6 +37,7 @@ impl<R: Runtime> Ssu2Session<R> {
                 rejection,
                 message,
                 signature,
+                token,
             } => {
                 tracing::trace!(
                     target: LOG_TARGET,
@@ -49,9 +50,24 @@ impl<R: Runtime> Ssu2Session<R> {
                     rejection,
                     message,
                     signature,
+                    token,
                 });
             }
-            RelayCommand::RelayIntro {} => {}
+            RelayCommand::RelayIntro {
+                router_id,
+                router_info,
+                message,
+                signature,
+            } => {
+                self.transmission.schedule((
+                    RelayBlock::Intro {
+                        router_id,
+                        message,
+                        signature,
+                    },
+                    router_info,
+                ));
+            }
             RelayCommand::Dummy => unreachable!(),
         }
     }

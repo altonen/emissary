@@ -489,7 +489,6 @@ impl<R: Runtime> Ssu2Session<R> {
                 Block::RelayRequest {
                     nonce,
                     relay_tag,
-                    timestamp,
                     address,
                     message,
                     signature,
@@ -500,10 +499,44 @@ impl<R: Runtime> Ssu2Session<R> {
                         self.router_id.clone(),
                         nonce,
                         relay_tag,
-                        timestamp,
                         address,
                         message,
                         signature,
+                    );
+                }
+                Block::RelayIntro {
+                    router_id,
+                    nonce,
+                    relay_tag,
+                    address,
+                    message,
+                    signature,
+                } => {
+                    self.remote_ack.register_pkt(pkt_num);
+                    self.ack_timer.schedule_ack(self.transmission.round_trip_time());
+                    self.relay_handle.handle_relay_intro(
+                        router_id,
+                        self.router_id.clone(),
+                        self.pending_router_info.take(),
+                        nonce,
+                        relay_tag,
+                        address,
+                        message,
+                        signature,
+                    );
+                }
+                Block::RelayResponse {
+                    nonce,
+                    address,
+                    token,
+                    rejection,
+                    message,
+                    signature,
+                } => {
+                    self.remote_ack.register_pkt(pkt_num);
+                    self.ack_timer.schedule_ack(self.transmission.round_trip_time());
+                    self.relay_handle.handle_relay_response(
+                        nonce, address, token, rejection, message, signature,
                     );
                 }
                 block => {
