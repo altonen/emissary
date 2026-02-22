@@ -29,7 +29,7 @@ anyhow = { workspace = true }
 ed25519-dalek = { workspace = true, features = ["rand_core", "fast"] }
 futures = { workspace = true }
 nom = { workspace = true, features = ["alloc"] }
-rand = { workspace = true }
+rand = { workspace = true, features = ["thread_rng"] }
 reqwest = { workspace = true, features = ["default-tls"] }
 serde = { workspace = true, features = ["derive"] }
 smol = { workspace = true, optional = true }

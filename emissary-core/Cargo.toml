@@ -40,7 +40,7 @@ zeroize = { version = "1.8.1", default-features = false, features = ["alloc"] }
 ed25519-dalek = { workspace = true, features = ["alloc", "rand_core", "fast", "zeroize"] }
 nom = { workspace = true, features = ["alloc"] }
 parking_lot = { workspace = true, optional = true }
-rand = { workspace = true, features = ["alloc", "thread_rng"] }
+rand = { workspace = true, features = ["alloc"] }
 sha2 = { workspace = true }
 tracing = { workspace = true }
 x25519-dalek = { workspace = true, features = ["reusable_secrets", "static_secrets", "zeroize", "precomputed-tables"] }
@@ -51,7 +51,6 @@ futures-io = "0.3.31"
 # workspace dependencies
 emissary-util = { path = "../emissary-util", features = ["tokio"] }
 flate2 = { workspace = true }
-rand = { workspace = true, features = ["alloc", "sys_rng"] }
 smol = { workspace = true }
 tokio-util = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
