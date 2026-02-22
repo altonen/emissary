@@ -12,7 +12,7 @@ arbitrary = { version = "1", features = ["derive"] }
 emissary-core = { path = "../", features = ["std"] }
 emissary-util = { path = "../../emissary-util", features = ["tokio"] }
 libfuzzer-sys = "0.4.0"
-rand_core = { version = "0.6.4", features = ["alloc", "getrandom"] }
+rand = { version = "0.10.0", features = ["thread_rng"] }
 
 # Prevent this from interfering with workspaces
 [workspace]
