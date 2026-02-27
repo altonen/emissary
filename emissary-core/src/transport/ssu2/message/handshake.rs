@@ -823,10 +823,10 @@ impl SessionCreatedBuilder {
             padding
         };
         // TODO: these numbers are confusing, fix
-        let mut payload_size =
+        let payload_size =
             3 * 3 + 4 + 6 + padding.len() + POLY13055_MAC_LEN + self.relay_tag.map_or(0, |_| 7);
 
-        let mut payload = if let Some(relay_tag) = self.relay_tag {
+        let payload = if let Some(relay_tag) = self.relay_tag {
             vec![
                 Block::DateTime {
                     timestamp: R::time_since_epoch().as_secs() as u32,

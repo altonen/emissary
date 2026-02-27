@@ -513,6 +513,7 @@ mod tests {
                 Block, HeaderKind, HeaderReader,
             },
             peer_test::types::{PeerTestEvent, PeerTestEventRecycle, PeerTestHandle},
+            relay::types::{RelayEvent, RelayHandle},
             session::{active::Ssu2SessionContext, KeyContext},
             Packet,
         },
@@ -531,6 +532,7 @@ mod tests {
         alice_router_info: RouterInfo,
         cmd_tx: Sender<PeerTestCommand>,
         event_rx: Receiver<PeerTestEvent, PeerTestEventRecycle>,
+        relay_rx: Receiver<RelayEvent>,
         pkt_tx: Sender<Packet>,
         recv_socket: MockUdpSocket,
         router_id: Vec<u8>,
@@ -590,13 +592,22 @@ mod tests {
         let handle = PeerTestHandle::new(event_tx);
         let cmd_tx = handle.cmd_tx();
         let (transport_tx, transport_rx) = channel(16);
+        let (relay_tx, relay_rx) = channel(16);
+        let relay_handle = RelayHandle::new(relay_tx);
 
-        let session =
-            Ssu2Session::<MockRuntime>::new(ctx, socket, transport_tx, router_ctx, handle);
+        let session = Ssu2Session::<MockRuntime>::new(
+            ctx,
+            socket,
+            transport_tx,
+            router_ctx,
+            handle,
+            relay_handle,
+        );
 
         ActiveSessionContext {
             alice_router_id,
             alice_router_info,
+            relay_rx,
             cmd_tx,
             event_rx,
             pkt_tx: from_socket_tx,

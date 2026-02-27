@@ -1540,7 +1540,7 @@ impl TryFrom<u8> for MessageType {
 
 /// Header kind.
 pub enum HeaderKind {
-    /// Retry
+    /// Retry.
     Retry {
         /// Network ID.
         net_id: u8,
@@ -1608,8 +1608,20 @@ pub enum HeaderKind {
         pkt_num: u32,
     },
 
-    /// Peer test
+    /// Peer test.
     PeerTest {
+        /// Network ID.
+        net_id: u8,
+
+        /// Packet number.
+        pkt_num: u32,
+
+        /// Source connection ID.
+        src_id: u64,
+    },
+
+    /// Hole punch
+    HolePunch {
         /// Network ID.
         net_id: u8,
 
@@ -1680,6 +1692,16 @@ impl fmt::Debug for HeaderKind {
                 src_id,
             } => f
                 .debug_struct("HeaderKind::PeerTest")
+                .field("net_id", &net_id)
+                .field("pkt_num", &pkt_num)
+                .field("src_id", &src_id)
+                .finish(),
+            Self::HolePunch {
+                net_id,
+                pkt_num,
+                src_id,
+            } => f
+                .debug_struct("HeaderKind::HolePunch")
                 .field("net_id", &net_id)
                 .field("pkt_num", &pkt_num)
                 .field("src_id", &src_id)
@@ -1903,13 +1925,28 @@ impl<'a> HeaderReader<'a> {
                     src_id,
                 })
             }
-            message_type => {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    ?message_type,
-                    "unsupported message type",
+            MessageType::HolePunch => {
+                if ((header >> 40) as u8) != PROTOCOL_VERSION {
+                    return Err(Ssu2Error::InvalidVersion);
+                }
+
+                if self.pkt.len() < 32 {
+                    return Err(Ssu2Error::NotEnoughBytes);
+                }
+
+                ChaCha::with_iv(k_header_2, [0u8; 12]).decrypt_ref(&mut self.pkt[16..32]);
+
+                let net_id = ((header >> 48) & 0xff) as u8;
+                let pkt_num = u32::from_be(header as u32);
+                let src_id = u64::from_le_bytes(
+                    TryInto::<[u8; 8]>::try_into(&self.pkt[16..24]).expect("to succeed"),
                 );
-                Err(Ssu2Error::UnexpectedMessage)
+
+                Ok(HeaderKind::HolePunch {
+                    net_id,
+                    pkt_num,
+                    src_id,
+                })
             }
         }
     }

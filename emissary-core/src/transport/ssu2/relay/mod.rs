@@ -59,18 +59,25 @@ struct RelayClient {
     router_id: RouterId,
 }
 
+/// Relay server.
+struct RelayServer {
+    /// Router ID of Bob.
+    #[allow(unused)]
+    router_id: RouterId,
+}
+
 /// Relay manager.
 pub struct RelayManager<R: Runtime> {
-    /// Active relay clients.
-    ///
-    /// IOW, context for all Charlies we've agreed to act as a relay for.
-    active_inbound: HashMap<u32, RelayClient>,
-
     /// Active relay processes.
     ///
     /// Indexed by nonce, the senders are used to send relay responses
     /// received from Charlie to Alice.
     active_relays: HashMap<u32, Sender<RelayCommand>>,
+
+    /// Active relay clients.
+    ///
+    /// IOW, context for all Charlies we've agreed to act as a relay for.
+    clients: HashMap<u32, RelayClient>,
 
     /// RX channel for receiving relay events.
     event_rx: Receiver<RelayEvent>,
@@ -92,6 +99,11 @@ pub struct RelayManager<R: Runtime> {
     /// Router context.
     router_ctx: RouterContext<R>,
 
+    /// Active relay servers.
+    ///
+    /// IOW, context for all Bob's who've agreed to act as relay for us.
+    servers: HashMap<u32, RelayServer>,
+
     /// UDP socket.
     socket: R::UdpSocket,
 
@@ -111,16 +123,17 @@ impl<R: Runtime> RelayManager<R> {
         let (event_tx, event_rx) = channel(128);
 
         Self {
-            active_inbound: HashMap::new(),
+            clients: HashMap::new(),
+            servers: HashMap::new(),
             active_relays: HashMap::new(),
             event_rx,
             event_tx,
-            id_mappings: HashMap::new(),
-            tokens: VecDeque::new(),
             external_address: None,
+            id_mappings: HashMap::new(),
             relay_tags: HashSet::new(),
             router_ctx,
             socket,
+            tokens: VecDeque::new(),
             write_buffer: VecDeque::new(),
         }
     }
@@ -164,17 +177,34 @@ impl<R: Runtime> RelayManager<R> {
             target: LOG_TARGET,
             %router_id,
             ?relay_tag,
+            num_clients = self.clients.len(),
             "register relay client",
         );
 
         self.id_mappings.insert(router_id.clone(), relay_tag);
-        self.active_inbound.insert(relay_tag, RelayClient { cmd_tx, router_id });
+        self.clients.insert(relay_tag, RelayClient { cmd_tx, router_id });
+    }
+
+    /// Register relay server.
+    ///
+    /// Relay servers are routers who are willing to act as relay for us.
+    #[allow(unused)]
+    pub fn register_relay_server(&mut self, router_id: RouterId, relay_tag: u32) {
+        tracing::debug!(
+            target: LOG_TARGET,
+            %router_id,
+            ?relay_tag,
+            num_servers = ?self.servers.len(),
+            "register relay server",
+        );
+
+        self.servers.insert(relay_tag, RelayServer { router_id });
     }
 
     /// Register closed connection to `RelayManager`.
     pub fn register_closed_connection(&mut self, router_id: &RouterId) {
         if let Some(tag) = self.id_mappings.remove(router_id) {
-            self.active_inbound.remove(&tag);
+            self.clients.remove(&tag);
         }
     }
 
@@ -244,7 +274,7 @@ impl<R: Runtime> RelayManager<R> {
         let Some(RelayClient {
             router_id: charlie_router_id,
             cmd_tx,
-        }) = self.active_inbound.get(&relay_tag)
+        }) = self.clients.get(&relay_tag)
         else {
             tracing::debug!(
                 target: LOG_TARGET,
@@ -306,7 +336,7 @@ impl<R: Runtime> RelayManager<R> {
                     %alice_router_id,
                     ?nonce,
                     ?relay_tag,
-                    "failed to verify siganture, rejecting relay request",
+                    "failed to verify signature, rejecting relay request",
                 );
 
                 return self.reject_relay(
@@ -359,8 +389,8 @@ impl<R: Runtime> RelayManager<R> {
         nonce: u32,
         relay_tag: u32,
         address: SocketAddr,
-        _message: Vec<u8>,
-        _signature: Vec<u8>,
+        message: Vec<u8>,
+        signature: Vec<u8>,
         tx: Sender<RelayCommand>,
     ) {
         tracing::debug!(
@@ -370,6 +400,22 @@ impl<R: Runtime> RelayManager<R> {
             "handle relay intro",
         );
 
+        if self.servers.get(&relay_tag).is_none() {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?relay_tag,
+                ?nonce,
+                "no relay tag found, rejecting relay intro",
+            );
+
+            return self.reject_relay(
+                nonce,
+                RejectionReason::Charlie(CharlieRejectionReason::Unspecified),
+                &bob_router_id,
+                tx,
+            );
+        }
+
         let router_info = match alice_router_info {
             Some(router_info) => *router_info,
             None => match self.router_ctx.profile_storage().get(&alice_router_id) {
@@ -377,6 +423,7 @@ impl<R: Runtime> RelayManager<R> {
                 None => {
                     tracing::debug!(
                         target: LOG_TARGET,
+                        ?relay_tag,
                         ?nonce,
                         "alice not found from local storage, unable to hole punch",
                     );
@@ -397,6 +444,8 @@ impl<R: Runtime> RelayManager<R> {
                 None => {
                     tracing::warn!(
                         target: LOG_TARGET,
+                        ?relay_tag,
+                        ?nonce,
                         "alice doesn't have a published ssu2 address",
                     );
                     debug_assert!(false);
@@ -406,6 +455,8 @@ impl<R: Runtime> RelayManager<R> {
             None => {
                 tracing::warn!(
                     target: LOG_TARGET,
+                    ?relay_tag,
+                    ?nonce,
                     "alice doesn't support ssu2",
                 );
                 debug_assert!(false);
@@ -413,7 +464,30 @@ impl<R: Runtime> RelayManager<R> {
             }
         };
 
-        // TODO: verify `signature`
+        // verify signature
+        {
+            let mut payload = BytesMut::with_capacity(128);
+            payload.put_slice(b"RelayRequestData");
+            payload.put_slice(&bob_router_id.to_vec());
+            payload.put_slice(&self.router_ctx.router_id().to_vec());
+            payload.put_slice(&message);
+
+            if router_info.identity.signing_key().verify(&payload, &signature).is_err() {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?relay_tag,
+                    ?nonce,
+                    "failed to verify siganture if relay intro, rejecting",
+                );
+
+                return self.reject_relay(
+                    nonce,
+                    RejectionReason::Charlie(CharlieRejectionReason::SignatureFailure),
+                    &bob_router_id,
+                    tx,
+                );
+            }
+        }
 
         let Some(intro_key) = router_info.ssu2_intro_key() else {
             tracing::warn!(
@@ -424,13 +498,7 @@ impl<R: Runtime> RelayManager<R> {
                 "no intro key for in alice's router info, rejecting",
             );
             debug_assert!(false);
-
-            return self.reject_relay(
-                nonce,
-                RejectionReason::Charlie(CharlieRejectionReason::Unspecified),
-                &bob_router_id,
-                tx,
-            );
+            return;
         };
 
         let Some(external_address) = self.external_address else {
@@ -651,5 +719,1188 @@ impl<R: Runtime> Stream for RelayManager<R> {
         }
 
         Poll::Pending
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        crypto::{chachapoly::ChaChaPoly, SigningPrivateKey, StaticPrivateKey},
+        primitives::RouterInfoBuilder,
+        profile::ProfileStorage,
+        router::context::builder::RouterContextBuilder,
+        runtime::mock::{MockRuntime, MockUdpSocket},
+        timeout,
+        transport::ssu2::message::{Block, HeaderKind, HeaderReader},
+        Ssu2Config,
+    };
+    use bytes::Bytes;
+    use futures::{FutureExt, StreamExt};
+
+    #[allow(unused)]
+    struct TestRouter {
+        router_id: RouterId,
+        router_info: RouterInfo,
+        static_key: StaticPrivateKey,
+        signing_key: SigningPrivateKey,
+        serialized: Vec<u8>,
+        socket: MockUdpSocket,
+        intro_key: [u8; 32],
+    }
+
+    impl TestRouter {
+        async fn new(seed: u8) -> Self {
+            let socket = <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                .await
+                .unwrap();
+            let (router_info, static_key, signing_key) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: socket.local_address().unwrap().port(),
+                    host: Some("127.0.0.1".parse().unwrap()),
+                    publish: true,
+                    static_key: [seed; 32],
+                    intro_key: [seed + 1; 32],
+                })
+                .build();
+            let serialized = router_info.serialize(&signing_key);
+            let router_id = router_info.identity.id();
+
+            Self {
+                router_id,
+                router_info,
+                serialized,
+                signing_key,
+                intro_key: [seed + 1; 32],
+                socket,
+                static_key,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn relay_request_accepted() {
+        let alice = TestRouter::new(0).await;
+        let bob = TestRouter::new(2).await;
+        let charlie = TestRouter::new(4).await;
+
+        // we are bob
+        let mut relay = RelayManager::<MockRuntime>::new(
+            RouterContextBuilder::default()
+                .with_router_info(
+                    bob.router_info.clone(),
+                    bob.static_key.clone(),
+                    bob.signing_key.clone(),
+                )
+                .with_profile_storage({
+                    let storage = ProfileStorage::new(&[], &[]);
+                    storage.discover_router(
+                        alice.router_info.clone(),
+                        Bytes::from(alice.serialized.clone()),
+                    );
+                    storage
+                })
+                .build(),
+            bob.socket.clone(),
+        );
+
+        // add session for charlie
+        let relay_tag = 1337;
+        let nonce = 1338;
+
+        let (alice_tx, alice_rx) = channel(16);
+        let (charlie_tx, charlie_rx) = channel(16);
+        relay.register_relay_client(charlie.router_id.clone(), 1337, charlie_tx);
+
+        // create message + signature
+        let (message, signature) = {
+            let mut payload = BytesMut::with_capacity(128);
+            payload.put_slice(b"RelayRequestData");
+            payload.put_slice(&bob.router_id.to_vec());
+            payload.put_slice(&charlie.router_id.to_vec());
+
+            payload.put_u32(nonce);
+            payload.put_u32(relay_tag);
+            payload.put_u32(MockRuntime::time_since_epoch().as_secs() as u32);
+            payload.put_u8(2);
+            payload.put_u8(6);
+            payload.put_u16(alice.socket.local_address().unwrap().port());
+
+            match alice.socket.local_address().unwrap().ip() {
+                IpAddr::V4(addr) => payload.put_slice(&addr.octets()),
+                IpAddr::V6(addr) => payload.put_slice(&addr.octets()),
+            }
+
+            let signature = alice.signing_key.sign(&payload);
+
+            (
+                payload.split_off(b"RelayAgreementOK".len() + 2 * ROUTER_HASH_LEN).to_vec(),
+                signature,
+            )
+        };
+
+        // handle relay request from alice
+        relay.handle_relay_request(
+            alice.router_id.clone(),
+            nonce,
+            relay_tag,
+            alice.socket.local_address().unwrap(),
+            message.clone(),
+            signature.clone(),
+            alice_tx,
+        );
+
+        match charlie_rx.try_recv().unwrap() {
+            RelayCommand::RelayIntro {
+                router_id,
+                router_info,
+                message: intro_message,
+                signature: intro_signature,
+            } => {
+                assert_eq!(router_id, alice.router_id.to_vec());
+                assert_eq!(router_info, alice.serialized);
+                assert_eq!(message, intro_message);
+                assert_eq!(signature, intro_signature);
+            }
+            _ => panic!("invalid command"),
+        }
+        assert!(alice_rx.try_recv().is_err());
+        assert!(relay.active_relays.get(&nonce).is_some());
+    }
+
+    #[tokio::test]
+    async fn relay_request_session_not_found() {
+        let alice = TestRouter::new(0).await;
+        let bob = TestRouter::new(2).await;
+        let charlie = TestRouter::new(4).await;
+
+        // we are bob
+        let mut relay = RelayManager::<MockRuntime>::new(
+            RouterContextBuilder::default()
+                .with_router_info(
+                    bob.router_info.clone(),
+                    bob.static_key.clone(),
+                    bob.signing_key.clone(),
+                )
+                .with_profile_storage({
+                    let storage = ProfileStorage::new(&[], &[]);
+                    storage.discover_router(
+                        alice.router_info.clone(),
+                        Bytes::from(alice.serialized.clone()),
+                    );
+                    storage
+                })
+                .build(),
+            bob.socket.clone(),
+        );
+
+        // do not create session for charlie
+        let relay_tag = 1337;
+        let nonce = 1338;
+        let (alice_tx, alice_rx) = channel(16);
+
+        // create message + signature
+        let (message, signature) = {
+            let mut payload = BytesMut::with_capacity(128);
+            payload.put_slice(b"RelayRequestData");
+            payload.put_slice(&bob.router_id.to_vec());
+            payload.put_slice(&charlie.router_id.to_vec());
+
+            payload.put_u32(nonce);
+            payload.put_u32(relay_tag);
+            payload.put_u32(MockRuntime::time_since_epoch().as_secs() as u32);
+            payload.put_u8(2);
+            payload.put_u8(6);
+            payload.put_u16(alice.socket.local_address().unwrap().port());
+
+            match alice.socket.local_address().unwrap().ip() {
+                IpAddr::V4(addr) => payload.put_slice(&addr.octets()),
+                IpAddr::V6(addr) => payload.put_slice(&addr.octets()),
+            }
+
+            let signature = alice.signing_key.sign(&payload);
+
+            (
+                payload.split_off(b"RelayAgreementOK".len() + 2 * ROUTER_HASH_LEN).to_vec(),
+                signature,
+            )
+        };
+
+        // handle relay request from alice
+        relay.handle_relay_request(
+            alice.router_id.clone(),
+            nonce,
+            relay_tag,
+            alice.socket.local_address().unwrap(),
+            message.clone(),
+            signature.clone(),
+            alice_tx,
+        );
+
+        match alice_rx.try_recv().unwrap() {
+            RelayCommand::RelayResponse {
+                nonce,
+                rejection,
+                message,
+                signature,
+                token,
+            } => {
+                assert_eq!(nonce, 1338);
+                assert_eq!(
+                    rejection,
+                    Some(RejectionReason::Bob(BobRejectionReason::RelayTagNotFound))
+                );
+                assert_eq!(token, None);
+                assert_eq!(signature, None);
+
+                let test_message = {
+                    let mut message = BytesMut::with_capacity(58);
+                    message.put_slice(b"RelayAgreementOK");
+                    message.put_slice(&bob.router_id.to_vec());
+                    message.put_u32(1338);
+                    message.put_u32(MockRuntime::time_since_epoch().as_secs() as u32);
+                    message.put_u8(2); // version
+                    message.put_u8(0u8); // address size
+
+                    message.split_off(b"RelayAgreementOK".len() + ROUTER_HASH_LEN).to_vec()
+                };
+                assert_eq!(message, test_message);
+            }
+            _ => panic!("invalid command"),
+        }
+        assert!(relay.active_relays.get(&nonce).is_none());
+    }
+
+    #[tokio::test]
+    async fn relay_request_alice_not_found() {
+        let alice = TestRouter::new(0).await;
+        let bob = TestRouter::new(2).await;
+        let charlie = TestRouter::new(4).await;
+
+        // we are bob
+        //
+        // do not add alice to router storage
+        let mut relay = RelayManager::<MockRuntime>::new(
+            RouterContextBuilder::default()
+                .with_router_info(
+                    bob.router_info.clone(),
+                    bob.static_key.clone(),
+                    bob.signing_key.clone(),
+                )
+                .build(),
+            bob.socket.clone(),
+        );
+
+        // add session for charlie
+        let relay_tag = 1337;
+        let nonce = 1338;
+
+        let (alice_tx, alice_rx) = channel(16);
+        let (charlie_tx, charlie_rx) = channel(16);
+        relay.register_relay_client(charlie.router_id.clone(), 1337, charlie_tx);
+
+        // create message + signature
+        let (message, signature) = {
+            let mut payload = BytesMut::with_capacity(128);
+            payload.put_slice(b"RelayRequestData");
+            payload.put_slice(&bob.router_id.to_vec());
+            payload.put_slice(&charlie.router_id.to_vec());
+
+            payload.put_u32(nonce);
+            payload.put_u32(relay_tag);
+            payload.put_u32(MockRuntime::time_since_epoch().as_secs() as u32);
+            payload.put_u8(2);
+            payload.put_u8(6);
+            payload.put_u16(alice.socket.local_address().unwrap().port());
+
+            match alice.socket.local_address().unwrap().ip() {
+                IpAddr::V4(addr) => payload.put_slice(&addr.octets()),
+                IpAddr::V6(addr) => payload.put_slice(&addr.octets()),
+            }
+
+            let signature = alice.signing_key.sign(&payload);
+
+            (
+                payload.split_off(b"RelayAgreementOK".len() + 2 * ROUTER_HASH_LEN).to_vec(),
+                signature,
+            )
+        };
+
+        // handle relay request from alice
+        relay.handle_relay_request(
+            alice.router_id.clone(),
+            nonce,
+            relay_tag,
+            alice.socket.local_address().unwrap(),
+            message.clone(),
+            signature.clone(),
+            alice_tx,
+        );
+
+        match alice_rx.try_recv().unwrap() {
+            RelayCommand::RelayResponse {
+                nonce,
+                rejection,
+                message,
+                signature,
+                token,
+            } => {
+                assert_eq!(nonce, 1338);
+                assert_eq!(
+                    rejection,
+                    Some(RejectionReason::Bob(BobRejectionReason::AliceNotFound))
+                );
+                assert_eq!(token, None);
+                assert_eq!(signature, None);
+
+                let test_message = {
+                    let mut message = BytesMut::with_capacity(58);
+                    message.put_slice(b"RelayAgreementOK");
+                    message.put_slice(&bob.router_id.to_vec());
+                    message.put_u32(1338);
+                    message.put_u32(MockRuntime::time_since_epoch().as_secs() as u32);
+                    message.put_u8(2); // version
+                    message.put_u8(0u8); // address size
+
+                    message.split_off(b"RelayAgreementOK".len() + ROUTER_HASH_LEN).to_vec()
+                };
+                assert_eq!(message, test_message);
+            }
+            _ => panic!("invalid command"),
+        }
+        assert!(charlie_rx.try_recv().is_err());
+        assert!(relay.active_relays.get(&nonce).is_none());
+    }
+
+    #[tokio::test]
+    async fn relay_request_invalid_signature() {
+        let alice = TestRouter::new(0).await;
+        let bob = TestRouter::new(2).await;
+        let charlie = TestRouter::new(4).await;
+
+        // we are bob
+        let mut relay = RelayManager::<MockRuntime>::new(
+            RouterContextBuilder::default()
+                .with_profile_storage({
+                    let storage = ProfileStorage::new(&[], &[]);
+                    storage.discover_router(
+                        alice.router_info.clone(),
+                        Bytes::from(alice.serialized.clone()),
+                    );
+                    storage
+                })
+                .with_router_info(
+                    bob.router_info.clone(),
+                    bob.static_key.clone(),
+                    bob.signing_key.clone(),
+                )
+                .build(),
+            bob.socket.clone(),
+        );
+
+        // add session for charlie
+        let relay_tag = 1337;
+        let nonce = 1338;
+
+        let (alice_tx, alice_rx) = channel(16);
+        let (charlie_tx, charlie_rx) = channel(16);
+        relay.register_relay_client(charlie.router_id.clone(), 1337, charlie_tx);
+
+        // create message + signature
+        let (message, signature) = {
+            let mut payload = BytesMut::with_capacity(128);
+            payload.put_slice(b"RelayRequestData");
+            payload.put_slice(&bob.router_id.to_vec());
+            payload.put_slice(&charlie.router_id.to_vec());
+
+            payload.put_u32(nonce);
+            payload.put_u32(relay_tag);
+            payload.put_u32(MockRuntime::time_since_epoch().as_secs() as u32);
+            payload.put_u8(2);
+            payload.put_u8(6);
+            payload.put_u16(alice.socket.local_address().unwrap().port());
+
+            match alice.socket.local_address().unwrap().ip() {
+                IpAddr::V4(addr) => payload.put_slice(&addr.octets()),
+                IpAddr::V6(addr) => payload.put_slice(&addr.octets()),
+            }
+
+            // create invalid signature
+            let signature = alice.signing_key.sign(&payload[..15]);
+
+            (
+                payload.split_off(b"RelayAgreementOK".len() + 2 * ROUTER_HASH_LEN).to_vec(),
+                signature,
+            )
+        };
+
+        // handle relay request from alice
+        relay.handle_relay_request(
+            alice.router_id.clone(),
+            nonce,
+            relay_tag,
+            alice.socket.local_address().unwrap(),
+            message.clone(),
+            signature.clone(),
+            alice_tx,
+        );
+
+        match alice_rx.try_recv().unwrap() {
+            RelayCommand::RelayResponse {
+                nonce,
+                rejection,
+                message,
+                signature,
+                token,
+            } => {
+                assert_eq!(nonce, 1338);
+                assert_eq!(
+                    rejection,
+                    Some(RejectionReason::Bob(BobRejectionReason::SignatureFailure))
+                );
+                assert_eq!(token, None);
+                assert_eq!(signature, None);
+
+                let test_message = {
+                    let mut message = BytesMut::with_capacity(58);
+                    message.put_slice(b"RelayAgreementOK");
+                    message.put_slice(&bob.router_id.to_vec());
+                    message.put_u32(1338);
+                    message.put_u32(MockRuntime::time_since_epoch().as_secs() as u32);
+                    message.put_u8(2); // version
+                    message.put_u8(0u8); // address size
+
+                    message.split_off(b"RelayAgreementOK".len() + ROUTER_HASH_LEN).to_vec()
+                };
+                assert_eq!(message, test_message);
+            }
+            _ => panic!("invalid command"),
+        }
+        assert!(charlie_rx.try_recv().is_err());
+        assert!(relay.active_relays.get(&nonce).is_none());
+    }
+
+    #[tokio::test]
+    async fn relay_intro_accepted() {
+        let mut alice = TestRouter::new(0).await;
+        let bob = TestRouter::new(2).await;
+        let charlie = TestRouter::new(4).await;
+
+        // we are charlie
+        let mut relay = RelayManager::<MockRuntime>::new(
+            RouterContextBuilder::default()
+                .with_router_info(
+                    charlie.router_info.clone(),
+                    charlie.static_key.clone(),
+                    charlie.signing_key.clone(),
+                )
+                .with_profile_storage({
+                    let storage = ProfileStorage::new(&[], &[]);
+                    storage.discover_router(
+                        alice.router_info.clone(),
+                        Bytes::from(alice.serialized.clone()),
+                    );
+                    storage
+                })
+                .build(),
+            charlie.socket.clone(),
+        );
+
+        // create context for the test
+        let relay_tag = 1337;
+        let nonce = 1338;
+        let (bob_tx, bob_rx) = channel(16);
+
+        // add external address for charlie
+        relay.add_external_address(charlie.socket.local_address().unwrap());
+
+        // register bob as relay server
+        relay.register_relay_server(bob.router_id.clone(), relay_tag);
+
+        // create message + signature
+        //
+        // created by alice
+        let (message, signature) = {
+            let mut payload = BytesMut::with_capacity(128);
+            payload.put_slice(b"RelayRequestData");
+            payload.put_slice(&bob.router_id.to_vec());
+            payload.put_slice(&charlie.router_id.to_vec());
+
+            payload.put_u32(nonce);
+            payload.put_u32(relay_tag);
+            payload.put_u32(MockRuntime::time_since_epoch().as_secs() as u32);
+            payload.put_u8(2);
+            payload.put_u8(6);
+            payload.put_u16(alice.socket.local_address().unwrap().port());
+
+            match alice.socket.local_address().unwrap().ip() {
+                IpAddr::V4(addr) => payload.put_slice(&addr.octets()),
+                IpAddr::V6(addr) => payload.put_slice(&addr.octets()),
+            }
+
+            let signature = alice.signing_key.sign(&payload);
+
+            (
+                payload.split_off(b"RelayAgreementOK".len() + 2 * ROUTER_HASH_LEN).to_vec(),
+                signature,
+            )
+        };
+
+        // handle relay intro from bob
+        relay.handle_relay_intro(
+            alice.router_id.clone(),
+            bob.router_id.clone(),
+            None,
+            nonce,
+            relay_tag,
+            alice.socket.local_address().unwrap(),
+            message,
+            signature,
+            bob_tx,
+        );
+
+        match bob_rx.try_recv().unwrap() {
+            RelayCommand::RelayResponse {
+                nonce,
+                rejection,
+                signature,
+                token,
+                ..
+            } => {
+                assert_eq!(nonce, 1338);
+                assert_eq!(rejection, None);
+                assert_ne!(signature, None);
+                assert_ne!(token, None);
+            }
+            _ => panic!("invalid command"),
+        }
+
+        // verify the relay manager returns a token for `SessionRequest`
+        let session_request_token = relay.next().now_or_never().unwrap();
+
+        // spawn manager in the background so the hole punch message gets sent eventually
+        tokio::spawn(async move { while relay.next().await.is_some() {} });
+
+        // read hole punch message from alice's socket
+        let mut buf = vec![0u8; 1500];
+        let (nread, _from) = timeout!(alice.socket.recv_from(&mut buf)).await.unwrap().unwrap();
+        let mut pkt = buf[..nread].to_vec();
+        let mut reader = HeaderReader::new(alice.intro_key, &mut pkt).unwrap();
+        let _dst_id = reader.dst_id();
+
+        let (pkt_num, src_id) = match reader.parse(alice.intro_key).unwrap() {
+            HeaderKind::HolePunch {
+                pkt_num, src_id, ..
+            } => (pkt_num, src_id),
+            _ => panic!("invalid header kind"),
+        };
+        let ad = pkt[..32].to_vec();
+        let mut pkt = pkt[32..].to_vec();
+
+        assert_eq!(src_id, (!(((1338u64) << 32) | (1338u64))).to_be());
+
+        ChaChaPoly::with_nonce(&alice.intro_key, pkt_num as u64)
+            .decrypt_with_ad(&ad, &mut pkt)
+            .unwrap();
+
+        assert!(Block::parse(&pkt).unwrap().iter().any(|block| match block {
+            Block::RelayResponse { token, .. } => token == &session_request_token,
+            _ => false,
+        }));
+    }
+
+    #[tokio::test]
+    async fn relay_intro_with_router_info() {
+        let mut alice = TestRouter::new(0).await;
+        let bob = TestRouter::new(2).await;
+        let charlie = TestRouter::new(4).await;
+
+        // we are charlie
+        //
+        // alice is not found in router storage but their router info
+        // is provided in a router info block in-session
+        let mut relay = RelayManager::<MockRuntime>::new(
+            RouterContextBuilder::default()
+                .with_router_info(
+                    charlie.router_info.clone(),
+                    charlie.static_key.clone(),
+                    charlie.signing_key.clone(),
+                )
+                .build(),
+            charlie.socket.clone(),
+        );
+
+        // create context for the test
+        let relay_tag = 1337;
+        let nonce = 1338;
+        let (bob_tx, bob_rx) = channel(16);
+
+        // add external address for charlie
+        relay.add_external_address(charlie.socket.local_address().unwrap());
+
+        // register bob as relay server
+        relay.register_relay_server(bob.router_id.clone(), relay_tag);
+
+        // create message + signature
+        //
+        // created by alice
+        let (message, signature) = {
+            let mut payload = BytesMut::with_capacity(128);
+            payload.put_slice(b"RelayRequestData");
+            payload.put_slice(&bob.router_id.to_vec());
+            payload.put_slice(&charlie.router_id.to_vec());
+
+            payload.put_u32(nonce);
+            payload.put_u32(relay_tag);
+            payload.put_u32(MockRuntime::time_since_epoch().as_secs() as u32);
+            payload.put_u8(2);
+            payload.put_u8(6);
+            payload.put_u16(alice.socket.local_address().unwrap().port());
+
+            match alice.socket.local_address().unwrap().ip() {
+                IpAddr::V4(addr) => payload.put_slice(&addr.octets()),
+                IpAddr::V6(addr) => payload.put_slice(&addr.octets()),
+            }
+
+            let signature = alice.signing_key.sign(&payload);
+
+            (
+                payload.split_off(b"RelayAgreementOK".len() + 2 * ROUTER_HASH_LEN).to_vec(),
+                signature,
+            )
+        };
+
+        // handle relay intro from bob
+        relay.handle_relay_intro(
+            alice.router_id.clone(),
+            bob.router_id.clone(),
+            Some(Box::new(alice.router_info.clone())),
+            nonce,
+            relay_tag,
+            alice.socket.local_address().unwrap(),
+            message,
+            signature,
+            bob_tx,
+        );
+
+        match bob_rx.try_recv().unwrap() {
+            RelayCommand::RelayResponse {
+                nonce,
+                rejection,
+                signature,
+                token,
+                ..
+            } => {
+                assert_eq!(nonce, 1338);
+                assert_eq!(rejection, None);
+                assert_ne!(signature, None);
+                assert_ne!(token, None);
+            }
+            _ => panic!("invalid command"),
+        }
+
+        // verify the relay manager returns a token for `SessionRequest`
+        let session_request_token = relay.next().now_or_never().unwrap();
+
+        // spawn manager in the background so the hole punch message gets sent eventually
+        tokio::spawn(async move { while relay.next().await.is_some() {} });
+
+        // read hole punch message from alice's socket
+        let mut buf = vec![0u8; 1500];
+        let (nread, _from) = timeout!(alice.socket.recv_from(&mut buf)).await.unwrap().unwrap();
+        let mut pkt = buf[..nread].to_vec();
+        let mut reader = HeaderReader::new(alice.intro_key, &mut pkt).unwrap();
+        let _dst_id = reader.dst_id();
+
+        let (pkt_num, src_id) = match reader.parse(alice.intro_key).unwrap() {
+            HeaderKind::HolePunch {
+                pkt_num, src_id, ..
+            } => (pkt_num, src_id),
+            _ => panic!("invalid header kind"),
+        };
+        let ad = pkt[..32].to_vec();
+        let mut pkt = pkt[32..].to_vec();
+
+        assert_eq!(src_id, (!(((1338u64) << 32) | (1338u64))).to_be());
+
+        ChaChaPoly::with_nonce(&alice.intro_key, pkt_num as u64)
+            .decrypt_with_ad(&ad, &mut pkt)
+            .unwrap();
+
+        assert!(Block::parse(&pkt).unwrap().iter().any(|block| match block {
+            Block::RelayResponse { token, .. } => token == &session_request_token,
+            _ => false,
+        }));
+    }
+
+    #[tokio::test]
+    async fn relay_intro_relay_server_not_found() {
+        let alice = TestRouter::new(0).await;
+        let bob = TestRouter::new(2).await;
+        let charlie = TestRouter::new(4).await;
+
+        // we are charlie
+        let mut relay = RelayManager::<MockRuntime>::new(
+            RouterContextBuilder::default()
+                .with_router_info(
+                    charlie.router_info.clone(),
+                    charlie.static_key.clone(),
+                    charlie.signing_key.clone(),
+                )
+                .build(),
+            charlie.socket.clone(),
+        );
+
+        // create context for the test
+        let relay_tag = 1337;
+        let nonce = 1338;
+        let (bob_tx, bob_rx) = channel(16);
+
+        // add external address for charlie
+        relay.add_external_address(charlie.socket.local_address().unwrap());
+
+        // bob is not registered as relay server so the relay into gets rejected
+
+        // create message + signature
+        //
+        // created by alice
+        let (message, signature) = {
+            let mut payload = BytesMut::with_capacity(128);
+            payload.put_slice(b"RelayRequestData");
+            payload.put_slice(&bob.router_id.to_vec());
+            payload.put_slice(&charlie.router_id.to_vec());
+
+            payload.put_u32(nonce);
+            payload.put_u32(relay_tag);
+            payload.put_u32(MockRuntime::time_since_epoch().as_secs() as u32);
+            payload.put_u8(2);
+            payload.put_u8(6);
+            payload.put_u16(alice.socket.local_address().unwrap().port());
+
+            match alice.socket.local_address().unwrap().ip() {
+                IpAddr::V4(addr) => payload.put_slice(&addr.octets()),
+                IpAddr::V6(addr) => payload.put_slice(&addr.octets()),
+            }
+
+            let signature = alice.signing_key.sign(&payload);
+
+            (
+                payload.split_off(b"RelayAgreementOK".len() + 2 * ROUTER_HASH_LEN).to_vec(),
+                signature,
+            )
+        };
+
+        // handle relay intro from bob
+        relay.handle_relay_intro(
+            alice.router_id.clone(),
+            bob.router_id.clone(),
+            Some(Box::new(alice.router_info.clone())),
+            nonce,
+            relay_tag,
+            alice.socket.local_address().unwrap(),
+            message,
+            signature,
+            bob_tx,
+        );
+
+        match bob_rx.try_recv().unwrap() {
+            RelayCommand::RelayResponse {
+                nonce,
+                rejection,
+                signature,
+                token,
+                ..
+            } => {
+                assert_eq!(nonce, 1338);
+                assert_ne!(signature, None);
+                assert_eq!(token, None);
+                assert_eq!(
+                    rejection,
+                    Some(RejectionReason::Charlie(
+                        CharlieRejectionReason::Unspecified
+                    ))
+                );
+            }
+            _ => panic!("invalid command"),
+        }
+    }
+
+    #[tokio::test]
+    async fn relay_intro_alice_not_found() {
+        let alice = TestRouter::new(0).await;
+        let bob = TestRouter::new(2).await;
+        let charlie = TestRouter::new(4).await;
+
+        // we are charlie
+        //
+        // alice is not found in router storage
+        let mut relay = RelayManager::<MockRuntime>::new(
+            RouterContextBuilder::default()
+                .with_router_info(
+                    charlie.router_info.clone(),
+                    charlie.static_key.clone(),
+                    charlie.signing_key.clone(),
+                )
+                .build(),
+            charlie.socket.clone(),
+        );
+
+        // create context for the test
+        let relay_tag = 1337;
+        let nonce = 1338;
+        let (bob_tx, bob_rx) = channel(16);
+
+        // add external address for charlie
+        relay.add_external_address(charlie.socket.local_address().unwrap());
+
+        // register bob as relay server
+        relay.register_relay_server(bob.router_id.clone(), relay_tag);
+
+        // create message + signature
+        //
+        // created by alice
+        let (message, signature) = {
+            let mut payload = BytesMut::with_capacity(128);
+            payload.put_slice(b"RelayRequestData");
+            payload.put_slice(&bob.router_id.to_vec());
+            payload.put_slice(&charlie.router_id.to_vec());
+
+            payload.put_u32(nonce);
+            payload.put_u32(relay_tag);
+            payload.put_u32(MockRuntime::time_since_epoch().as_secs() as u32);
+            payload.put_u8(2);
+            payload.put_u8(6);
+            payload.put_u16(alice.socket.local_address().unwrap().port());
+
+            match alice.socket.local_address().unwrap().ip() {
+                IpAddr::V4(addr) => payload.put_slice(&addr.octets()),
+                IpAddr::V6(addr) => payload.put_slice(&addr.octets()),
+            }
+
+            let signature = alice.signing_key.sign(&payload);
+
+            (
+                payload.split_off(b"RelayAgreementOK".len() + 2 * ROUTER_HASH_LEN).to_vec(),
+                signature,
+            )
+        };
+
+        // handle relay intro from bob
+        //
+        // alice's router info was not sent in-session
+        // so charlie doesn't know who alice is
+        relay.handle_relay_intro(
+            alice.router_id.clone(),
+            bob.router_id.clone(),
+            None,
+            nonce,
+            relay_tag,
+            alice.socket.local_address().unwrap(),
+            message,
+            signature,
+            bob_tx,
+        );
+
+        match bob_rx.try_recv().unwrap() {
+            RelayCommand::RelayResponse {
+                nonce,
+                rejection,
+                signature,
+                token,
+                ..
+            } => {
+                assert_eq!(nonce, 1338);
+                assert_ne!(signature, None);
+                assert_eq!(token, None);
+                assert_eq!(
+                    rejection,
+                    Some(RejectionReason::Charlie(
+                        CharlieRejectionReason::AliceNotFound
+                    ))
+                );
+            }
+            _ => panic!("invalid command"),
+        }
+    }
+
+    #[tokio::test]
+    async fn relay_intro_invalid_signature() {
+        let alice = TestRouter::new(0).await;
+        let bob = TestRouter::new(2).await;
+        let charlie = TestRouter::new(4).await;
+
+        // we are charlie
+        let mut relay = RelayManager::<MockRuntime>::new(
+            RouterContextBuilder::default()
+                .with_router_info(
+                    charlie.router_info.clone(),
+                    charlie.static_key.clone(),
+                    charlie.signing_key.clone(),
+                )
+                .build(),
+            charlie.socket.clone(),
+        );
+
+        // create context for the test
+        let relay_tag = 1337;
+        let nonce = 1338;
+        let (bob_tx, bob_rx) = channel(16);
+
+        // add external address for charlie
+        relay.add_external_address(charlie.socket.local_address().unwrap());
+
+        // register bob as relay server
+        relay.register_relay_server(bob.router_id.clone(), relay_tag);
+
+        // create message + signature
+        //
+        // created by alice
+        let (message, signature) = {
+            let mut payload = BytesMut::with_capacity(128);
+            payload.put_slice(b"RelayRequestData");
+            payload.put_slice(&bob.router_id.to_vec());
+            payload.put_slice(&charlie.router_id.to_vec());
+
+            payload.put_u32(nonce);
+            payload.put_u32(relay_tag);
+            payload.put_u32(MockRuntime::time_since_epoch().as_secs() as u32);
+            payload.put_u8(2);
+            payload.put_u8(6);
+            payload.put_u16(alice.socket.local_address().unwrap().port());
+
+            match alice.socket.local_address().unwrap().ip() {
+                IpAddr::V4(addr) => payload.put_slice(&addr.octets()),
+                IpAddr::V6(addr) => payload.put_slice(&addr.octets()),
+            }
+
+            // create invalid signature
+            let signature = alice.signing_key.sign(&payload[..16]);
+
+            (
+                payload.split_off(b"RelayAgreementOK".len() + 2 * ROUTER_HASH_LEN).to_vec(),
+                signature,
+            )
+        };
+
+        // handle relay intro from bob
+        relay.handle_relay_intro(
+            alice.router_id.clone(),
+            bob.router_id.clone(),
+            Some(Box::new(alice.router_info.clone())),
+            nonce,
+            relay_tag,
+            alice.socket.local_address().unwrap(),
+            message,
+            signature,
+            bob_tx,
+        );
+
+        match bob_rx.try_recv().unwrap() {
+            RelayCommand::RelayResponse {
+                nonce,
+                rejection,
+                signature,
+                token,
+                ..
+            } => {
+                assert_eq!(nonce, 1338);
+                assert_ne!(signature, None);
+                assert_eq!(token, None);
+                assert_eq!(
+                    rejection,
+                    Some(RejectionReason::Charlie(
+                        CharlieRejectionReason::SignatureFailure
+                    ))
+                );
+            }
+            _ => panic!("invalid command"),
+        }
+    }
+
+    #[tokio::test]
+    async fn relay_intro_no_external_address() {
+        let alice = TestRouter::new(0).await;
+        let bob = TestRouter::new(2).await;
+        let charlie = TestRouter::new(4).await;
+
+        // we are charlie
+        let mut relay = RelayManager::<MockRuntime>::new(
+            RouterContextBuilder::default()
+                .with_router_info(
+                    charlie.router_info.clone(),
+                    charlie.static_key.clone(),
+                    charlie.signing_key.clone(),
+                )
+                .build(),
+            charlie.socket.clone(),
+        );
+
+        // create context for the test
+        let relay_tag = 1337;
+        let nonce = 1338;
+        let (bob_tx, bob_rx) = channel(16);
+
+        // charlie doesn't have external address so the intro gets rejected
+
+        // register bob as relay server
+        relay.register_relay_server(bob.router_id.clone(), relay_tag);
+
+        // create message + signature
+        //
+        // created by alice
+        let (message, signature) = {
+            let mut payload = BytesMut::with_capacity(128);
+            payload.put_slice(b"RelayRequestData");
+            payload.put_slice(&bob.router_id.to_vec());
+            payload.put_slice(&charlie.router_id.to_vec());
+
+            payload.put_u32(nonce);
+            payload.put_u32(relay_tag);
+            payload.put_u32(MockRuntime::time_since_epoch().as_secs() as u32);
+            payload.put_u8(2);
+            payload.put_u8(6);
+            payload.put_u16(alice.socket.local_address().unwrap().port());
+
+            match alice.socket.local_address().unwrap().ip() {
+                IpAddr::V4(addr) => payload.put_slice(&addr.octets()),
+                IpAddr::V6(addr) => payload.put_slice(&addr.octets()),
+            }
+
+            let signature = alice.signing_key.sign(&payload);
+
+            (
+                payload.split_off(b"RelayAgreementOK".len() + 2 * ROUTER_HASH_LEN).to_vec(),
+                signature,
+            )
+        };
+
+        // handle relay intro from bob
+        relay.handle_relay_intro(
+            alice.router_id.clone(),
+            bob.router_id.clone(),
+            Some(Box::new(alice.router_info.clone())),
+            nonce,
+            relay_tag,
+            alice.socket.local_address().unwrap(),
+            message,
+            signature,
+            bob_tx,
+        );
+
+        match bob_rx.try_recv().unwrap() {
+            RelayCommand::RelayResponse {
+                nonce,
+                rejection,
+                signature,
+                token,
+                ..
+            } => {
+                assert_eq!(nonce, 1338);
+                assert_ne!(signature, None);
+                assert_eq!(token, None);
+                assert_eq!(
+                    rejection,
+                    Some(RejectionReason::Charlie(
+                        CharlieRejectionReason::Unspecified
+                    ))
+                );
+            }
+            _ => panic!("invalid command"),
+        }
+    }
+
+    #[tokio::test]
+    async fn relay_response_accepted() {
+        let bob = TestRouter::new(2).await;
+
+        // we are bob
+        let mut relay = RelayManager::<MockRuntime>::new(
+            RouterContextBuilder::default()
+                .with_router_info(
+                    bob.router_info.clone(),
+                    bob.static_key.clone(),
+                    bob.signing_key.clone(),
+                )
+                .build(),
+            bob.socket.clone(),
+        );
+
+        // create context for the test
+        let nonce = 1338;
+        let (alice_tx, alice_rx) = channel(16);
+
+        // create new active relay manually
+        relay.active_relays.insert(nonce, alice_tx);
+
+        // handle relay response for an active session
+        relay.handle_relay_response(
+            nonce,
+            None,
+            None,
+            Some(RejectionReason::Charlie(
+                CharlieRejectionReason::Unspecified,
+            )),
+            vec![],
+            Some(vec![]),
+        );
+
+        // verify the message is routed to alice
+        match alice_rx.try_recv().unwrap() {
+            RelayCommand::RelayResponse {
+                nonce,
+                rejection,
+                message,
+                signature,
+                token,
+            } => {
+                assert_eq!(nonce, 1338);
+                assert_eq!(
+                    rejection,
+                    Some(RejectionReason::Charlie(
+                        CharlieRejectionReason::Unspecified,
+                    ))
+                );
+                assert_eq!(message, vec![]);
+                assert_eq!(signature, Some(vec![]));
+                assert_eq!(token, None);
+            }
+            _ => panic!("invalid command"),
+        }
+        assert!(!relay.active_relays.contains_key(&nonce));
+    }
+
+    #[tokio::test]
+    async fn relay_response_no_session() {
+        let bob = TestRouter::new(2).await;
+
+        // we are bob
+        let mut relay = RelayManager::<MockRuntime>::new(
+            RouterContextBuilder::default()
+                .with_router_info(
+                    bob.router_info.clone(),
+                    bob.static_key.clone(),
+                    bob.signing_key.clone(),
+                )
+                .build(),
+            bob.socket.clone(),
+        );
+
+        // create context for the test
+        let nonce = 1338;
+
+        // don't insert active session for `nonce`
+
+        // handle relay response for an unknown session
+        relay.handle_relay_response(
+            nonce,
+            None,
+            None,
+            Some(RejectionReason::Charlie(
+                CharlieRejectionReason::Unspecified,
+            )),
+            vec![],
+            Some(vec![]),
+        );
+        assert!(!relay.active_relays.contains_key(&nonce));
     }
 }

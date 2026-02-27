@@ -457,7 +457,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
         // MixKey(DH())
         let cipher_key = self.noise_ctx.mix_key(&sk, &ephemeral_key);
 
-        let mut message = SessionCreatedBuilder::default()
+        let message = SessionCreatedBuilder::default()
             .with_address(self.address)
             .with_dst_id(self.src_id)
             .with_src_id(self.dst_id)
