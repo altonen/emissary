@@ -34,6 +34,7 @@ use bytes::{BufMut, BytesMut};
 use rand::Rng;
 
 use alloc::{format, vec, vec::Vec};
+use core::fmt;
 
 /// Minimum size for an ACK block.
 const ACK_BLOCK_MIN_SIZE: usize = 8usize;
@@ -285,7 +286,7 @@ impl RelayBlock {
 }
 
 impl fmt::Debug for RelayBlock {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Response { rejection, .. } => f
                 .debug_struct("RelayBlock::Response")
@@ -545,10 +546,10 @@ impl<'a> DataMessageBuilder<'a> {
                             );
                             out.put_u8(0);
                             out.put_u8(rejection.map_or(0, |reason| reason.as_u8()));
-                            out.put_slice(&message);
+                            out.put_slice(message);
 
                             if let Some(signature) = signature {
-                                out.put_slice(&signature);
+                                out.put_slice(signature);
                             }
 
                             if let Some(token) = token {
@@ -565,9 +566,9 @@ impl<'a> DataMessageBuilder<'a> {
                                 (1 + ROUTER_HASH_LEN + message.len() + signature.len()) as u16,
                             );
                             out.put_u8(0); // flag
-                            out.put_slice(&router_id);
-                            out.put_slice(&message);
-                            out.put_slice(&signature);
+                            out.put_slice(router_id);
+                            out.put_slice(message);
+                            out.put_slice(signature);
                         }
                     }
                 }

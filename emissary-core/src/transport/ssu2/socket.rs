@@ -402,14 +402,37 @@ impl<R: Runtime> Ssu2Socket<R> {
             }
             Ok(HeaderKind::SessionRequest {
                 token,
-                ephemeral_key: _,
-                net_id: _,
-                pkt_num: _,
-            }) =>
-                if self.tokens.contains(&token) {
-                    // TODO: start inbound session with this
-                    return Ok(None);
-                },
+                pkt_num,
+                ephemeral_key,
+                ..
+            }) if self.tokens.remove(&token) => {
+                let (tx, rx) = channel(CHANNEL_SIZE);
+                let relay_tag = self.relay_manager.allocate_relay_tag();
+                let session = InboundSsu2Session::<R>::from_token_request(
+                    InboundSsu2Context {
+                        address,
+                        chaining_key: self.chaining_key.clone(),
+                        dst_id: connection_id,
+                        intro_key: self.intro_key,
+                        net_id: self.router_ctx.net_id(),
+                        pkt: datagram,
+                        pkt_num,
+                        relay_tag,
+                        rx,
+                        socket: self.socket.clone(),
+                        src_id: !connection_id,
+                        state: self.inbound_state.clone(),
+                        static_key: self.static_key.clone(),
+                    },
+                    ephemeral_key,
+                    token,
+                );
+
+                self.sessions.insert(connection_id, tx);
+                self.pending_sessions.push(session.run());
+
+                return Ok(None);
+            }
             _ => {}
         }
 
@@ -557,20 +580,6 @@ impl<R: Runtime> Ssu2Socket<R> {
         // get handles to `PeerTestManager` and `RelayManager`
         let peer_test_handle = self.peer_test_manager.handle();
         let relay_handle = self.relay_manager.handle();
-
-        // TODO: test code remove
-        if context.router_id
-            == RouterId::from(
-                crate::crypto::base64_decode("1CpmD8LwgUGrx4GSh9hdIpaX068Tqm4UbFb5oe6pw20=")
-                    .unwrap(),
-            )
-        {
-            self.relay_manager.register_relay_client(
-                context.router_id.clone(),
-                1337,
-                relay_handle.cmd_tx(),
-            );
-        }
 
         match relay_tag_request {
             Some(RelayTagRequested::Yes(tag)) => self.relay_manager.register_relay_client(

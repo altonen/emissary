@@ -21,6 +21,7 @@ use crate::primitives::{RouterId, RouterInfo};
 use futures::Stream;
 use thingbuf::mpsc::{channel, Receiver, Sender};
 
+use alloc::{boxed::Box, vec::Vec};
 use core::{
     net::SocketAddr,
     pin::Pin,

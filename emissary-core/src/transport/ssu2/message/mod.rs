@@ -2236,11 +2236,11 @@ impl<'a> HolePunchBuilder<'a> {
             let size = (1 + 1 + self.message.len() + self.signature.len() + 8) as u16;
 
             payload.push(BlockType::RelayResponse.as_u8());
-            payload.extend_from_slice((size as u16).to_be_bytes().as_ref());
+            payload.extend_from_slice({ size }.to_be_bytes().as_ref());
             payload.push(0u8); // flag
             payload.push(0u8); // code (accept)
-            payload.extend_from_slice(&self.message);
-            payload.extend_from_slice(&self.signature);
+            payload.extend_from_slice(self.message);
+            payload.extend_from_slice(self.signature);
             payload.extend_from_slice(&self.token.expect("to exist").to_le_bytes());
         }
         payload.extend_from_slice(&Block::Padding { padding }.serialize());
