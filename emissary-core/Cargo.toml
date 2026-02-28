@@ -60,5 +60,6 @@ yosemite = { workspace = true }
 [features]
 default = ["std", "events"]
 events = []
+fuzz = []
 no_std = ["dep:spin"]
 std = ["dep:parking_lot"]

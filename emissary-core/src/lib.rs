@@ -42,6 +42,13 @@ pub use config::{
 pub use error::Error;
 pub use profile::Profile;
 
+#[cfg(feature = "fuzz")]
+pub use {
+    i2cp::{Message, MessageType},
+    sam::{Datagram, Packet, SamCommand},
+    transport::{Block, HeaderReader, MessageBlock},
+};
+
 mod bloom;
 mod config;
 mod destination;

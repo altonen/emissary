@@ -52,6 +52,9 @@ mod socket;
 
 pub use payload::{I2cpPayload, I2cpPayloadBuilder};
 
+#[cfg(feature = "fuzz")]
+pub use message::{Message, MessageType};
+
 /// Logging target for the file.
 const LOG_TARGET: &str = "emissary::i2cp";
 

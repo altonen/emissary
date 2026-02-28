@@ -659,7 +659,7 @@ impl Block {
     /// Attempt to parse [`Block::RouterInfo`] from `input`.
     fn parse_router_info(input: &[u8]) -> IResult<&[u8], Block, Ssu2ParseError> {
         let (rest, size) = be_u16(input)?;
-        if size == 0 {
+        if size <= 2 {
             return Err(Err::Error(Ssu2ParseError::EmptyRouterInfo));
         }
         let (rest, flag) = be_u8(rest)?;
@@ -813,8 +813,6 @@ impl Block {
                     ?num_ranges,
                     "invalid nack/ack range count",
                 );
-                debug_assert!(false);
-
                 (rest, Vec::new())
             }
         };

@@ -46,6 +46,9 @@ mod relay;
 mod session;
 mod socket;
 
+#[cfg(feature = "fuzz")]
+pub use message::{Block, HeaderReader};
+
 /// Logging target for the file.
 const LOG_TARGET: &str = "emissary::ssu2";
 

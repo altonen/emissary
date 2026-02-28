@@ -29,7 +29,7 @@ use crate::{
     profile::ProfileStorage,
     runtime::{AddressBook, JoinSet, Runtime, TcpListener, UdpSocket as _},
     sam::{
-        parser::{Datagram, HostKind, SessionKind},
+        parser::{HostKind, SessionKind},
         pending::{
             connection::{ConnectionKind, PendingSamConnection},
             session::{PendingSamSession, SamSessionContext},
@@ -63,6 +63,14 @@ mod pending;
 mod protocol;
 mod session;
 mod socket;
+
+#[cfg(not(feature = "fuzz"))]
+use parser::Datagram;
+#[cfg(feature = "fuzz")]
+pub use {
+    parser::{Datagram, SamCommand},
+    protocol::streaming::Packet,
+};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "emissary::sam";

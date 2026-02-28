@@ -53,6 +53,9 @@ mod metrics;
 mod options;
 mod session;
 
+#[cfg(feature = "fuzz")]
+pub use message::MessageBlock;
+
 /// Logging target for the file.
 const LOG_TARGET: &str = "emissary::ntcp2";
 

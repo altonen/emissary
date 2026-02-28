@@ -49,6 +49,12 @@ mod ssu2;
 pub use ntcp2::Ntcp2Transport;
 pub use ssu2::Ssu2Transport;
 
+#[cfg(feature = "fuzz")]
+pub use {
+    ntcp2::MessageBlock,
+    ssu2::{Block, HeaderReader},
+};
+
 /// Logging target for the file.
 const LOG_TARGET: &str = "emissary::transport-manager";
 

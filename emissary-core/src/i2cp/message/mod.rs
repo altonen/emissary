@@ -433,9 +433,7 @@ impl Message {
     /// https://geti2p.net/spec/i2cp#setdatemessage
     fn parse_set_date(input: impl AsRef<[u8]>) -> Option<Self> {
         let (rest, date) = Date::parse_frame(input.as_ref()).ok()?;
-        let (rest, version) = Str::parse_frame(rest).ok()?;
-
-        debug_assert!(rest.is_empty());
+        let (_rest, version) = Str::parse_frame(rest).ok()?;
 
         Some(Message::SetDate { date, version })
     }
@@ -443,9 +441,7 @@ impl Message {
     /// Attempt to parse [`Message::GetBandwidthLimits`] from `input`.
     ///
     /// https://geti2p.net/spec/i2cp#getbandwidthlimitsmessage
-    fn parse_get_bandwidth_limits(input: impl AsRef<[u8]>) -> Option<Self> {
-        debug_assert!(input.as_ref().is_empty());
-
+    fn parse_get_bandwidth_limits(_input: impl AsRef<[u8]>) -> Option<Self> {
         Some(Message::GetBandwidthLimits)
     }
 
@@ -453,9 +449,7 @@ impl Message {
     ///
     /// https://geti2p.net/spec/i2cp#destroysessionmessage
     fn parse_destroy_session(input: impl AsRef<[u8]>) -> Option<Self> {
-        let (rest, session_id) = be_u16::<_, ()>(input.as_ref()).ok()?;
-
-        debug_assert!(rest.is_empty());
+        let (_rest, session_id) = be_u16::<_, ()>(input.as_ref()).ok()?;
 
         Some(Message::DestroySession {
             session_id: SessionId::from(session_id),

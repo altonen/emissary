@@ -104,6 +104,10 @@ jobs:
       working-directory: emissary-core
       run: cargo +nightly fuzz run i2np -- -max_total_time=30
 
+    - name: cargo-fuzz messages
+      working-directory: emissary-core
+      run: cargo +nightly fuzz run messages -- -max_total_time=30
+
   test:
     runs-on: ubuntu-latest
     needs: [fmt, clippy, check]

@@ -164,7 +164,6 @@ impl<'a> Flags<'a> {
         let (rest, offline_signature) = match (flags >> 11) & 1 == 1 {
             true => match destination.as_ref() {
                 None => {
-                    debug_assert!(false);
                     return Err(Err::Error(FlagsParseError::DestinationMissing));
                 }
                 Some(destination) => {
