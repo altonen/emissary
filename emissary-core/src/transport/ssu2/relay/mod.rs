@@ -17,7 +17,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    primitives::{RouterId, RouterInfo, TransportKind},
+    primitives::{RouterAddress, RouterId, RouterInfo},
     router::context::RouterContext,
     runtime::{Runtime, UdpSocket},
     transport::ssu2::{
@@ -438,30 +438,20 @@ impl<R: Runtime> RelayManager<R> {
             },
         };
 
-        let alice_address = match router_info.addresses.get(&TransportKind::Ssu2) {
-            Some(address) => match address.socket_address {
-                Some(address) => address,
-                None => {
-                    tracing::warn!(
-                        target: LOG_TARGET,
-                        ?relay_tag,
-                        ?nonce,
-                        "alice doesn't have a published ssu2 address",
-                    );
-                    debug_assert!(false);
-                    return;
-                }
-            },
-            None => {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    ?relay_tag,
-                    ?nonce,
-                    "alice doesn't support ssu2",
-                );
-                debug_assert!(false);
-                return;
-            }
+        let Some(RouterAddress::Ssu2 {
+            intro_key,
+            socket_address: Some(alice_address),
+            ..
+        }) = router_info.ssu2_ipv4()
+        else {
+            tracing::warn!(
+                target: LOG_TARGET,
+                ?relay_tag,
+                ?nonce,
+                "alice doesn't have a published ssu2 address",
+            );
+            debug_assert!(false);
+            return;
         };
 
         // verify signature
@@ -488,18 +478,6 @@ impl<R: Runtime> RelayManager<R> {
                 );
             }
         }
-
-        let Some(intro_key) = router_info.ssu2_intro_key() else {
-            tracing::warn!(
-                target: LOG_TARGET,
-                %alice_router_id,
-                ?nonce,
-                ?relay_tag,
-                "no intro key for in alice's router info, rejecting",
-            );
-            debug_assert!(false);
-            return;
-        };
 
         let Some(external_address) = self.external_address else {
             tracing::debug!(
@@ -566,8 +544,8 @@ impl<R: Runtime> RelayManager<R> {
             .with_src_id(src_id)
             .with_token(token)
             .with_dst_id(dst_id)
-            .with_intro_key(intro_key)
-            .with_addres(alice_address)
+            .with_intro_key(*intro_key)
+            .with_addres(*alice_address)
             .build::<R>();
 
         self.write_buffer.push_back((pkt, address));

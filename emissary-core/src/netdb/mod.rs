@@ -1972,8 +1972,7 @@ mod tests {
         i2np::database::lookup::DatabaseLookupBuilder,
         primitives::{
             Capabilities, Date, Destination, DestinationId, Lease, LeaseSet2Header, Mapping,
-            RouterAddress, RouterIdentity, RouterInfo, RouterInfoBuilder, Str, TransportKind,
-            TunnelId,
+            RouterAddress, RouterIdentity, RouterInfo, RouterInfoBuilder, Str, TunnelId,
         },
         profile::ProfileStorage,
         runtime::mock::MockRuntime,
@@ -2680,9 +2679,8 @@ mod tests {
                                     + Duration::from_secs(60 * 60 + 60))
                                 .as_millis() as u64,
                             ),
-                            addresses: HashMap::from_iter([(
-                                TransportKind::Ntcp2,
-                                RouterAddress::new_unpublished_ntcp2([1u8; 32], 8888),
+                            addresses: Vec::from_iter([RouterAddress::new_unpublished_ntcp2(
+                                [1u8; 32], 8888,
                             )]),
                             options: Mapping::from_iter([
                                 (Str::from("netId"), Str::from("2")),
@@ -2788,9 +2786,8 @@ mod tests {
                                     - Duration::from_secs(60 * 60 + 60))
                                 .as_millis() as u64,
                             ),
-                            addresses: HashMap::from_iter([(
-                                TransportKind::Ntcp2,
-                                RouterAddress::new_unpublished_ntcp2([1u8; 32], 8888),
+                            addresses: Vec::from_iter([RouterAddress::new_unpublished_ntcp2(
+                                [1u8; 32], 8888,
                             )]),
                             options: Mapping::from_iter([
                                 (Str::from("netId"), Str::from("2")),
@@ -3112,9 +3109,8 @@ mod tests {
                                     - Duration::from_secs(60 * 60 + 60))
                                 .as_millis() as u64,
                             ),
-                            addresses: HashMap::from_iter([(
-                                TransportKind::Ntcp2,
-                                RouterAddress::new_unpublished_ntcp2([1u8; 32], 8888),
+                            addresses: Vec::from_iter([RouterAddress::new_unpublished_ntcp2(
+                                [1u8; 32], 8888,
                             )]),
                             options: Mapping::from_iter([
                                 (Str::from("netId"), Str::from("2")),
@@ -3424,9 +3420,8 @@ mod tests {
                                 (MockRuntime::time_since_epoch() - Duration::from_secs(60))
                                     .as_millis() as u64,
                             ),
-                            addresses: HashMap::from_iter([(
-                                TransportKind::Ntcp2,
-                                RouterAddress::new_unpublished_ntcp2([1u8; 32], 8888),
+                            addresses: Vec::from_iter([RouterAddress::new_unpublished_ntcp2(
+                                [1u8; 32], 8888,
                             )]),
                             options: Mapping::from_iter([
                                 (Str::from("netId"), Str::from("99")),
@@ -3605,9 +3600,8 @@ mod tests {
                                     + Duration::from_secs(60 * 60 + 60))
                                 .as_millis() as u64,
                             ),
-                            addresses: HashMap::from_iter([(
-                                TransportKind::Ntcp2,
-                                RouterAddress::new_unpublished_ntcp2([1u8; 32], 8888),
+                            addresses: Vec::from_iter([RouterAddress::new_unpublished_ntcp2(
+                                [1u8; 32], 8888,
                             )]),
                             options: Mapping::from_iter([
                                 (Str::from("netId"), Str::from("2")),

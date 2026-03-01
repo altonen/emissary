@@ -17,7 +17,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    crypto::{base64_encode, StaticPrivateKey},
+    crypto::{base64_decode, base64_encode, StaticPrivateKey, StaticPublicKey},
     error::parser::RouterAddressParseError,
     primitives::{Date, Mapping, Str},
 };
@@ -25,65 +25,59 @@ use crate::{
 use bytes::{BufMut, BytesMut};
 use nom::{number::complete::be_u8, Err, IResult};
 
-use alloc::{string::ToString, vec::Vec};
-use core::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-    str::FromStr,
-};
-
-/// Transport kind.
-#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
-pub enum TransportKind {
-    /// NTCP2.
-    Ntcp2,
-
-    /// SSU2.
-    Ssu2,
-}
-
-impl TryFrom<Str> for TransportKind {
-    type Error = ();
-
-    fn try_from(value: Str) -> Result<Self, Self::Error> {
-        if value.starts_with("SSU") {
-            return Ok(TransportKind::Ssu2);
-        }
-
-        if value.starts_with("NTCP2") {
-            return Ok(TransportKind::Ntcp2);
-        }
-
-        Err(())
-    }
-}
-
-impl TransportKind {
-    /// Serialize [`TransportKind`].
-    fn serialize(&self) -> Vec<u8> {
-        match self {
-            Self::Ntcp2 => Str::from("NTCP2").serialize(),
-            Self::Ssu2 => Str::from("SSU2").serialize(),
-        }
-    }
-}
+use alloc::string::ToString;
+use core::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 /// Router address.
 #[derive(Debug, Clone)]
-pub struct RouterAddress {
-    /// Router cost.
-    pub cost: u8,
+pub enum RouterAddress {
+    /// NTCP2.
+    Ntcp2 {
+        /// Router cost.
+        cost: u8,
 
-    /// When the router expires (always 0).
-    pub expires: Date,
+        /// Options.
+        options: Mapping,
 
-    /// Transport.
-    pub transport: TransportKind,
+        /// NTCP2 static key.
+        ///
+        /// Must always be present, even for unpublished addresses.
+        static_key: StaticPublicKey,
 
-    /// Options.
-    pub options: Mapping,
+        /// NTCP2 IV.
+        ///
+        /// `None` if router hasn't published an address.
+        iv: Option<[u8; 16]>,
 
-    /// Router's socket address.
-    pub socket_address: Option<SocketAddr>,
+        /// Router's socket address.
+        ///
+        /// `None` if router hasn't published an address.
+        socket_address: Option<SocketAddr>,
+    },
+
+    /// SSU2.
+    Ssu2 {
+        /// Router cost.
+        cost: u8,
+
+        /// SSU2 static key.
+        ///
+        /// Must always be present, even for unpublished addresses.
+        static_key: StaticPublicKey,
+
+        /// SSU2 intro key.
+        ///
+        /// Must always be present, even for unpublished addresses.
+        intro_key: [u8; 32],
+
+        /// Options.
+        options: Mapping,
+
+        /// Router's socket address.
+        ///
+        /// `None` if router hasn't published an address.
+        socket_address: Option<SocketAddr>,
+    },
 }
 
 impl RouterAddress {
@@ -96,12 +90,12 @@ impl RouterAddress {
         options.insert("v".into(), "2".into());
         options.insert("s".into(), key.into());
 
-        Self {
+        Self::Ntcp2 {
             cost: 14,
-            expires: Date::new(0),
-            transport: TransportKind::Ntcp2,
-            socket_address: Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)),
             options,
+            static_key,
+            iv: None,
+            socket_address: Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)),
         }
     }
 
@@ -116,38 +110,31 @@ impl RouterAddress {
         options.insert(Str::from("port"), Str::from(port.to_string()));
         options.insert(Str::from("i"), Str::from(base64_encode(iv)));
 
-        Self {
+        Self::Ntcp2 {
             cost: 3,
-            expires: Date::new(0),
-            transport: TransportKind::Ntcp2,
             options,
+            static_key,
+            iv: Some(iv),
             socket_address: Some(SocketAddr::new(IpAddr::V4(host), port)),
         }
     }
 
     /// Create new unpublished SSU2 [`RouterAddress`].
     pub fn new_unpublished_ssu2(static_key: [u8; 32], intro_key: [u8; 32], port: u16) -> Self {
-        let static_key = {
-            let static_key = StaticPrivateKey::from(static_key).public();
-            base64_encode(&static_key)
-        };
-        let intro_key = base64_encode(intro_key);
+        let static_key = StaticPrivateKey::from(static_key).public();
+        let encoded_static_key = base64_encode(&static_key);
+        let encoded_intro_key = base64_encode(intro_key);
 
         let mut options = Mapping::default();
-        options.insert(Str::from_str("v").unwrap(), Str::from_str("2").unwrap());
-        options.insert(
-            Str::from_str("s").unwrap(),
-            Str::from_str(&static_key).unwrap(),
-        );
-        options.insert(
-            Str::from_str("i").unwrap(),
-            Str::from_str(&intro_key).unwrap(),
-        );
+        options.insert(Str::from("v"), Str::from("2"));
+        options.insert(Str::from("s"), Str::from(encoded_static_key));
+        options.insert(Str::from("i"), Str::from(encoded_intro_key));
+        options.insert(Str::from("caps"), Str::from("BC4"));
 
-        Self {
+        Self::Ssu2 {
             cost: 14,
-            expires: Date::new(0),
-            transport: TransportKind::Ssu2,
+            intro_key,
+            static_key,
             socket_address: Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)),
             options,
         }
@@ -160,30 +147,22 @@ impl RouterAddress {
         port: u16,
         host: Ipv4Addr,
     ) -> Self {
-        let static_key = {
-            let static_key = StaticPrivateKey::from(static_key).public();
-            base64_encode(&static_key)
-        };
-        let intro_key = base64_encode(intro_key);
+        let static_key = StaticPrivateKey::from(static_key).public();
+        let encoded_static_key = base64_encode(&static_key);
+        let encoded_intro_key = base64_encode(intro_key);
 
         let mut options = Mapping::default();
         options.insert(Str::from("v"), Str::from("2"));
-        options.insert(
-            Str::from_str("s").unwrap(),
-            Str::from_str(&static_key).unwrap(),
-        );
-        options.insert(
-            Str::from_str("i").unwrap(),
-            Str::from_str(&intro_key).unwrap(),
-        );
+        options.insert(Str::from("s"), Str::from(encoded_static_key));
+        options.insert(Str::from("i"), Str::from(encoded_intro_key));
         options.insert(Str::from("host"), Str::from(host.to_string()));
         options.insert(Str::from("port"), Str::from(port.to_string()));
         options.insert(Str::from("caps"), Str::from("BC"));
 
-        Self {
+        Self::Ssu2 {
             cost: 8,
-            expires: Date::new(0),
-            transport: TransportKind::Ssu2,
+            static_key,
+            intro_key,
             options,
             socket_address: Some(SocketAddr::new(IpAddr::V4(host), port)),
         }
@@ -192,11 +171,13 @@ impl RouterAddress {
     /// Parse [`RouterAddress`] from `input`, returning rest of `input` and parsed address.
     pub fn parse_frame(input: &[u8]) -> IResult<&[u8], RouterAddress, RouterAddressParseError> {
         let (rest, cost) = be_u8(input)?;
-        let (rest, expires) = Date::parse_frame(rest)
+        let (rest, _expires) = Date::parse_frame(rest)
             .map_err(|_| Err::Error(RouterAddressParseError::InvalidExpiration))?;
         let (rest, transport) = Str::parse_frame(rest)
             .map_err(|_| Err::Error(RouterAddressParseError::InvalidTransport))?;
         let (rest, options) = Mapping::parse_frame(rest).map_err(Err::convert)?;
+
+        // parse socket address
         let socket_address: Option<SocketAddr> = {
             let maybe_host = options.get(&Str::from("host"));
             let maybe_port = options.get(&Str::from("port"));
@@ -215,38 +196,115 @@ impl RouterAddress {
             }
         };
 
-        Ok((
-            rest,
-            RouterAddress {
-                cost,
-                expires,
-                transport: TransportKind::try_from(transport)
-                    .map_err(|_| Err::Error(RouterAddressParseError::InvalidTransport))?,
-                options,
-                socket_address,
-            },
-        ))
+        match transport.as_ref() {
+            "NTCP2" => {
+                // static key must always be present
+                let static_key = {
+                    let static_key = options
+                        .get(&Str::from("s"))
+                        .ok_or(Err::Error(RouterAddressParseError::Ntcp2StaticKeyMissing))?;
+                    let bytes = base64_decode(static_key.as_bytes())
+                        .ok_or(Err::Error(RouterAddressParseError::InvalidNtcp2StaticKey))?;
+
+                    StaticPublicKey::from_bytes(&bytes)
+                        .ok_or(Err::Error(RouterAddressParseError::InvalidNtcp2StaticKey))?
+                };
+                let iv = options
+                    .get(&Str::from("i"))
+                    .and_then(|iv| base64_decode(iv.as_bytes()))
+                    .and_then(|bytes| TryInto::<[u8; 16]>::try_into(bytes).ok());
+
+                Ok((
+                    rest,
+                    Self::Ntcp2 {
+                        cost,
+                        options,
+                        static_key,
+                        iv,
+                        socket_address,
+                    },
+                ))
+            }
+            "SSU2" => {
+                // static key must always be present
+                let static_key = {
+                    let static_key = options
+                        .get(&Str::from("s"))
+                        .ok_or(Err::Error(RouterAddressParseError::Ssu2StaticKeyMissing))?;
+                    let bytes = base64_decode(static_key.as_bytes())
+                        .ok_or(Err::Error(RouterAddressParseError::InvalidSsu2StaticKey))?;
+
+                    StaticPublicKey::from_bytes(&bytes)
+                        .ok_or(Err::Error(RouterAddressParseError::InvalidSsu2StaticKey))?
+                };
+                // intro key must always be present
+                let intro_key = {
+                    let intro_key = options
+                        .get(&Str::from("i"))
+                        .ok_or(Err::Error(RouterAddressParseError::Ssu2IntroKeyMissing))?;
+                    let bytes = base64_decode(intro_key.as_bytes())
+                        .ok_or(Err::Error(RouterAddressParseError::InvalidSsu2IntroKey))?;
+
+                    TryInto::<[u8; 32]>::try_into(bytes)
+                        .map_err(|_| Err::Error(RouterAddressParseError::InvalidSsu2IntroKey))?
+                };
+
+                Ok((
+                    rest,
+                    Self::Ssu2 {
+                        cost,
+                        static_key,
+                        intro_key,
+                        options,
+                        socket_address,
+                    },
+                ))
+            }
+            _ => Err(Err::Error(RouterAddressParseError::InvalidTransport)),
+        }
     }
 
     /// Does the router support peer testing.
     pub fn supports_peer_testing(&self) -> bool {
-        if self.transport == TransportKind::Ntcp2 {
-            return false;
+        match self {
+            Self::Ntcp2 { .. } => false,
+            Self::Ssu2 { options, .. } =>
+                options.iter().any(|(key, value)| &(**key) == "caps" && value.contains("B")),
         }
+    }
 
-        self.options
-            .iter()
-            .any(|(key, value)| &(**key) == "caps" && value.contains("B"))
+    /// Does the router support relay.
+    pub fn supports_relay(&self) -> bool {
+        match self {
+            Self::Ntcp2 { .. } => false,
+            Self::Ssu2 { options, .. } =>
+                options.iter().any(|(key, value)| &(**key) == "caps" && value.contains("C")),
+        }
+    }
+
+    pub fn socket_address(&self) -> Option<SocketAddr> {
+        match self {
+            Self::Ntcp2 { socket_address, .. } => *socket_address,
+            Self::Ssu2 { socket_address, .. } => *socket_address,
+        }
     }
 
     /// Does the router support IPv4.
     pub fn supports_ipv4(&self) -> bool {
-        self.socket_address.map(|address| address.is_ipv4()).unwrap_or(false)
+        self.socket_address().is_some_and(|address| address.is_ipv4())
     }
 
     /// Does the router support IPv6.
     pub fn supports_ipv6(&self) -> bool {
-        self.socket_address.map(|address| address.is_ipv6()).unwrap_or(false)
+        self.socket_address().is_some_and(|address| address.is_ipv6())
+    }
+
+    /// Get reference to transport's options.
+    pub fn options(&self) -> &Mapping {
+        match self {
+            Self::Ntcp2 { options, .. } => options,
+            Self::Ssu2 { options, .. } => options,
+        }
     }
 
     /// Try to convert `bytes` into a [`RouterAddress`].
@@ -256,16 +314,43 @@ impl RouterAddress {
 
     /// Serialize [`RouterAddress`].
     pub fn serialize(&self) -> BytesMut {
-        let options = self.options.serialize();
-        let transport = self.transport.serialize();
-        let mut out = BytesMut::with_capacity(1 + 8 + transport.len() + options.len());
+        match self {
+            Self::Ntcp2 { cost, options, .. } => {
+                let options = options.serialize();
+                let transport = Str::from("NTCP2").serialize();
+                let mut out = BytesMut::with_capacity(1 + 8 + transport.len() + options.len());
 
-        out.put_u8(self.cost);
-        out.put_slice(&self.expires.serialize());
-        out.put_slice(&transport);
-        out.put_slice(&options);
+                out.put_u8(*cost);
+                out.put_slice(&Date::new(0).serialize());
+                out.put_slice(&transport);
+                out.put_slice(&options);
 
-        out
+                out
+            }
+            Self::Ssu2 { cost, options, .. } => {
+                let options = options.serialize();
+                let transport = Str::from("SSU2").serialize();
+                let mut out = BytesMut::with_capacity(1 + 8 + transport.len() + options.len());
+
+                out.put_u8(*cost);
+                out.put_slice(&Date::new(0).serialize());
+                out.put_slice(&transport);
+                out.put_slice(&options);
+
+                out
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+impl RouterAddress {
+    /// Get socket address of the SSU2 transport.
+    pub fn ssu2_ipv4_address(&self) -> SocketAddr {
+        match self {
+            Self::Ssu2 { socket_address, .. } => socket_address.unwrap(),
+            Self::Ntcp2 { .. } => unreachable!(),
+        }
     }
 }
 
@@ -278,16 +363,25 @@ mod tests {
         let serialized = RouterAddress::new_unpublished_ntcp2([1u8; 32], 8888).serialize();
         let static_key = StaticPrivateKey::from([1u8; 32]).public();
 
-        let address = RouterAddress::parse(&serialized).unwrap();
-        assert_eq!(address.cost, 14);
-        assert_eq!(
-            address.options.get(&Str::from("s")),
-            Some(&Str::from(base64_encode(&static_key)))
-        );
-        assert_eq!(address.options.get(&Str::from("v")), Some(&Str::from("2")));
-        assert!(address.options.get(&Str::from("i")).is_none());
-        assert!(address.options.get(&Str::from("host")).is_none());
-        assert!(address.options.get(&Str::from("port")).is_none());
+        match RouterAddress::parse(&serialized).unwrap() {
+            RouterAddress::Ntcp2 {
+                cost,
+                options,
+                static_key: s,
+                iv,
+                ..
+            } => {
+                assert_eq!(cost, 14);
+                assert_eq!(s.to_vec(), static_key.to_vec());
+                assert_eq!(iv, None);
+
+                assert_eq!(options.get(&Str::from("v")), Some(&Str::from("2")));
+                assert!(options.get(&Str::from("i")).is_none());
+                assert!(options.get(&Str::from("host")).is_none());
+                assert!(options.get(&Str::from("port")).is_none());
+            }
+            _ => panic!("invalid ntcp2 address"),
+        }
     }
 
     #[test]
@@ -301,25 +395,35 @@ mod tests {
         .serialize();
         let static_key = StaticPrivateKey::from([1u8; 32]).public();
 
-        let address = RouterAddress::parse(&serialized).unwrap();
-        assert_eq!(address.cost, 3);
-        assert_eq!(
-            address.options.get(&Str::from("i")),
-            Some(&Str::from(base64_encode(&[0xaa; 16])))
-        );
-        assert_eq!(
-            address.options.get(&Str::from("s")),
-            Some(&Str::from(base64_encode(&static_key)))
-        );
-        assert_eq!(address.options.get(&Str::from("v")), Some(&Str::from("2")));
-        assert_eq!(
-            address.options.get(&Str::from("host")),
-            Some(&Str::from("127.0.0.1"))
-        );
-        assert_eq!(
-            address.options.get(&Str::from("port")),
-            Some(&Str::from("8888"))
-        );
+        match RouterAddress::parse(&serialized).unwrap() {
+            RouterAddress::Ntcp2 {
+                cost,
+                options,
+                static_key: s,
+                iv,
+                socket_address,
+            } => {
+                assert_eq!(cost, 3);
+                assert_eq!(s.to_vec(), static_key.to_vec());
+                assert_eq!(iv, Some([0xaa; 16]));
+                assert_eq!(socket_address, Some("127.0.0.1:8888".parse().unwrap()));
+                assert_eq!(
+                    options.get(&Str::from("i")),
+                    Some(&Str::from(base64_encode(&[0xaa; 16])))
+                );
+                assert_eq!(
+                    options.get(&Str::from("s")),
+                    Some(&Str::from(base64_encode(&static_key)))
+                );
+                assert_eq!(options.get(&Str::from("v")), Some(&Str::from("2")));
+                assert_eq!(
+                    options.get(&Str::from("host")),
+                    Some(&Str::from("127.0.0.1"))
+                );
+                assert_eq!(options.get(&Str::from("port")), Some(&Str::from("8888")));
+            }
+            _ => panic!("invalid ntp2 address"),
+        }
     }
 
     #[test]
@@ -329,19 +433,31 @@ mod tests {
         let static_key = StaticPrivateKey::from([1u8; 32]).public();
         let intro_key = [2u8; 32];
 
-        let address = RouterAddress::parse(&serialized).unwrap();
-        assert_eq!(address.cost, 14);
-        assert_eq!(
-            address.options.get(&Str::from("s")),
-            Some(&Str::from(base64_encode(&static_key)))
-        );
-        assert_eq!(
-            address.options.get(&Str::from("i")),
-            Some(&Str::from(base64_encode(&intro_key)))
-        );
-        assert_eq!(address.options.get(&Str::from("v")), Some(&Str::from("2")));
-        assert!(address.options.get(&Str::from("host")).is_none());
-        assert!(address.options.get(&Str::from("port")).is_none());
+        match RouterAddress::parse(&serialized).unwrap() {
+            RouterAddress::Ssu2 {
+                cost,
+                options,
+                static_key: s,
+                intro_key: i,
+                ..
+            } => {
+                assert_eq!(cost, 14);
+                assert_eq!(s.to_vec(), static_key.to_vec());
+                assert_eq!(i, intro_key);
+                assert_eq!(
+                    options.get(&Str::from("s")),
+                    Some(&Str::from(base64_encode(&static_key)))
+                );
+                assert_eq!(
+                    options.get(&Str::from("i")),
+                    Some(&Str::from(base64_encode(&intro_key)))
+                );
+                assert_eq!(options.get(&Str::from("v")), Some(&Str::from("2")));
+                assert!(options.get(&Str::from("host")).is_none());
+                assert!(options.get(&Str::from("port")).is_none());
+            }
+            _ => panic!("invalid ssu2 address"),
+        }
     }
 
     #[test]
@@ -356,24 +472,142 @@ mod tests {
         let static_key = StaticPrivateKey::from([1u8; 32]).public();
         let intro_key = [2u8; 32];
 
-        let address = RouterAddress::parse(&serialized).unwrap();
-        assert_eq!(address.cost, 8);
+        match RouterAddress::parse(&serialized).unwrap() {
+            RouterAddress::Ssu2 {
+                cost,
+                static_key: s,
+                intro_key: i,
+                options,
+                socket_address,
+            } => {
+                assert_eq!(cost, 8);
+                assert_eq!(s.to_vec(), static_key.to_vec());
+                assert_eq!(i, intro_key);
+                assert_eq!(socket_address, Some("127.0.0.1:8888".parse().unwrap()));
+                assert_eq!(
+                    options.get(&Str::from("s")),
+                    Some(&Str::from(base64_encode(&static_key)))
+                );
+                assert_eq!(
+                    options.get(&Str::from("i")),
+                    Some(&Str::from(base64_encode(&intro_key)))
+                );
+                assert_eq!(options.get(&Str::from("v")), Some(&Str::from("2")));
+                assert_eq!(
+                    options.get(&Str::from("host")),
+                    Some(&Str::from("127.0.0.1"))
+                );
+                assert_eq!(options.get(&Str::from("port")), Some(&Str::from("8888")));
+            }
+            _ => panic!("invalid ssu2 address"),
+        }
+    }
+
+    #[test]
+    fn ntcp2_static_key_missing() {
+        let mut address = RouterAddress::new_unpublished_ntcp2([0xaa; 32], 8888);
+        match address {
+            RouterAddress::Ntcp2 {
+                ref mut options, ..
+            } => {
+                let _ = options.remove(&Str::from("s"));
+            }
+            _ => panic!("invalid ntcp2 address"),
+        }
+
         assert_eq!(
-            address.options.get(&Str::from("s")),
-            Some(&Str::from(base64_encode(&static_key)))
+            RouterAddress::parse(&address.serialize()).unwrap_err(),
+            RouterAddressParseError::Ntcp2StaticKeyMissing
         );
+    }
+
+    #[test]
+    fn invalid_ntcp2_static_key() {
+        let mut address = RouterAddress::new_unpublished_ntcp2([0xaa; 32], 8888);
+        match address {
+            RouterAddress::Ntcp2 {
+                ref mut options, ..
+            } => {
+                options.insert(Str::from("s"), Str::from("hello, world"));
+            }
+            _ => panic!("invalid ntcp2 address"),
+        }
+
         assert_eq!(
-            address.options.get(&Str::from("i")),
-            Some(&Str::from(base64_encode(&intro_key)))
+            RouterAddress::parse(&address.serialize()).unwrap_err(),
+            RouterAddressParseError::InvalidNtcp2StaticKey
         );
-        assert_eq!(address.options.get(&Str::from("v")), Some(&Str::from("2")));
+    }
+
+    #[test]
+    fn ssu2_static_key_missing() {
+        let mut address = RouterAddress::new_unpublished_ssu2([0xaa; 32], [0xbb; 32], 8888);
+        match address {
+            RouterAddress::Ssu2 {
+                ref mut options, ..
+            } => {
+                let _ = options.remove(&Str::from("s"));
+            }
+            _ => panic!("invalid ssu2 address"),
+        }
+
         assert_eq!(
-            address.options.get(&Str::from("host")),
-            Some(&Str::from("127.0.0.1"))
+            RouterAddress::parse(&address.serialize()).unwrap_err(),
+            RouterAddressParseError::Ssu2StaticKeyMissing
         );
+    }
+
+    #[test]
+    fn ssu2_intro_key_missing() {
+        let mut address = RouterAddress::new_unpublished_ssu2([0xaa; 32], [0xbb; 32], 8888);
+        match address {
+            RouterAddress::Ssu2 {
+                ref mut options, ..
+            } => {
+                let _ = options.remove(&Str::from("i"));
+            }
+            _ => panic!("invalid ssu2 address"),
+        }
+
         assert_eq!(
-            address.options.get(&Str::from("port")),
-            Some(&Str::from("8888"))
+            RouterAddress::parse(&address.serialize()).unwrap_err(),
+            RouterAddressParseError::Ssu2IntroKeyMissing
+        );
+    }
+
+    #[test]
+    fn invalid_ssu2_static_key() {
+        let mut address = RouterAddress::new_unpublished_ssu2([0xaa; 32], [0xbb; 32], 8888);
+        match address {
+            RouterAddress::Ssu2 {
+                ref mut options, ..
+            } => {
+                options.insert(Str::from("s"), Str::from("hello, world"));
+            }
+            _ => panic!("invalid ssu2 address"),
+        }
+
+        assert_eq!(
+            RouterAddress::parse(&address.serialize()).unwrap_err(),
+            RouterAddressParseError::InvalidSsu2StaticKey
+        );
+    }
+
+    #[test]
+    fn invalid_ssu2_intro_key() {
+        let mut address = RouterAddress::new_unpublished_ssu2([0xaa; 32], [0xbb; 32], 8888);
+        match address {
+            RouterAddress::Ssu2 {
+                ref mut options, ..
+            } => {
+                options.insert(Str::from("i"), Str::from("hello, world"));
+            }
+            _ => panic!("invalid ssu2 address"),
+        }
+
+        assert_eq!(
+            RouterAddress::parse(&address.serialize()).unwrap_err(),
+            RouterAddressParseError::InvalidSsu2IntroKey
         );
     }
 }

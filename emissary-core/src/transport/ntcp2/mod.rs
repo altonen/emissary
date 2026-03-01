@@ -418,16 +418,23 @@ mod tests {
         let (context, address) = Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
         let port = context.as_ref().unwrap().socket_address.port().to_string();
 
-        assert_eq!(
-            address.as_ref().unwrap().options.get(&Str::from("host")),
-            Some(&Str::from("8.8.8.8"))
-        );
-        assert_eq!(
-            address.as_ref().unwrap().options.get(&Str::from("port")),
-            Some(&Str::from(port))
-        );
-        assert!(address.as_ref().unwrap().options.get(&Str::from("i")).is_some());
-        assert!(address.as_ref().unwrap().socket_address.is_some());
+        match address.unwrap() {
+            RouterAddress::Ntcp2 {
+                options,
+                socket_address,
+                ..
+            } => {
+                assert_eq!(
+                    socket_address,
+                    Some(format!("8.8.8.8:{port}").parse().unwrap())
+                );
+                assert_eq!(options.get(&Str::from("host")), Some(&Str::from("8.8.8.8")));
+                assert_eq!(options.get(&Str::from("port")), Some(&Str::from(port)));
+                assert!(options.get(&Str::from("i")).is_some());
+                assert!(socket_address.is_some());
+            }
+            _ => panic!("invalid ntcp2 address"),
+        }
         assert!(context.is_some());
     }
 
@@ -442,10 +449,19 @@ mod tests {
         });
         let (context, address) = Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
 
-        assert!(address.as_ref().unwrap().options.get(&Str::from("host")).is_none());
-        assert!(address.as_ref().unwrap().options.get(&Str::from("port")).is_none());
-        assert!(address.as_ref().unwrap().options.get(&Str::from("i")).is_none());
-        assert!(address.as_ref().unwrap().socket_address.is_some());
+        match address.unwrap() {
+            RouterAddress::Ntcp2 {
+                options,
+                socket_address,
+                ..
+            } => {
+                assert!(options.get(&Str::from("host")).is_none());
+                assert!(options.get(&Str::from("port")).is_none());
+                assert!(options.get(&Str::from("i")).is_none());
+                assert!(socket_address.is_some());
+            }
+            _ => panic!("invalid ntcp2 address"),
+        }
         assert!(context.is_some());
     }
 
@@ -460,10 +476,19 @@ mod tests {
         });
         let (context, address) = Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
 
-        assert!(address.as_ref().unwrap().options.get(&Str::from("host")).is_none());
-        assert!(address.as_ref().unwrap().options.get(&Str::from("port")).is_none());
-        assert!(address.as_ref().unwrap().options.get(&Str::from("i")).is_none());
-        assert!(address.as_ref().unwrap().socket_address.is_some());
+        match address.unwrap() {
+            RouterAddress::Ntcp2 {
+                options,
+                socket_address,
+                ..
+            } => {
+                assert!(options.get(&Str::from("host")).is_none());
+                assert!(options.get(&Str::from("port")).is_none());
+                assert!(options.get(&Str::from("i")).is_none());
+                assert!(socket_address.is_some());
+            }
+            _ => panic!("invalid ntcp2 address"),
+        }
         assert!(context.is_some());
     }
 
@@ -478,10 +503,19 @@ mod tests {
         });
         let (context, address) = Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
 
-        assert!(address.as_ref().unwrap().options.get(&Str::from("host")).is_none());
-        assert!(address.as_ref().unwrap().options.get(&Str::from("port")).is_none());
-        assert!(address.as_ref().unwrap().options.get(&Str::from("i")).is_none());
-        assert!(address.as_ref().unwrap().socket_address.is_some());
+        match address.unwrap() {
+            RouterAddress::Ntcp2 {
+                options,
+                socket_address,
+                ..
+            } => {
+                assert!(options.get(&Str::from("host")).is_none());
+                assert!(options.get(&Str::from("port")).is_none());
+                assert!(options.get(&Str::from("i")).is_none());
+                assert!(socket_address.is_some());
+            }
+            _ => panic!("invalid ntcp2 address"),
+        }
         assert!(context.is_some());
     }
 
@@ -496,14 +530,20 @@ mod tests {
         });
         let (context, address) = Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
 
-        assert!(address.as_ref().unwrap().options.get(&Str::from("host")).is_none());
-        assert!(address.as_ref().unwrap().options.get(&Str::from("port")).is_none());
-        assert!(address.as_ref().unwrap().options.get(&Str::from("i")).is_none());
-        assert!(address.as_ref().unwrap().socket_address.is_some());
-        assert_ne!(
-            address.as_ref().unwrap().socket_address.as_ref().unwrap().port(),
-            0u16
-        );
+        match address.unwrap() {
+            RouterAddress::Ntcp2 {
+                options,
+                socket_address,
+                ..
+            } => {
+                assert!(options.get(&Str::from("host")).is_none());
+                assert!(options.get(&Str::from("port")).is_none());
+                assert!(options.get(&Str::from("i")).is_none());
+                assert!(socket_address.is_some());
+                assert_ne!(socket_address.as_ref().unwrap().port(), 0u16);
+            }
+            _ => panic!("invalid ntcp2 address"),
+        }
         assert!(context.is_some());
     }
 
@@ -518,21 +558,24 @@ mod tests {
         });
         let (context, address) = Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
 
-        let published_port = address
-            .as_ref()
-            .unwrap()
-            .options
-            .get(&Str::from("port"))
-            .unwrap()
-            .parse::<u16>()
-            .unwrap();
-        let socket_address_port = address.as_ref().unwrap().socket_address.as_ref().unwrap().port();
+        match address.unwrap() {
+            RouterAddress::Ntcp2 {
+                options,
+                socket_address,
+                ..
+            } => {
+                let published_port =
+                    options.get(&Str::from("port")).unwrap().parse::<u16>().unwrap();
+                let socket_address_port = socket_address.as_ref().unwrap().port();
 
-        assert!(address.as_ref().unwrap().options.get(&Str::from("host")).is_some());
-        assert!(address.as_ref().unwrap().options.get(&Str::from("port")).is_some());
-        assert!(address.as_ref().unwrap().options.get(&Str::from("i")).is_some());
-        assert_eq!(published_port, socket_address_port);
-        assert_ne!(published_port, 0u16);
+                assert!(options.get(&Str::from("host")).is_some());
+                assert!(options.get(&Str::from("port")).is_some());
+                assert!(options.get(&Str::from("i")).is_some());
+                assert_eq!(published_port, socket_address_port);
+                assert_ne!(published_port, 0u16);
+            }
+            _ => panic!("invalid ntcp2 address"),
+        }
         assert!(context.is_some());
     }
 

@@ -20,7 +20,7 @@ use crate::{
     error::QueryError,
     events::EventHandle,
     netdb::NetDbHandle,
-    primitives::{Date, RouterAddress, RouterId, RouterInfo, Str, TransportKind},
+    primitives::{Date, RouterAddress, RouterId, RouterInfo, Str},
     router::context::RouterContext,
     runtime::{Counter, Gauge, JoinSet, MetricType, MetricsHandle, Runtime},
     subsystem::SubsystemEvent,
@@ -532,10 +532,9 @@ impl<R: Runtime> TransportManager<R> {
                 iv,
             }) => match (host, address) {
                 (None, address) => {
-                    self.local_router_info.addresses.insert(
-                        TransportKind::Ntcp2,
-                        RouterAddress::new_published_ntcp2(*key, *iv, *port, address),
-                    );
+                    self.local_router_info.addresses.push(RouterAddress::new_published_ntcp2(
+                        *key, *iv, *port, address,
+                    ));
                 }
                 (Some(published), address) if published == &address => {}
                 (Some(published), address) => tracing::warn!(
@@ -560,10 +559,12 @@ impl<R: Runtime> TransportManager<R> {
                 intro_key,
             }) => match (host, address) {
                 (None, address) => {
-                    self.local_router_info.addresses.insert(
-                        TransportKind::Ssu2,
-                        RouterAddress::new_published_ssu2(*static_key, *intro_key, *port, address),
-                    );
+                    self.local_router_info.addresses.push(RouterAddress::new_published_ssu2(
+                        *static_key,
+                        *intro_key,
+                        *port,
+                        address,
+                    ));
                 }
                 (Some(published), address) if published == &address => {}
                 (Some(published), address) => tracing::warn!(
@@ -931,8 +932,6 @@ impl<R: Runtime> Future for TransportManager<R> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
-
     use super::*;
     use crate::{
         events::EventManager,
@@ -943,6 +942,7 @@ mod tests {
         runtime::mock::MockRuntime,
         subsystem::OutboundMessage,
     };
+    use std::collections::VecDeque;
     use thingbuf::mpsc::channel;
     use tokio::sync::mpsc;
 
@@ -1016,46 +1016,28 @@ mod tests {
 
         // ensure ntcp2 is published
         assert!(manager.ntcp2_config.is_some());
-        assert_eq!(
-            manager
-                .local_router_info
-                .addresses
-                .get(&TransportKind::Ntcp2)
-                .unwrap()
-                .options
-                .get(&Str::from("host")),
-            Some(&Str::from("192.168.0.1"))
+        assert!(
+            manager.local_router_info.addresses().any(|address| match address {
+                RouterAddress::Ntcp2 { options, .. } => {
+                    options.get(&Str::from("host")) == Some(&Str::from("192.168.0.1"))
+                        && options.get(&Str::from("s")).is_some()
+                }
+                _ => false,
+            })
         );
-        assert!(manager
-            .local_router_info
-            .addresses
-            .get(&TransportKind::Ntcp2)
-            .unwrap()
-            .options
-            .get(&Str::from("s"))
-            .is_some());
 
         manager.add_external_address("192.168.0.1".parse().unwrap());
 
         // verify that the address is still published and that host is the same
-        assert_eq!(
-            manager
-                .local_router_info
-                .addresses
-                .get(&TransportKind::Ntcp2)
-                .unwrap()
-                .options
-                .get(&Str::from("host")),
-            Some(&Str::from("192.168.0.1"))
+        assert!(
+            manager.local_router_info.addresses().any(|address| match address {
+                RouterAddress::Ntcp2 { options, .. } => {
+                    options.get(&Str::from("host")) == Some(&Str::from("192.168.0.1"))
+                        && options.get(&Str::from("s")).is_some()
+                }
+                _ => false,
+            })
         );
-        assert!(manager
-            .local_router_info
-            .addresses
-            .get(&TransportKind::Ntcp2)
-            .unwrap()
-            .options
-            .get(&Str::from("s"))
-            .is_some());
     }
 
     #[tokio::test]
@@ -1079,42 +1061,28 @@ mod tests {
 
         // ensure ntcp2 is unpublished
         assert!(manager.ntcp2_config.is_some());
-        assert!(manager
-            .local_router_info
-            .addresses
-            .get(&TransportKind::Ntcp2)
-            .unwrap()
-            .options
-            .get(&Str::from("host"))
-            .is_none());
-        assert!(manager
-            .local_router_info
-            .addresses
-            .get(&TransportKind::Ntcp2)
-            .unwrap()
-            .options
-            .get(&Str::from("i"))
-            .is_none());
+        assert!(
+            manager.local_router_info.addresses().any(|address| match address {
+                RouterAddress::Ntcp2 { options, .. } => {
+                    options.get(&Str::from("host")).is_none()
+                        && options.get(&Str::from("i")).is_none()
+                }
+                _ => false,
+            })
+        );
 
         manager.add_external_address("192.168.0.1".parse().unwrap());
 
         // verify that the address is still unpublished
-        assert!(manager
-            .local_router_info
-            .addresses
-            .get(&TransportKind::Ntcp2)
-            .unwrap()
-            .options
-            .get(&Str::from("host"))
-            .is_none());
-        assert!(manager
-            .local_router_info
-            .addresses
-            .get(&TransportKind::Ntcp2)
-            .unwrap()
-            .options
-            .get(&Str::from("i"))
-            .is_none());
+        assert!(
+            manager.local_router_info.addresses().any(|address| match address {
+                RouterAddress::Ntcp2 { options, .. } => {
+                    options.get(&Str::from("host")).is_none()
+                        && options.get(&Str::from("i")).is_none()
+                }
+                _ => false,
+            })
+        );
     }
 
     #[tokio::test]
@@ -1135,29 +1103,25 @@ mod tests {
 
         // ensure ssu2 is published
         assert!(manager.ssu2_config.is_some());
-        assert_eq!(
-            manager
-                .local_router_info
-                .addresses
-                .get(&TransportKind::Ssu2)
-                .unwrap()
-                .options
-                .get(&Str::from("host")),
-            Some(&Str::from("192.168.0.1"))
+        assert!(
+            manager.local_router_info.addresses().any(|address| match address {
+                RouterAddress::Ssu2 { options, .. } => {
+                    options.get(&Str::from("host")) == Some(&Str::from("192.168.0.1"))
+                }
+                _ => false,
+            })
         );
 
         manager.add_external_address("192.168.0.1".parse().unwrap());
 
         // verify that the address is still published and that host is the same
-        assert_eq!(
-            manager
-                .local_router_info
-                .addresses
-                .get(&TransportKind::Ssu2)
-                .unwrap()
-                .options
-                .get(&Str::from("host")),
-            Some(&Str::from("192.168.0.1"))
+        assert!(
+            manager.local_router_info.addresses().any(|address| match address {
+                RouterAddress::Ssu2 { options, .. } => {
+                    options.get(&Str::from("host")) == Some(&Str::from("192.168.0.1"))
+                }
+                _ => false,
+            })
         );
     }
 
@@ -1182,26 +1146,26 @@ mod tests {
 
         // ensure ssu2 is unpublished
         assert!(manager.ssu2_config.is_some());
-        assert!(manager
-            .local_router_info
-            .addresses
-            .get(&TransportKind::Ssu2)
-            .unwrap()
-            .options
-            .get(&Str::from("host"))
-            .is_none());
+        assert!(
+            manager.local_router_info.addresses().any(|address| match address {
+                RouterAddress::Ssu2 { options, .. } => {
+                    options.get(&Str::from("host")).is_none()
+                }
+                _ => false,
+            })
+        );
 
         manager.add_external_address("192.168.0.1".parse().unwrap());
 
         // verify that the address is still unpublished
-        assert!(manager
-            .local_router_info
-            .addresses
-            .get(&TransportKind::Ssu2)
-            .unwrap()
-            .options
-            .get(&Str::from("host"))
-            .is_none());
+        assert!(
+            manager.local_router_info.addresses().any(|address| match address {
+                RouterAddress::Ssu2 { options, .. } => {
+                    options.get(&Str::from("host")).is_none()
+                }
+                _ => false,
+            })
+        );
     }
 
     #[tokio::test]
@@ -1238,62 +1202,44 @@ mod tests {
         // ensure ssu2 and ntcp2 is unpublished since no host was provided
         assert!(manager.ssu2_config.is_some());
         assert!(manager.ntcp2_config.is_some());
-        assert!(manager
-            .local_router_info
-            .addresses
-            .get(&TransportKind::Ssu2)
-            .unwrap()
-            .options
-            .get(&Str::from("host"))
-            .is_none());
-        assert!(manager
-            .local_router_info
-            .addresses
-            .get(&TransportKind::Ntcp2)
-            .unwrap()
-            .options
-            .get(&Str::from("host"))
-            .is_none());
-        assert!(manager
-            .local_router_info
-            .addresses
-            .get(&TransportKind::Ntcp2)
-            .unwrap()
-            .options
-            .get(&Str::from("i"))
-            .is_none());
+        assert!(
+            manager.local_router_info.addresses().any(|address| match address {
+                RouterAddress::Ssu2 { options, .. } => {
+                    options.get(&Str::from("host")).is_none()
+                }
+                _ => false,
+            })
+        );
+        assert!(
+            manager.local_router_info.addresses().any(|address| match address {
+                RouterAddress::Ntcp2 { options, .. } => {
+                    options.get(&Str::from("host")).is_none()
+                        && options.get(&Str::from("i")).is_none()
+                }
+                _ => false,
+            })
+        );
 
         manager.add_external_address("192.168.0.1".parse().unwrap());
 
-        // verify that the address is still unpublished
-        assert_eq!(
-            manager
-                .local_router_info
-                .addresses
-                .get(&TransportKind::Ssu2)
-                .unwrap()
-                .options
-                .get(&Str::from("host")),
-            Some(&Str::from("192.168.0.1"))
+        // verify the addresses have been published
+        assert!(
+            manager.local_router_info.addresses().any(|address| match address {
+                RouterAddress::Ssu2 { options, .. } => {
+                    options.get(&Str::from("host")) == Some(&Str::from("192.168.0.1"))
+                }
+                _ => false,
+            })
         );
-        assert_eq!(
-            manager
-                .local_router_info
-                .addresses
-                .get(&TransportKind::Ntcp2)
-                .unwrap()
-                .options
-                .get(&Str::from("host")),
-            Some(&Str::from("192.168.0.1"))
+        assert!(
+            manager.local_router_info.addresses().any(|address| match address {
+                RouterAddress::Ntcp2 { options, .. } => {
+                    options.get(&Str::from("host")) == Some(&Str::from("192.168.0.1"))
+                        && options.get(&Str::from("i")).is_some()
+                }
+                _ => false,
+            })
         );
-        assert!(manager
-            .local_router_info
-            .addresses
-            .get(&TransportKind::Ntcp2)
-            .unwrap()
-            .options
-            .get(&Str::from("s"))
-            .is_some());
     }
 
     #[tokio::test]
@@ -1316,46 +1262,28 @@ mod tests {
 
         // ensure ntcp2 is published
         assert!(manager.ntcp2_config.is_some());
-        assert_eq!(
-            manager
-                .local_router_info
-                .addresses
-                .get(&TransportKind::Ntcp2)
-                .unwrap()
-                .options
-                .get(&Str::from("host")),
-            Some(&Str::from("192.168.0.1"))
+        assert!(
+            manager.local_router_info.addresses().any(|address| match address {
+                RouterAddress::Ntcp2 { options, .. } => {
+                    options.get(&Str::from("host")) == Some(&Str::from("192.168.0.1"))
+                        && options.get(&Str::from("i")).is_some()
+                }
+                _ => false,
+            })
         );
-        assert!(manager
-            .local_router_info
-            .addresses
-            .get(&TransportKind::Ntcp2)
-            .unwrap()
-            .options
-            .get(&Str::from("s"))
-            .is_some());
 
         manager.add_external_address("192.168.1.1".parse().unwrap());
 
         // verify that the address is still published and that host is the same
-        assert_eq!(
-            manager
-                .local_router_info
-                .addresses
-                .get(&TransportKind::Ntcp2)
-                .unwrap()
-                .options
-                .get(&Str::from("host")),
-            Some(&Str::from("192.168.0.1"))
+        assert!(
+            manager.local_router_info.addresses().any(|address| match address {
+                RouterAddress::Ntcp2 { options, .. } => {
+                    options.get(&Str::from("host")) == Some(&Str::from("192.168.0.1"))
+                        && options.get(&Str::from("i")).is_some()
+                }
+                _ => false,
+            })
         );
-        assert!(manager
-            .local_router_info
-            .addresses
-            .get(&TransportKind::Ntcp2)
-            .unwrap()
-            .options
-            .get(&Str::from("s"))
-            .is_some());
     }
 
     #[tokio::test]
@@ -1379,29 +1307,25 @@ mod tests {
 
         // ensure ssu2 is unpublished
         assert!(manager.ssu2_config.is_some());
-        assert_eq!(
-            manager
-                .local_router_info
-                .addresses
-                .get(&TransportKind::Ssu2)
-                .unwrap()
-                .options
-                .get(&Str::from("host")),
-            Some(&Str::from("192.168.1.1"))
+        assert!(
+            manager.local_router_info.addresses().any(|address| match address {
+                RouterAddress::Ssu2 { options, .. } => {
+                    options.get(&Str::from("host")) == Some(&Str::from("192.168.1.1"))
+                }
+                _ => false,
+            })
         );
 
         manager.add_external_address("192.168.0.1".parse().unwrap());
 
         // verify that the address is still unpublished
-        assert_eq!(
-            manager
-                .local_router_info
-                .addresses
-                .get(&TransportKind::Ssu2)
-                .unwrap()
-                .options
-                .get(&Str::from("host")),
-            Some(&Str::from("192.168.1.1"))
+        assert!(
+            manager.local_router_info.addresses().any(|address| match address {
+                RouterAddress::Ssu2 { options, .. } => {
+                    options.get(&Str::from("host")) == Some(&Str::from("192.168.1.1"))
+                }
+                _ => false,
+            })
         );
     }
 
@@ -2165,7 +2089,7 @@ mod tests {
             Ssu2Transport::<MockRuntime>::initialize(Some(config1)).await.unwrap();
         let (router_info1, static_key1, signing_key1) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
-                port: address1.unwrap().socket_address.unwrap().port(),
+                port: address1.unwrap().ssu2_ipv4_address().port(),
                 host: Some("127.0.0.1".parse().unwrap()),
                 publish: true,
                 static_key: [0xaa; 32],
@@ -2188,7 +2112,7 @@ mod tests {
 
         let (router_info2, static_key2, signing_key2) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
-                port: address2.unwrap().socket_address.unwrap().port(),
+                port: address2.unwrap().ssu2_ipv4_address().port(),
                 host: Some("127.0.0.1".parse().unwrap()),
                 publish: true,
                 static_key: [0xcc; 32],

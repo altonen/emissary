@@ -22,6 +22,7 @@ use crate::{
         EphemeralPublicKey, StaticPrivateKey, StaticPublicKey,
     },
     error::Ssu2Error,
+    primitives::RouterAddress,
     runtime::{Runtime, UdpSocket},
     transport::{
         ssu2::{
@@ -714,7 +715,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
             return Err(Ssu2Error::Malformed);
         };
 
-        let Some(intro_key) = router_info.ssu2_intro_key() else {
+        let Some(RouterAddress::Ssu2 { intro_key, .. }) = router_info.ssu2_ipv4() else {
             tracing::warn!(
                 target: LOG_TARGET,
                 "router info doesn't contain ssu2 intro key",
@@ -722,6 +723,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
             debug_assert!(false);
             return Err(Ssu2Error::Malformed);
         };
+
         let verifying_key = router_info.identity.signing_key().clone();
         let temp_key = Hmac::new(self.noise_ctx.chaining_key()).update([]).finalize();
         let k_ab = Hmac::new(&temp_key).update([0x01]).finalize();
@@ -749,7 +751,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
             .with_dst_id(self.src_id)
             .with_pkt_num(0u32)
             .with_key_context(
-                intro_key,
+                *intro_key,
                 &KeyContext {
                     k_data: k_data_ba,
                     k_header_2: k_header_2_ba,
@@ -762,7 +764,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
             context: Ssu2SessionContext {
                 address: self.address,
                 dst_id: self.src_id,
-                intro_key,
+                intro_key: *intro_key,
                 pkt_rx: self.rx.take().expect("to exist"),
                 recv_key_ctx: KeyContext::new(k_data_ab, k_header_2_ab),
                 router_id: router_info.identity.id(),

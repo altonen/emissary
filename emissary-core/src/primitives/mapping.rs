@@ -142,6 +142,12 @@ impl Mapping {
     pub fn iter(&self) -> Iter<'_, Str, Str> {
         self.0.iter()
     }
+
+    /// Remove element from `Mapping`.
+    #[cfg(test)]
+    pub fn remove(&mut self, key: &Str) -> Option<Str> {
+        self.0.remove(key)
+    }
 }
 
 impl IntoIterator for Mapping {

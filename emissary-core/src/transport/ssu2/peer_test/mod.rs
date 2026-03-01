@@ -19,7 +19,7 @@
 use crate::{
     crypto::chachapoly::ChaChaPoly,
     error::{PeerTestError, Ssu2Error},
-    primitives::{RouterId, RouterInfo, TransportKind},
+    primitives::{RouterAddress, RouterId, RouterInfo},
     router::context::RouterContext,
     runtime::{Instant, Runtime, UdpSocket},
     transport::ssu2::{
@@ -295,36 +295,22 @@ impl<R: Runtime> PeerTestManager<R> {
             return;
         };
 
-        let Some(address) = router_info.addresses.get(&TransportKind::Ssu2) else {
-            tracing::error!(
-                target: LOG_TARGET,
-                %router_id,
-                "router doesn't support ssu2",
-            );
-            debug_assert!(false);
-            return;
-        };
-
-        if !address.supports_peer_testing() {
+        let Some((supports_ipv4, supports_ipv6)) =
+            router_info.addresses.iter().find_map(|address| match address {
+                address
+                    if address.supports_peer_testing()
+                        && (address.supports_ipv4() || address.supports_ipv6()) =>
+                    Some((address.supports_ipv4(), address.supports_ipv6())),
+                _ => None,
+            })
+        else {
             tracing::debug!(
                 target: LOG_TARGET,
                 %router_id,
-                "router doesn't support peer testing, ignoring",
+                "router doesn't support peer testing",
             );
             return;
-        }
-
-        let supports_ipv4 = address.supports_ipv4();
-        let supports_ipv6 = address.supports_ipv6();
-
-        if !supports_ipv4 && !supports_ipv6 {
-            tracing::warn!(
-                target: LOG_TARGET,
-                %router_id,
-                "router doesn't support ipv4 or ipv6",
-            );
-            return;
-        }
+        };
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -548,14 +534,13 @@ impl<R: Runtime> PeerTestManager<R> {
             },
         };
 
-        let Some(intro_key) = router_info.ssu2_intro_key() else {
+        let Some(RouterAddress::Ssu2 { intro_key, .. }) = router_info.ssu2_ipv4() else {
             tracing::warn!(
                 target: LOG_TARGET,
                 %alice_router_id,
                 ?nonce,
-                "no intro key for in alice's router info, rejecting",
+                "alice doesn't have a published ssu2 address, rejecting",
             );
-            debug_assert!(false);
             return None;
         };
 
@@ -606,7 +591,7 @@ impl<R: Runtime> PeerTestManager<R> {
             .with_net_id(self.router_ctx.net_id())
             .with_src_id(src_id)
             .with_dst_id(dst_id)
-            .with_intro_key(intro_key)
+            .with_intro_key(*intro_key)
             .with_addres(address)
             .build::<R>();
 
@@ -615,7 +600,7 @@ impl<R: Runtime> PeerTestManager<R> {
             dst_id,
             ActiveRemoteTest {
                 address,
-                alice_intro_key: intro_key,
+                alice_intro_key: *intro_key,
                 dst_id,
                 message,
                 src_id,
@@ -1117,34 +1102,15 @@ impl<R: Runtime> PeerTestManager<R> {
             },
         };
 
-        let charlie_address = match charlie_router_info.addresses.get(&TransportKind::Ssu2) {
-            Some(address) => match address.socket_address {
-                Some(address) => address,
-                None => {
-                    tracing::warn!(
-                        target: LOG_TARGET,
-                        "charlie doesn't have a published ssu2 address",
-                    );
-                    debug_assert!(false);
-                    return;
-                }
-            },
-            None => {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    "charlie doesn't support ssu2",
-                );
-                debug_assert!(false);
-                return;
-            }
-        };
-
-        let Some(charlie_intro_key) = charlie_router_info.ssu2_intro_key() else {
+        let Some(RouterAddress::Ssu2 {
+            intro_key: charlie_intro_key,
+            socket_address: Some(charlie_address),
+            ..
+        }) = charlie_router_info.ssu2_ipv4()
+        else {
             tracing::warn!(
                 target: LOG_TARGET,
-                nonce = ?received_nonce,
-                charlie_router_id = %RouterId::from(router_hash),
-                "no intro key for in charlie's router info, rejecting",
+                "charlie doesnt have a dialabl address",
             );
             debug_assert!(false);
             return;
@@ -1174,8 +1140,8 @@ impl<R: Runtime> PeerTestManager<R> {
                     .with_net_id(self.router_ctx.net_id())
                     .with_dst_id(src_id)
                     .with_src_id(!src_id)
-                    .with_intro_key(charlie_intro_key)
-                    .with_addres(charlie_address)
+                    .with_intro_key(*charlie_intro_key)
+                    .with_addres(*charlie_address)
                     .build::<R>();
 
                 let message_6_context = if message_5_received {
@@ -1185,7 +1151,7 @@ impl<R: Runtime> PeerTestManager<R> {
                         %bob_router_id,
                         "message 5 received before sending message 6, not firewalled",
                     );
-                    self.write_buffer.push_back((pkt, charlie_address));
+                    self.write_buffer.push_back((pkt, *charlie_address));
 
                     None
                 } else {
@@ -1196,7 +1162,7 @@ impl<R: Runtime> PeerTestManager<R> {
                         "start timer for sending message 6 to charlie",
                     );
 
-                    Some((R::timer(ALICE_WAIT_TIMEOUT), pkt, charlie_address))
+                    Some((R::timer(ALICE_WAIT_TIMEOUT), pkt, *charlie_address))
                 };
 
                 self.active.insert(
@@ -1342,7 +1308,7 @@ impl<R: Runtime> Stream for PeerTestManager<R> {
 mod tests {
     use super::*;
     use crate::{
-        crypto::{base64_encode, chachapoly::ChaChaPoly},
+        crypto::{base64_encode, chachapoly::ChaChaPoly, StaticPrivateKey},
         primitives::{
             Capabilities, Date, Mapping, RouterAddress, RouterIdentity, RouterInfo,
             RouterInfoBuilder, Str,
@@ -1392,14 +1358,16 @@ mod tests {
     }
 
     fn make_router_info(caps: Str, ipv4: Option<bool>) -> (RouterId, RouterInfo, Bytes) {
-        let ssu2 = RouterAddress {
+        let static_key = StaticPrivateKey::random(&mut rand::rng()).public();
+        let ssu2 = RouterAddress::Ssu2 {
             cost: 8,
-            expires: Date::new(0),
-            transport: TransportKind::Ssu2,
             options: Mapping::from_iter([
                 (Str::from("caps"), caps),
                 (Str::from("i"), Str::from(base64_encode([0xbb; 32]))),
+                (Str::from("s"), Str::from(base64_encode(static_key.clone()))),
             ]),
+            intro_key: [0xbb; 32],
+            static_key,
             socket_address: ipv4.map(|ipv4| {
                 if ipv4 {
                     "127.0.0.1:8888".parse().unwrap()
@@ -1411,7 +1379,7 @@ mod tests {
         let (identity, _, signing_key) = RouterIdentity::random();
         let router_id = identity.id();
         let router_info = RouterInfo {
-            addresses: HashMap::from_iter([(TransportKind::Ssu2, ssu2)]),
+            addresses: vec![ssu2],
             capabilities: Capabilities::parse(&Str::from("XR")).unwrap(),
             identity,
             net_id: 2,
@@ -1442,7 +1410,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[should_panic]
     async fn session_doesnt_support_ssu2() {
         let (router_info, _, _) = RouterInfoBuilder::default().build();
         let router_id = router_info.identity.id();
@@ -1458,6 +1425,8 @@ mod tests {
         );
         let (tx, _rx) = channel(16);
         manager.add_session(&router_id, tx);
+
+        assert!(manager.candidates.is_empty());
     }
 
     #[tokio::test]

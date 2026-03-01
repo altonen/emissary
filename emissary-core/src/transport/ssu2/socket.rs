@@ -19,7 +19,7 @@
 use crate::{
     crypto::{sha256::Sha256, StaticPrivateKey},
     error::{ChannelError, Ssu2Error},
-    primitives::{RouterId, RouterInfo, TransportKind},
+    primitives::{RouterAddress, RouterId, RouterInfo},
     router::context::RouterContext,
     runtime::{Counter, Gauge, Histogram, JoinSet, MetricsHandle, Runtime, UdpSocket},
     subsystem::SubsystemEvent,
@@ -468,18 +468,20 @@ impl<R: Runtime> Ssu2Socket<R> {
         // must succeed since `TransportManager` has ensured `router_info` contains
         // a valid and reachable ssu2 router address
         let router_id = router_info.identity.id();
-        let intro_key = router_info.ssu2_intro_key().expect("to succeed");
-        let static_key = router_info.ssu2_static_key().expect("to succeed");
         let verifying_key = router_info.identity.signing_key().clone();
-        let address = router_info
-            .addresses
-            .get(&TransportKind::Ssu2)
-            .expect("to exist")
-            .socket_address
-            .expect("to exist");
 
-        let router_info = self.router_ctx.router_info();
-        let state = Sha256::new().update(&self.outbound_state).update(&static_key).finalize();
+        let Some(RouterAddress::Ssu2 {
+            static_key,
+            intro_key,
+            socket_address: Some(address),
+            ..
+        }) = router_info.ssu2_ipv4()
+        else {
+            panic!("introducer support not implemented");
+        };
+
+        let our_router_info = self.router_ctx.router_info();
+        let state = Sha256::new().update(&self.outbound_state).update(static_key).finalize();
         let transport_tx = self.transport_tx.clone();
         let src_id = R::rng().next_u64();
         let dst_id = R::rng().next_u64();
@@ -495,26 +497,26 @@ impl<R: Runtime> Ssu2Socket<R> {
 
         let (tx, rx) = channel(CHANNEL_SIZE);
         self.sessions.insert(src_id, tx);
-        self.pending_outbound.insert(address, intro_key);
+        self.pending_outbound.insert(*address, *intro_key);
         self.router_ctx.metrics_handle().counter(NUM_OUTBOUND_SSU2).increment(1);
 
         self.pending_sessions.push(
             OutboundSsu2Session::<R>::new(OutboundSsu2Context {
-                address,
+                address: *address,
                 chaining_key: self.chaining_key.clone(),
                 dst_id,
                 local_intro_key: self.intro_key,
                 local_static_key: self.static_key.clone(),
                 net_id: self.router_ctx.net_id(),
-                remote_intro_key: intro_key,
+                remote_intro_key: *intro_key,
                 router_id,
-                router_info,
+                router_info: our_router_info,
                 rx,
                 verifying_key,
                 socket: self.socket.clone(),
                 src_id,
                 state,
-                static_key,
+                static_key: static_key.clone(),
                 transport_tx,
             })
             .run(),

@@ -20,7 +20,7 @@
 
 use crate::{
     crypto::StaticPublicKey,
-    primitives::{RouterId, TransportKind, TunnelId},
+    primitives::{RouterAddress, RouterId, TunnelId},
     profile::{Bucket, ProfileStorage},
     runtime::Runtime,
     tunnel::pool::TunnelPoolContextHandle,
@@ -159,22 +159,13 @@ impl<R: Runtime> ExploratorySelector<R> {
                 .filter_map(|router_id| {
                     // address must exist since the `router_info.is_reachable()` check
                     // above has ensured the router has at least one published address
-                    //
-                    let addresses = [
-                        reader
-                            .router_info(&router_id)?
-                            .addresses
-                            .get(&TransportKind::Ntcp2)
-                            .and_then(|address| address.socket_address),
-                        reader
-                            .router_info(&router_id)?
-                            .addresses
-                            .get(&TransportKind::Ssu2)
-                            .and_then(|address| address.socket_address),
-                    ];
+                    let addresses =
+                        reader.router_info(&router_id)?.addresses().map(|address| match address {
+                            RouterAddress::Ntcp2 { socket_address, .. } => *socket_address,
+                            RouterAddress::Ssu2 { socket_address, .. } => *socket_address,
+                        });
 
                     let addresses = addresses
-                        .into_iter()
                         .filter_map(|address| match address? {
                             SocketAddr::V4(address) => Some(*address.ip()),
                             SocketAddr::V6(_) => None,
@@ -1101,14 +1092,11 @@ mod tests {
             profile_storage.add_router({
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
-                info.addresses = HashMap::from_iter([(
-                    TransportKind::Ntcp2,
-                    RouterAddress::new_published_ntcp2(
-                        [1u8; 32],
-                        [1u8; 16],
-                        8888,
-                        format!("192.16{i}.{}.{}", i + 5, i + 10).parse().unwrap(),
-                    ),
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    8888,
+                    format!("192.16{i}.{}.{}", i + 5, i + 10).parse().unwrap(),
                 )]);
                 info
             });
@@ -1118,14 +1106,11 @@ mod tests {
             profile_storage.add_router({
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("XfR")).unwrap();
-                info.addresses = HashMap::from_iter([(
-                    TransportKind::Ntcp2,
-                    RouterAddress::new_published_ntcp2(
-                        [1u8; 32],
-                        [1u8; 16],
-                        8888,
-                        format!("192.17{i}.{}.{}", i + 5, i + 10).parse().unwrap(),
-                    ),
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    8888,
+                    format!("192.17{i}.{}.{}", i + 5, i + 10).parse().unwrap(),
                 )]);
                 info
             });
@@ -1281,14 +1266,11 @@ mod tests {
             profile_storage.add_router({
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
-                info.addresses = HashMap::from_iter([(
-                    TransportKind::Ntcp2,
-                    RouterAddress::new_published_ntcp2(
-                        [1u8; 32],
-                        [1u8; 16],
-                        8888,
-                        format!("192.168.{}.{}", i + 5, i + 10).parse().unwrap(),
-                    ),
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    8888,
+                    format!("192.168.{}.{}", i + 5, i + 10).parse().unwrap(),
                 )]);
                 info
             });
@@ -1299,14 +1281,11 @@ mod tests {
             profile_storage.add_router({
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
-                info.addresses = HashMap::from_iter([(
-                    TransportKind::Ntcp2,
-                    RouterAddress::new_published_ntcp2(
-                        [1u8; 32],
-                        [1u8; 16],
-                        8888,
-                        format!("172.10.{}.{}", i + 5, i + 10).parse().unwrap(),
-                    ),
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    8888,
+                    format!("172.10.{}.{}", i + 5, i + 10).parse().unwrap(),
                 )]);
                 info
             });
@@ -1334,14 +1313,11 @@ mod tests {
             profile_storage.add_router({
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
-                info.addresses = HashMap::from_iter([(
-                    TransportKind::Ntcp2,
-                    RouterAddress::new_published_ntcp2(
-                        [1u8; 32],
-                        [1u8; 16],
-                        8888,
-                        format!("192.168.{}.{}", i + 5, i + 10).parse().unwrap(),
-                    ),
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    8888,
+                    format!("192.168.{}.{}", i + 5, i + 10).parse().unwrap(),
                 )]);
                 info
             });
@@ -1352,14 +1328,11 @@ mod tests {
             profile_storage.add_router({
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("XfR")).unwrap();
-                info.addresses = HashMap::from_iter([(
-                    TransportKind::Ntcp2,
-                    RouterAddress::new_published_ntcp2(
-                        [1u8; 32],
-                        [1u8; 16],
-                        8888,
-                        format!("172.10.{}.{}", i + 5, i + 10).parse().unwrap(),
-                    ),
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    8888,
+                    format!("172.10.{}.{}", i + 5, i + 10).parse().unwrap(),
                 )]);
                 info
             });
@@ -1388,10 +1361,10 @@ mod tests {
             profile_storage.add_router({
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("LU")).unwrap();
-                info.addresses.insert(
-                    TransportKind::Ntcp2,
-                    RouterAddress::new_unpublished_ntcp2([i as u8; 32], 2000 + i),
-                );
+                info.addresses.push(RouterAddress::new_unpublished_ntcp2(
+                    [i as u8; 32],
+                    2000 + i,
+                ));
                 info
             });
         }
@@ -1435,10 +1408,10 @@ mod tests {
             profile_storage.add_router({
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("OU")).unwrap();
-                info.addresses.insert(
-                    TransportKind::Ntcp2,
-                    RouterAddress::new_unpublished_ntcp2([i as u8; 32], 2000 + i),
-                );
+                info.addresses.push(RouterAddress::new_unpublished_ntcp2(
+                    [i as u8; 32],
+                    2000 + i,
+                ));
                 info
             });
         }
@@ -1465,14 +1438,11 @@ mod tests {
             profile_storage.add_router({
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
-                info.addresses = HashMap::from_iter([(
-                    TransportKind::Ntcp2,
-                    RouterAddress::new_published_ntcp2(
-                        [1u8; 32],
-                        [1u8; 16],
-                        8888,
-                        format!("192.168.{}.{}", i + 5, i + 10).parse().unwrap(),
-                    ),
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    8888,
+                    format!("192.168.{}.{}", i + 5, i + 10).parse().unwrap(),
                 )]);
                 info
             });
@@ -1483,14 +1453,11 @@ mod tests {
             profile_storage.add_router({
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
-                info.addresses = HashMap::from_iter([(
-                    TransportKind::Ntcp2,
-                    RouterAddress::new_published_ntcp2(
-                        [1u8; 32],
-                        [1u8; 16],
-                        8888,
-                        format!("172.10.{}.{}", i + 5, i + 10).parse().unwrap(),
-                    ),
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    8888,
+                    format!("172.10.{}.{}", i + 5, i + 10).parse().unwrap(),
                 )]);
                 info
             });
@@ -1522,14 +1489,11 @@ mod tests {
             profile_storage.add_router({
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
-                info.addresses = HashMap::from_iter([(
-                    TransportKind::Ntcp2,
-                    RouterAddress::new_published_ntcp2(
-                        [1u8; 32],
-                        [1u8; 16],
-                        8888,
-                        format!("192.168.{}.{}", i + 5, i + 10).parse().unwrap(),
-                    ),
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    8888,
+                    format!("192.168.{}.{}", i + 5, i + 10).parse().unwrap(),
                 )]);
                 info
             });
@@ -1540,14 +1504,11 @@ mod tests {
             profile_storage.add_router({
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("XfR")).unwrap();
-                info.addresses = HashMap::from_iter([(
-                    TransportKind::Ntcp2,
-                    RouterAddress::new_published_ntcp2(
-                        [1u8; 32],
-                        [1u8; 16],
-                        8888,
-                        format!("172.10.{}.{}", i + 5, i + 10).parse().unwrap(),
-                    ),
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    8888,
+                    format!("172.10.{}.{}", i + 5, i + 10).parse().unwrap(),
                 )]);
                 info
             });
@@ -1580,14 +1541,11 @@ mod tests {
             profile_storage.add_router({
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
-                info.addresses = HashMap::from_iter([(
-                    TransportKind::Ntcp2,
-                    RouterAddress::new_published_ntcp2(
-                        [1u8; 32],
-                        [1u8; 16],
-                        8888,
-                        format!("192.168.{}.{}", i + 5, i + 10).parse().unwrap(),
-                    ),
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    8888,
+                    format!("192.168.{}.{}", i + 5, i + 10).parse().unwrap(),
                 )]);
                 info
             });
@@ -1598,14 +1556,11 @@ mod tests {
             profile_storage.add_router({
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("XfR")).unwrap();
-                info.addresses = HashMap::from_iter([(
-                    TransportKind::Ntcp2,
-                    RouterAddress::new_published_ntcp2(
-                        [1u8; 32],
-                        [1u8; 16],
-                        8888,
-                        format!("172.10.{}.{}", i + 5, i + 10).parse().unwrap(),
-                    ),
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    8888,
+                    format!("172.10.{}.{}", i + 5, i + 10).parse().unwrap(),
                 )]);
                 info
             });
@@ -1661,14 +1616,11 @@ mod tests {
             profile_storage.add_router({
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
-                info.addresses = HashMap::from_iter([(
-                    TransportKind::Ntcp2,
-                    RouterAddress::new_published_ntcp2(
-                        [1u8; 32],
-                        [1u8; 16],
-                        8888,
-                        format!("192.168.{}.{}", i + 5, i + 10).parse().unwrap(),
-                    ),
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    8888,
+                    format!("192.168.{}.{}", i + 5, i + 10).parse().unwrap(),
                 )]);
                 info
             });
@@ -1679,14 +1631,11 @@ mod tests {
             profile_storage.add_router({
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("XfR")).unwrap();
-                info.addresses = HashMap::from_iter([(
-                    TransportKind::Ntcp2,
-                    RouterAddress::new_published_ntcp2(
-                        [1u8; 32],
-                        [1u8; 16],
-                        8888,
-                        format!("172.10.{}.{}", i + 5, i + 10).parse().unwrap(),
-                    ),
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    8888,
+                    format!("172.10.{}.{}", i + 5, i + 10).parse().unwrap(),
                 )]);
                 info
             });

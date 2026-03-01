@@ -34,7 +34,7 @@ use crate::{
     crypto::{noise::NoiseContext, sha256::Sha256, siphash::SipHash, StaticPrivateKey},
     error::Error,
     events::EventHandle,
-    primitives::{RouterId, RouterInfo, TransportKind},
+    primitives::{RouterAddress, RouterId, RouterInfo},
     profile::ProfileStorage,
     router::context::RouterContext,
     runtime::{Runtime, TcpStream},
@@ -167,7 +167,7 @@ impl<R: Runtime> SessionManager<R> {
 
     /// Called by [`SessionManager::create_session()`] to open outbound session to `router`.
     async fn create_session_inner(
-        router: RouterInfo,
+        router_info: RouterInfo,
         net_id: u8,
         local_info: Bytes,
         local_key: StaticPrivateKey,
@@ -178,28 +178,22 @@ impl<R: Runtime> SessionManager<R> {
         started: R::Instant,
         metrics_handle: R::MetricsHandle,
     ) -> crate::Result<Ntcp2Session<R>> {
-        let router_id = router.identity.id();
+        let router_id = router_info.identity.id();
 
         let (remote_key, iv, socket_address) = {
-            let static_key = router.ntcp2_static_key().ok_or_else(|| {
-                tracing::warn!(target: LOG_TARGET, "static key missing from ntcp2 info");
-                Error::InvalidData
-            })?;
-            let iv = router.ntcp2_iv().ok_or_else(|| {
-                tracing::warn!(target: LOG_TARGET, "iv missing from ntcp2 info");
-                Error::InvalidData
-            })?;
-
-            // transprot must exist since static key and iv were found
-            let socket_address = router
-                .addresses
-                .get(&TransportKind::Ntcp2)
-                .expect("to exist")
-                .socket_address
-                .ok_or_else(|| {
-                    tracing::debug!(target: LOG_TARGET, "router doesn't have socket address");
-                    Error::InvalidData
-                })?;
+            let Some(RouterAddress::Ntcp2 {
+                socket_address: Some(socket_address),
+                static_key,
+                iv: Some(iv),
+                ..
+            }) = router_info.ntcp2_ipv4()
+            else {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    "router doesn't have a dialable address",
+                );
+                return Err(Error::InvalidData);
+            };
 
             match socket_address.ip() {
                 IpAddr::V4(address) if !is_global(address) && !allow_local => {
@@ -223,7 +217,7 @@ impl<R: Runtime> SessionManager<R> {
             "start dialing remote peer",
         );
 
-        let Some(mut stream) = R::TcpStream::connect(socket_address).await else {
+        let Some(mut stream) = R::TcpStream::connect(*socket_address).await else {
             tracing::debug!(
                 target: LOG_TARGET,
                 %router_id,
@@ -231,16 +225,16 @@ impl<R: Runtime> SessionManager<R> {
             );
             return Err(Error::DialFailure);
         };
-        let router_hash = router.identity.hash().to_vec();
+        let router_hash = router_info.identity.hash().to_vec();
 
         // create `SessionRequest` message and send it remote peer
         let (mut initiator, message) = Initiator::new::<R>(
             noise_ctx,
             local_info,
             local_key,
-            &remote_key,
+            remote_key,
             router_hash,
-            iv,
+            *iv,
             net_id,
         )?;
         stream.write_all(&message).await?;
@@ -272,7 +266,7 @@ impl<R: Runtime> SessionManager<R> {
 
         Ok(Ntcp2Session::<R>::new(
             Role::Initiator,
-            router,
+            router_info,
             stream,
             key_context,
             Direction::Outbound,
@@ -479,10 +473,7 @@ mod tests {
         crypto::{SigningPrivateKey, StaticPrivateKey},
         events::EventManager,
         i2np::{Message, MessageType, I2NP_MESSAGE_EXPIRATION},
-        primitives::{
-            Capabilities, Date, Mapping, RouterAddress, RouterIdentity, RouterInfo, Str,
-            TransportKind,
-        },
+        primitives::{Capabilities, Date, Mapping, RouterAddress, RouterIdentity, RouterInfo, Str},
         profile::ProfileStorage,
         runtime::{
             mock::{MockRuntime, MockTcpListener, MockTcpStream},
@@ -493,7 +484,6 @@ mod tests {
     };
     use bytes::Bytes;
     use futures::StreamExt;
-    use hashbrown::HashMap;
     use std::{marker::PhantomData, time::Duration};
     use thingbuf::mpsc::channel;
     use tokio::net::TcpListener;
@@ -556,12 +546,8 @@ mod tests {
                     (MockRuntime::time_since_epoch() - Duration::from_secs(2 * 60)).as_millis()
                         as u64,
                 ),
-                addresses: HashMap::from_iter([(
-                    TransportKind::Ntcp2,
-                    self.router_address.take().unwrap_or(RouterAddress::new_unpublished_ntcp2(
-                        self.ntcp2_key.clone(),
-                        8888,
-                    )),
+                addresses: Vec::from_iter([self.router_address.take().unwrap_or(
+                    RouterAddress::new_unpublished_ntcp2(self.ntcp2_key.clone(), 8888),
                 )]),
                 options: Mapping::from_iter([
                     (Str::from("netId"), Str::from(self.net_id.to_string())),

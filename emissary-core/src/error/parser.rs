@@ -305,6 +305,24 @@ pub enum RouterAddressParseError {
 
     /// Invalid options.
     InvalidOptions(MappingParseError),
+
+    /// NTCP2 static key missing.
+    Ntcp2StaticKeyMissing,
+
+    /// Invalid NTCP2 static key.
+    InvalidNtcp2StaticKey,
+
+    /// SSU2 static key missing.
+    Ssu2StaticKeyMissing,
+
+    /// Invalid Ssu2 static key.
+    InvalidSsu2StaticKey,
+
+    /// SSU2 intro key missing.
+    Ssu2IntroKeyMissing,
+
+    /// Invalid SSU2 intro key.
+    InvalidSsu2IntroKey,
 }
 
 impl From<MappingParseError> for RouterAddressParseError {
