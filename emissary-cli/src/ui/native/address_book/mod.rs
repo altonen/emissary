@@ -156,10 +156,15 @@ impl RouterUi {
     }
 
     pub fn save_subscriptions(&mut self) -> Result<(), String> {
-        let subscriptions =
+        let mut subscriptions =
             self.subscriptions.split(",").map(ToOwned::to_owned).collect::<Vec<String>>();
+        subscriptions.dedup();
 
-        if !subscriptions.iter().all(|url| url.ends_with(".i2p/hosts.txt")) {
+        if !subscriptions.iter().all(|url| {
+            url::Url::parse(&url).ok().is_some_and(|host| {
+                host.host_str().is_some_and(|url| url.split('.').last() == Some("i2p"))
+            })
+        }) {
             return Err(String::from(
                 "All URLs are not valid I2P subscription URLs\n\n\
                 Example: http://host1.i2p/hosts.txt,http://host2.i2p/hosts.txt",
