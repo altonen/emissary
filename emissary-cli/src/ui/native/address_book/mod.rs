@@ -161,8 +161,8 @@ impl RouterUi {
         subscriptions.dedup();
 
         if !subscriptions.iter().all(|url| {
-            url::Url::parse(&url).ok().is_some_and(|host| {
-                host.host_str().is_some_and(|url| url.split('.').last() == Some("i2p"))
+            url::Url::parse(url).ok().is_some_and(|host| {
+                host.host_str().is_some_and(|url| url.split('.').next_back() == Some("i2p"))
             })
         }) {
             return Err(String::from(
