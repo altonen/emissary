@@ -192,7 +192,7 @@ impl PortMapper {
             async {
                 client
                     .send_port_mapping_request(
-                        Protocol::TCP,
+                        Protocol::UDP,
                         ssu2_port,
                         ssu2_port,
                         PORT_MAPPING_LIFETIME,
@@ -255,7 +255,7 @@ impl PortMapper {
         match self.try_map_ssu2(&client).await {
             Ok(None) => {}
             Err(()) => return self.try_switch_to_upnp(),
-            Ok(Some(Response::TCP(_))) => tracing::debug!(
+            Ok(Some(Response::UDP(_))) => tracing::debug!(
                 target: LOG_TARGET,
                 "ssu2 port mapped",
             ),
