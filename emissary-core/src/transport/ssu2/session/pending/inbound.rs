@@ -1105,15 +1105,16 @@ mod tests {
             local_static_key: outbound_static_key,
             net_id: 2u8,
             remote_intro_key: inbound_intro_key,
+            request_tag: false,
             router_id: router_info.identity.id(),
             router_info: Bytes::from(router_info.serialize(&signing_key)),
             rx: outbound_session_rx,
-            verifying_key: signing_key.public(),
             socket: outbound_socket.clone(),
             src_id,
             state: inbound_state.clone(),
             static_key: inbound_static_key.public(),
             transport_tx,
+            verifying_key: signing_key.public(),
         });
 
         // read `Retry` from inbound socket and relay it to `outbound_socket_rx`

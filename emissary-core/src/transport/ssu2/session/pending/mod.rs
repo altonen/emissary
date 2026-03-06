@@ -87,6 +87,9 @@ pub enum PendingSsu2SessionStatus<R: Runtime> {
         /// Our external address, if discovere during the handshake.
         external_address: Option<SocketAddr>,
 
+        /// Relay tag, if we requested and received one.
+        relay_tag: Option<u32>,
+
         /// Source connection ID.
         src_id: u64,
 

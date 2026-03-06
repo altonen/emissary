@@ -85,6 +85,9 @@ pub struct OutboundSsu2Context<R: Runtime> {
     /// Remote router intro key.
     pub remote_intro_key: [u8; 32],
 
+    /// Should relay tag be requested.
+    pub request_tag: bool,
+
     /// ID of the remote router.
     pub router_id: RouterId,
 
@@ -93,9 +96,6 @@ pub struct OutboundSsu2Context<R: Runtime> {
 
     /// RX channel for receiving datagrams from `Ssu2Socket`.
     pub rx: Receiver<Packet>,
-
-    /// Verifying key of remote router.
-    pub verifying_key: SigningPublicKey,
 
     /// UDP socket.
     pub socket: R::UdpSocket,
@@ -111,6 +111,9 @@ pub struct OutboundSsu2Context<R: Runtime> {
 
     /// TX channel for communicating with `SubsystemManager`.
     pub transport_tx: Sender<SubsystemEvent>,
+
+    /// Verifying key of remote router.
+    pub verifying_key: SigningPublicKey,
 }
 
 /// State for a pending outbound SSU2 session.
@@ -140,7 +143,10 @@ enum PendingSessionState {
     },
 
     /// Awaiting first ACK to be received.
-    AwaitingFirstAck,
+    AwaitingFirstAck {
+        /// Relay tag, if we requested and received on.
+        relay_tag: Option<u32>,
+    },
 
     /// State has been poisoned.
     Poisoned,
@@ -154,8 +160,10 @@ impl fmt::Debug for PendingSessionState {
             PendingSessionState::AwaitingSessionCreated { .. } => f
                 .debug_struct("PendingSessionState::AwaitingSessionCreated")
                 .finish_non_exhaustive(),
-            PendingSessionState::AwaitingFirstAck =>
-                f.debug_struct("PendingSessionState::AwaitingFirstAck").finish(),
+            PendingSessionState::AwaitingFirstAck { relay_tag } => f
+                .debug_struct("PendingSessionState::AwaitingFirstAck")
+                .field("relay_tag", &relay_tag)
+                .finish(),
             PendingSessionState::Poisoned =>
                 f.debug_struct("PendingSessionState::Poisoned").finish(),
         }
@@ -189,6 +197,9 @@ pub struct OutboundSsu2Session<R: Runtime> {
 
     /// Remote router intro key.
     remote_intro_key: [u8; 32],
+
+    /// Shoudl relay tag be requested in `SessionRequest`.
+    request_tag: bool,
 
     /// ID of the remote router.
     router_id: RouterId,
@@ -229,15 +240,16 @@ impl<R: Runtime> OutboundSsu2Session<R> {
             local_static_key,
             net_id,
             remote_intro_key,
+            request_tag,
             router_id,
             router_info,
             rx,
-            verifying_key,
             socket,
             src_id,
             state,
             static_key,
             transport_tx,
+            verifying_key,
         } = context;
 
         tracing::trace!(
@@ -268,6 +280,7 @@ impl<R: Runtime> OutboundSsu2Session<R> {
             ),
             pkt_retransmitter: PacketRetransmitter::token_request(pkt.clone()),
             remote_intro_key,
+            request_tag,
             router_id,
             rx: Some(rx),
             verifying_key,
@@ -403,6 +416,7 @@ impl<R: Runtime> OutboundSsu2Session<R> {
             .with_src_id(self.src_id)
             .with_net_id(self.net_id)
             .with_ephemeral_key(ephemeral_key.public())
+            .with_relay_tag_request(self.request_tag)
             .with_token(token)
             .build::<R>();
 
@@ -501,11 +515,14 @@ impl<R: Runtime> OutboundSsu2Session<R> {
         ChaChaPoly::with_nonce(&cipher_key, 0u64)
             .decrypt_with_ad(self.noise_ctx.state(), &mut payload)?;
 
+        let blocks = Block::parse(&payload).map_err(|_| Ssu2Error::Malformed)?;
+        let relay_tag = blocks.iter().find_map(|block| match block {
+            Block::RelayTag { relay_tag } => self.request_tag.then_some(*relay_tag),
+            _ => None,
+        });
+
         // MixHash(ciphertext)
         self.noise_ctx.mix_hash(&pkt[64..]);
-
-        // TODO: validate datetime
-        // TODO: get our address
 
         let temp_key = Hmac::new(self.noise_ctx.chaining_key()).update([]).finalize();
         let k_header_2 =
@@ -537,7 +554,7 @@ impl<R: Runtime> OutboundSsu2Session<R> {
         self.pkt_retransmitter = PacketRetransmitter::session_confirmed(pkt.clone());
         self.write_buffer.push_back(pkt);
 
-        self.state = PendingSessionState::AwaitingFirstAck;
+        self.state = PendingSessionState::AwaitingFirstAck { relay_tag };
         Ok(None)
     }
 
@@ -553,6 +570,7 @@ impl<R: Runtime> OutboundSsu2Session<R> {
     fn on_data(
         &mut self,
         mut pkt: Vec<u8>,
+        relay_tag: Option<u32>,
     ) -> Result<Option<PendingSsu2SessionStatus<R>>, Ssu2Error> {
         let temp_key = Hmac::new(self.noise_ctx.chaining_key()).update([]).finalize();
         let k_ab = Hmac::new(&temp_key).update([0x01]).finalize();
@@ -601,7 +619,7 @@ impl<R: Runtime> OutboundSsu2Session<R> {
                         "failed to decrypt Data message, ignoring",
                     );
 
-                    self.state = PendingSessionState::AwaitingFirstAck;
+                    self.state = PendingSessionState::AwaitingFirstAck { relay_tag };
                     return Ok(None);
                 }
 
@@ -617,7 +635,7 @@ impl<R: Runtime> OutboundSsu2Session<R> {
                     "unexpected message, expected Data",
                 );
 
-                self.state = PendingSessionState::AwaitingFirstAck;
+                self.state = PendingSessionState::AwaitingFirstAck { relay_tag };
                 return Ok(None);
             }
         };
@@ -630,7 +648,7 @@ impl<R: Runtime> OutboundSsu2Session<R> {
             "handle Data (first ack)",
         );
 
-        match Block::parse(&payload) {
+        let relay_tag = match Block::parse(&payload) {
             Ok(blocks) => {
                 if let Some(Block::Termination { reason, .. }) =
                     blocks.iter().find(|block| core::matches!(block, Block::Termination { .. }))
@@ -647,6 +665,29 @@ impl<R: Runtime> OutboundSsu2Session<R> {
                         *reason,
                     )));
                 }
+
+                match (
+                    relay_tag,
+                    blocks.iter().find(|block| core::matches!(block, Block::RelayTag { .. })),
+                ) {
+                    (None, Some(Block::RelayTag { relay_tag: tag })) => Some(*tag),
+                    (Some(tag), None) => Some(tag),
+                    (None, None) => None,
+                    (Some(old_tag), Some(Block::RelayTag { relay_tag: new_tag })) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            router_id = %self.router_id,
+                            dst_id = ?self.dst_id,
+                            src_id = ?self.src_id,
+                            ?old_tag,
+                            ?new_tag,
+                            "received two relay tags",
+                        );
+
+                        Some(*new_tag)
+                    }
+                    (_, _) => None,
+                }
             }
             Err(error) => {
                 tracing::debug!(
@@ -658,10 +699,10 @@ impl<R: Runtime> OutboundSsu2Session<R> {
                     "failed to parse Data message, ignoring",
                 );
 
-                self.state = PendingSessionState::AwaitingFirstAck;
+                self.state = PendingSessionState::AwaitingFirstAck { relay_tag };
                 return Ok(None);
             }
-        }
+        };
 
         Ok(Some(PendingSsu2SessionStatus::NewOutboundSession {
             context: Ssu2SessionContext {
@@ -675,6 +716,7 @@ impl<R: Runtime> OutboundSsu2Session<R> {
                 verifying_key: self.verifying_key.clone(),
             },
             external_address: self.external_address,
+            relay_tag: self.request_tag.then_some(relay_tag).flatten(),
             src_id: self.src_id,
             started: self.started,
         }))
@@ -704,7 +746,7 @@ impl<R: Runtime> OutboundSsu2Session<R> {
                 local_static_key,
                 router_info,
             } => self.on_session_created(pkt, ephemeral_key, local_static_key, router_info),
-            PendingSessionState::AwaitingFirstAck => self.on_data(pkt),
+            PendingSessionState::AwaitingFirstAck { relay_tag } => self.on_data(pkt, relay_tag),
             PendingSessionState::Poisoned => {
                 tracing::warn!(
                     target: LOG_TARGET,
@@ -951,6 +993,7 @@ mod tests {
             state: inbound_state.clone(),
             static_key: inbound_static_key.public(),
             transport_tx,
+            request_tag: false,
         });
 
         // read `Retry` from inbound socket and relay it to `outbound_socket_rx`
@@ -1285,7 +1328,7 @@ mod tests {
             };
 
             match outbound_session.state {
-                PendingSessionState::AwaitingFirstAck => {}
+                PendingSessionState::AwaitingFirstAck { .. } => {}
                 _ => panic!("invalid state"),
             }
         }

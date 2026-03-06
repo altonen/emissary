@@ -54,6 +54,11 @@ impl Detector {
         }
     }
 
+    /// Get current firewall status.
+    pub fn status(&self) -> FirewallStatus {
+        self.firewall_status
+    }
+
     /// Register new external address to detector.
     pub fn add_external_address(&mut self, address: SocketAddr) -> Option<SocketAddr> {
         if self.external_address.is_none() {

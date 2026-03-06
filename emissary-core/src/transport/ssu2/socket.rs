@@ -41,7 +41,7 @@ use crate::{
             },
             Packet,
         },
-        Direction, TerminationReason, TransportEvent,
+        Direction, FirewallStatus, TerminationReason, TransportEvent,
     },
 };
 
@@ -107,6 +107,9 @@ enum PendingSessionKind {
         /// Session context.
         context: Ssu2SessionContext,
 
+        /// Relay tag, if we requested and received one.
+        relay_tag: Option<u32>,
+
         /// Source connection ID.
         ///
         /// This is the connection ID selected by us which the remote router uses to send us
@@ -133,12 +136,14 @@ impl fmt::Debug for PendingSessionKind {
             PendingSessionKind::Outbound {
                 address,
                 context,
+                relay_tag,
                 src_id,
             } => f
                 .debug_struct("PendingSessionKind::Outbound")
                 .field("address", &address)
                 .field("dst_id", &context.dst_id)
                 .field("src_id", &src_id)
+                .field("relay_tag", &relay_tag)
                 .finish_non_exhaustive(),
         }
     }
@@ -437,8 +442,8 @@ impl<R: Runtime> Ssu2Socket<R> {
         }
 
         let Some(intro_key) = self.pending_outbound.get(&address) else {
-            tracing::error!(
-                target: "emissary::ssu2::relay",
+            tracing::debug!(
+                target: LOG_TARGET,
                 message_type = ?datagram.get(12),
                 "unrecognized message type",
             );
@@ -464,18 +469,20 @@ impl<R: Runtime> Ssu2Socket<R> {
         }
     }
 
+    /// Attempt to establish outbound connection remote router.
     pub fn connect(&mut self, router_info: RouterInfo) {
         // must succeed since `TransportManager` has ensured `router_info` contains
         // a valid and reachable ssu2 router address
         let router_id = router_info.identity.id();
         let verifying_key = router_info.identity.signing_key().clone();
-
-        let Some(RouterAddress::Ssu2 {
-            static_key,
-            intro_key,
-            socket_address: Some(address),
-            ..
-        }) = router_info.ssu2_ipv4()
+        let Some(
+            ssu2_address @ RouterAddress::Ssu2 {
+                static_key,
+                intro_key,
+                socket_address: Some(address),
+                ..
+            },
+        ) = router_info.ssu2_ipv4()
         else {
             panic!("introducer support not implemented");
         };
@@ -509,15 +516,17 @@ impl<R: Runtime> Ssu2Socket<R> {
                 local_static_key: self.static_key.clone(),
                 net_id: self.router_ctx.net_id(),
                 remote_intro_key: *intro_key,
+                request_tag: core::matches!(self.detector.status(), FirewallStatus::Firewalled)
+                    && ssu2_address.supports_relay(),
                 router_id,
                 router_info: our_router_info,
                 rx,
-                verifying_key,
                 socket: self.socket.clone(),
                 src_id,
                 state,
                 static_key: static_key.clone(),
                 transport_tx,
+                verifying_key,
             })
             .run(),
         );
@@ -543,7 +552,11 @@ impl<R: Runtime> Ssu2Socket<R> {
             return;
         };
 
-        let (context, relay_tag_request) = match kind {
+        // get handles to `PeerTestManager` and `RelayManager`
+        let peer_test_handle = self.peer_test_manager.handle();
+        let relay_handle = self.relay_manager.handle();
+
+        let context = match kind {
             PendingSessionKind::Inbound {
                 pkt,
                 address,
@@ -561,10 +574,23 @@ impl<R: Runtime> Ssu2Socket<R> {
                 // TODO: retransmissiosn?
                 self.pending_pkts.push_back((pkt, address));
 
-                (context, Some(relay_tag_request))
+                // register relay client to `RelayManager`
+                match relay_tag_request {
+                    RelayTagRequested::Yes(tag) => self.relay_manager.register_relay_client(
+                        router_id.clone(),
+                        tag,
+                        relay_handle.cmd_tx(),
+                    ),
+                    RelayTagRequested::No(tag) => self.relay_manager.deallocate_relay_tag(tag),
+                }
+
+                context
             }
             PendingSessionKind::Outbound {
-                address, context, ..
+                address,
+                context,
+                relay_tag,
+                ..
             } => {
                 tracing::trace!(
                     target: LOG_TARGET,
@@ -575,23 +601,14 @@ impl<R: Runtime> Ssu2Socket<R> {
 
                 self.pending_outbound.remove(&address);
 
-                (context, None)
+                // register relay server to `RelayManager`
+                if let Some(relay_tag) = relay_tag {
+                    self.relay_manager.register_relay_server(context.router_id.clone(), relay_tag);
+                }
+
+                context
             }
         };
-
-        // get handles to `PeerTestManager` and `RelayManager`
-        let peer_test_handle = self.peer_test_manager.handle();
-        let relay_handle = self.relay_manager.handle();
-
-        match relay_tag_request {
-            Some(RelayTagRequested::Yes(tag)) => self.relay_manager.register_relay_client(
-                router_id.clone(),
-                tag,
-                relay_handle.cmd_tx(),
-            ),
-            Some(RelayTagRequested::No(tag)) => self.relay_manager.deallocate_relay_tag(tag),
-            None => {}
-        }
 
         // register session to `PeerTestManager`
         self.peer_test_manager
@@ -673,6 +690,7 @@ impl<R: Runtime> Ssu2Socket<R> {
                 address,
                 context,
                 src_id,
+                ..
             } => {
                 tracing::debug!(
                     target: LOG_TARGET,
@@ -866,6 +884,7 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
                             src_id,
                             started: _,
                             external_address,
+                            relay_tag,
                         } => {
                             let router_id = context.router_id.clone();
 
@@ -882,6 +901,7 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
                                     address: context.address,
                                     context,
                                     src_id,
+                                    relay_tag,
                                 },
                             ) {
                                 tracing::warn!(
@@ -1057,8 +1077,6 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::*;
     use crate::{
         crypto::SigningPublicKey,
@@ -1070,6 +1088,7 @@ mod tests {
         subsystem::OutboundMessage,
         transport::ssu2::session::KeyContext,
     };
+    use std::time::Duration;
 
     #[tokio::test(start_paused = true)]
     async fn session_terminated() {

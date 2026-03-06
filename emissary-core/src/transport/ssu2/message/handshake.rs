@@ -234,6 +234,9 @@ pub struct SessionRequestBuilder {
     /// Defaults to 2.
     net_id: u8,
 
+    /// Should relay tag be requested.
+    request_tag: bool,
+
     /// Source connection ID.
     src_id: Option<u64>,
 
@@ -247,6 +250,7 @@ impl Default for SessionRequestBuilder {
             dst_id: None,
             ephemeral_key: None,
             net_id: 2u8,
+            request_tag: false,
             src_id: None,
             token: None,
         }
@@ -275,6 +279,12 @@ impl SessionRequestBuilder {
     /// Specify local ephemeral public key.
     pub fn with_ephemeral_key(mut self, ephemeral_key: EphemeralPublicKey) -> Self {
         self.ephemeral_key = Some(ephemeral_key);
+        self
+    }
+
+    /// Specify whether relay tag should be requested.
+    pub fn with_relay_tag_request(mut self, request_tag: bool) -> Self {
+        self.request_tag = request_tag;
         self
     }
 
@@ -317,6 +327,9 @@ impl SessionRequestBuilder {
             }
             .serialize(),
         );
+        if self.request_tag {
+            payload.extend_from_slice(&Block::RelayTagRequest.serialize());
+        }
         payload.extend_from_slice(&Block::Padding { padding }.serialize());
 
         SessionRequest { header, payload }

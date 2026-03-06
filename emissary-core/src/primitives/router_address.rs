@@ -157,7 +157,7 @@ impl RouterAddress {
         options.insert(Str::from("i"), Str::from(encoded_intro_key));
         options.insert(Str::from("host"), Str::from(host.to_string()));
         options.insert(Str::from("port"), Str::from(port.to_string()));
-        options.insert(Str::from("caps"), Str::from("BC"));
+        options.insert(Str::from("caps"), Str::from("BC4"));
 
         Self::Ssu2 {
             cost: 8,

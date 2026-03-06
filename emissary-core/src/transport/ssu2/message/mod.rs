@@ -1483,6 +1483,11 @@ impl Block {
                 out.put_u32(relay_tag);
                 out
             }
+            Self::RelayTagRequest => {
+                out.put_u8(BlockType::RelayTagRequest.as_u8());
+                out.put_u16(0);
+                out
+            }
             block_type => todo!("unsupported block type: {block_type:?}"),
         }
     }

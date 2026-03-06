@@ -188,7 +188,6 @@ impl<R: Runtime> RelayManager<R> {
     /// Register relay server.
     ///
     /// Relay servers are routers who are willing to act as relay for us.
-    #[allow(unused)]
     pub fn register_relay_server(&mut self, router_id: RouterId, relay_tag: u32) {
         tracing::debug!(
             target: LOG_TARGET,
