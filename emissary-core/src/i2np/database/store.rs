@@ -258,7 +258,7 @@ impl<R: Runtime> DatabaseStore<R> {
                 let data = R::gzip_decompress(data)
                     .ok_or(Err::Error(DatabaseStoreParseError::CompressionFailed))?;
 
-                let router_info = RouterInfo::parse(&data)
+                let router_info = RouterInfo::parse::<R>(&data)
                     .map_err(|error| Err::Error(DatabaseStoreParseError::RouterInfo(error)))?;
 
                 Ok((

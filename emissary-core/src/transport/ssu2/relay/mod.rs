@@ -19,7 +19,7 @@
 use crate::{
     primitives::{RouterAddress, RouterId, RouterInfo},
     router::context::RouterContext,
-    runtime::{Runtime, UdpSocket},
+    runtime::{Instant, Runtime, UdpSocket},
     transport::ssu2::{
         message::HolePunchBuilder,
         relay::types::{
@@ -30,7 +30,7 @@ use crate::{
 };
 
 use bytes::{BufMut, BytesMut};
-use futures::Stream;
+use futures::{FutureExt, Stream};
 use hashbrown::{HashMap, HashSet};
 use rand::Rng;
 use thingbuf::mpsc::{channel, Receiver, Sender};
@@ -40,6 +40,7 @@ use core::{
     net::{IpAddr, SocketAddr},
     pin::Pin,
     task::{Context, Poll},
+    time::Duration,
 };
 
 pub mod types;
@@ -47,8 +48,32 @@ pub mod types;
 /// Logging target for the file.
 const LOG_TARGET: &str = "emissary::ssu2::relay";
 
+/// Maintenance interval.
+const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Introducer expiration.
+pub const INTRODUCER_EXPIRATION: Duration = Duration::from_secs(80 * 60);
+
 /// Router hash length.
 const ROUTER_HASH_LEN: usize = 32usize;
+
+/// Maximum amount of introducers.
+const MAX_INTRODUCERS: usize = 3usize;
+
+/// Events emitted by `RelayManager`.
+pub enum RelayManagerEvent {
+    // TODO:
+    SessionRequestToken {
+        /// Token used in an inbound `SessionRequest`.
+        token: u64,
+    },
+
+    /// Introducer has expired.
+    IntroducerExpired {
+        /// Router ID of the expired introducer.
+        router_id: RouterId,
+    },
+}
 
 /// Relay client.
 struct RelayClient {
@@ -60,10 +85,13 @@ struct RelayClient {
 }
 
 /// Relay server.
-struct RelayServer {
+struct RelayServer<R: Runtime> {
     /// Router ID of Bob.
     #[allow(unused)]
     router_id: RouterId,
+
+    /// When was the server created.
+    created: R::Instant,
 }
 
 /// Relay manager.
@@ -93,6 +121,12 @@ pub struct RelayManager<R: Runtime> {
     /// Mappings from router IDs to relay tags.
     id_mappings: HashMap<RouterId, u32>,
 
+    /// Maintenance timer
+    maintenance_timer: R::Timer,
+
+    /// Pending events.
+    pending_events: VecDeque<RelayManagerEvent>,
+
     /// Relay tags currently in use.
     relay_tags: HashSet<u32>,
 
@@ -102,16 +136,10 @@ pub struct RelayManager<R: Runtime> {
     /// Active relay servers.
     ///
     /// IOW, context for all Bob's who've agreed to act as relay for us.
-    servers: HashMap<u32, RelayServer>,
+    servers: HashMap<u32, RelayServer<R>>,
 
     /// UDP socket.
     socket: R::UdpSocket,
-
-    /// Tokens for inbound sessions.
-    ///
-    /// These are returned to `Ssu2Socket` so it can accept inbound connections
-    /// that are the result of a successful relay process.
-    tokens: VecDeque<u64>,
 
     /// Write buffer.
     write_buffer: VecDeque<(BytesMut, SocketAddr)>,
@@ -123,19 +151,25 @@ impl<R: Runtime> RelayManager<R> {
         let (event_tx, event_rx) = channel(128);
 
         Self {
-            clients: HashMap::new(),
-            servers: HashMap::new(),
             active_relays: HashMap::new(),
+            clients: HashMap::new(),
             event_rx,
             event_tx,
             external_address: None,
             id_mappings: HashMap::new(),
+            maintenance_timer: R::timer(MAINTENANCE_INTERVAL),
+            pending_events: VecDeque::new(),
             relay_tags: HashSet::new(),
             router_ctx,
+            servers: HashMap::new(),
             socket,
-            tokens: VecDeque::new(),
             write_buffer: VecDeque::new(),
         }
+    }
+
+    /// Does `RelayManager` need introducers.
+    pub fn needs_introducers(&self) -> bool {
+        self.servers.len() < MAX_INTRODUCERS
     }
 
     /// Get `RelayHandle` for an active session.
@@ -197,14 +231,27 @@ impl<R: Runtime> RelayManager<R> {
             "register relay server",
         );
 
-        self.servers.insert(relay_tag, RelayServer { router_id });
+        self.id_mappings.insert(router_id.clone(), relay_tag);
+        self.servers.insert(
+            relay_tag,
+            RelayServer {
+                router_id,
+                created: R::now(),
+            },
+        );
     }
 
     /// Register closed connection to `RelayManager`.
-    pub fn register_closed_connection(&mut self, router_id: &RouterId) {
+    ///
+    /// Returns `true` if an active relay server was removed.
+    pub fn register_closed_connection(&mut self, router_id: &RouterId) -> bool {
         if let Some(tag) = self.id_mappings.remove(router_id) {
             self.clients.remove(&tag);
+
+            return self.servers.remove(&tag).is_some();
         }
+
+        false
     }
 
     /// Send relay request/intro rejection.
@@ -548,7 +595,7 @@ impl<R: Runtime> RelayManager<R> {
             .build::<R>();
 
         self.write_buffer.push_back((pkt, address));
-        self.tokens.push_back(token);
+        self.pending_events.push_back(RelayManagerEvent::SessionRequestToken { token });
 
         if let Err(error) = tx.try_send(RelayCommand::RelayResponse {
             nonce,
@@ -619,7 +666,7 @@ impl<R: Runtime> RelayManager<R> {
 }
 
 impl<R: Runtime> Stream for RelayManager<R> {
-    type Item = u64;
+    type Item = RelayManagerEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
@@ -680,8 +727,33 @@ impl<R: Runtime> Stream for RelayManager<R> {
             }
         }
 
-        if let Some(token) = self.tokens.pop_front() {
-            return Poll::Ready(Some(token));
+        if self.maintenance_timer.poll_unpin(cx).is_ready() {
+            let expired = self
+                .servers
+                .iter()
+                .filter_map(|(tag, RelayServer { router_id, created })| {
+                    (created.elapsed() > INTRODUCER_EXPIRATION).then_some((*tag, router_id.clone()))
+                })
+                .collect::<Vec<_>>();
+
+            if !expired.is_empty() {
+                tracing::info!(
+                    target: LOG_TARGET,
+                    ?expired,
+                    "one or more introducers have expired",
+                );
+
+                expired.into_iter().for_each(|(relay_tag, router_id)| {
+                    self.id_mappings.remove(&router_id);
+                    self.servers.remove(&relay_tag);
+                    self.pending_events
+                        .push_back(RelayManagerEvent::IntroducerExpired { router_id });
+                });
+            }
+        }
+
+        if let Some(event) = self.pending_events.pop_front() {
+            return Poll::Ready(Some(event));
         }
 
         while let Some((pkt, address)) = self.write_buffer.pop_front() {
@@ -1253,7 +1325,12 @@ mod tests {
         }
 
         // verify the relay manager returns a token for `SessionRequest`
-        let session_request_token = relay.next().now_or_never().unwrap();
+        let Some(RelayManagerEvent::SessionRequestToken {
+            token: session_request_token,
+        }) = relay.next().now_or_never().unwrap()
+        else {
+            panic!("invalid event")
+        };
 
         // spawn manager in the background so the hole punch message gets sent eventually
         tokio::spawn(async move { while relay.next().await.is_some() {} });
@@ -1280,10 +1357,12 @@ mod tests {
             .decrypt_with_ad(&ad, &mut pkt)
             .unwrap();
 
-        assert!(Block::parse(&pkt).unwrap().iter().any(|block| match block {
-            Block::RelayResponse { token, .. } => token == &session_request_token,
-            _ => false,
-        }));
+        assert!(
+            Block::parse::<MockRuntime>(&pkt).unwrap().iter().any(|block| match block {
+                Block::RelayResponse { token, .. } => token == &Some(session_request_token),
+                _ => false,
+            })
+        );
     }
 
     #[tokio::test]
@@ -1377,7 +1456,12 @@ mod tests {
         }
 
         // verify the relay manager returns a token for `SessionRequest`
-        let session_request_token = relay.next().now_or_never().unwrap();
+        let Some(RelayManagerEvent::SessionRequestToken {
+            token: session_request_token,
+        }) = relay.next().now_or_never().unwrap()
+        else {
+            panic!("invalid event")
+        };
 
         // spawn manager in the background so the hole punch message gets sent eventually
         tokio::spawn(async move { while relay.next().await.is_some() {} });
@@ -1404,10 +1488,12 @@ mod tests {
             .decrypt_with_ad(&ad, &mut pkt)
             .unwrap();
 
-        assert!(Block::parse(&pkt).unwrap().iter().any(|block| match block {
-            Block::RelayResponse { token, .. } => token == &session_request_token,
-            _ => false,
-        }));
+        assert!(
+            Block::parse::<MockRuntime>(&pkt).unwrap().iter().any(|block| match block {
+                Block::RelayResponse { token, .. } => token == &Some(session_request_token),
+                _ => false,
+            })
+        );
     }
 
     #[tokio::test]

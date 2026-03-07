@@ -143,8 +143,7 @@ impl Mapping {
         self.0.iter()
     }
 
-    /// Remove element from `Mapping`.
-    #[cfg(test)]
+    /// Remove element under `key`.
     pub fn remove(&mut self, key: &Str) -> Option<Str> {
         self.0.remove(key)
     }

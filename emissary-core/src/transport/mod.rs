@@ -17,6 +17,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    crypto::base64_encode,
     error::QueryError,
     events::EventHandle,
     netdb::NetDbHandle,
@@ -33,7 +34,7 @@ use futures::{FutureExt, Stream, StreamExt};
 use hashbrown::HashSet;
 use thingbuf::mpsc::{Receiver, Sender};
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::{boxed::Box, format, string::ToString, vec::Vec};
 use core::{
     future::Future,
     net::Ipv4Addr,
@@ -62,6 +63,9 @@ const LOG_TARGET: &str = "emissary::transport-manager";
 ///
 /// Local router info gets republished to `NetDb` every 15 minutes.
 const ROUTER_INFO_REPUBLISH_INTERVAL: Duration = Duration::from_secs(15 * 60);
+
+/// Introducer expiration.
+const INTRODUCER_EXPIRATION: Duration = Duration::from_secs(80 * 60);
 
 /// Termination reason.
 #[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
@@ -284,6 +288,24 @@ pub enum TransportEvent {
         /// Firewall status.
         status: FirewallStatus,
     },
+
+    /// New introducer
+    IntroducerAdded {
+        /// Relay tag.
+        relay_tag: u32,
+
+        /// Router ID of Bob.
+        router_id: RouterId,
+
+        /// When does the introducer expire.
+        expires: Duration,
+    },
+
+    /// Introducer removed.
+    IntroducerRemoved {
+        /// Router ID of Bob.
+        router_id: RouterId,
+    },
 }
 
 /// Transport interface.
@@ -392,15 +414,16 @@ impl<R: Runtime> TransportManagerBuilder<R> {
     pub fn build(self) -> TransportManager<R> {
         TransportManager {
             dial_rx: self.dial_rx,
-            transport_tx: self.transport_tx.clone(),
             event_handle: self.router_ctx.event_handle().clone(),
             external_address: None,
+            introducers: Vec::new(),
             local_router_info: self.local_router_info,
             netdb_handle: self.netdb_handle.expect("to exist"),
             ntcp2_config: self.ntcp2_config,
             pending_connections: HashSet::new(),
             pending_queries: HashSet::new(),
             pending_query_futures: R::join_set(),
+            transport_tx: self.transport_tx.clone(),
             poll_index: 0usize,
             router_ctx: self.router_ctx,
             // publish the router info 10 seconds after booting, otherwise republish it periodically
@@ -429,6 +452,9 @@ pub struct TransportManager<R: Runtime> {
 
     /// External address, if any.
     external_address: Option<Ipv4Addr>,
+
+    /// Introducers.
+    introducers: Vec<(RouterId, u32, Duration)>,
 
     /// Local router info.
     local_router_info: RouterInfo,
@@ -720,48 +746,73 @@ impl<R: Runtime> TransportManager<R> {
             "firewall status update",
         );
     }
+
+    /// Handle new introducer.
+    fn on_introducer_added(&mut self, router_id: RouterId, relay_tag: u32, expires: Duration) {
+        tracing::debug!(
+            target: LOG_TARGET,
+            %router_id,
+            ?relay_tag,
+            ?expires,
+            "add new introducer",
+        );
+
+        self.introducers.push((router_id, relay_tag, expires));
+    }
+
+    /// Handle removed introducer.
+    fn on_introducer_removed(&mut self, router_id: &RouterId) {
+        tracing::debug!(
+            target: LOG_TARGET,
+            %router_id,
+            "remove introducer",
+        );
+
+        self.introducers.retain(|(r, _, _)| r != router_id);
+    }
 }
 
 impl<R: Runtime> Future for TransportManager<R> {
     type Output = ();
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let len = self.transports.len();
-        let start_index = self.poll_index;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = Pin::into_inner(self);
+        let len = this.transports.len();
+        let start_index = this.poll_index;
 
         loop {
-            let index = self.poll_index % len;
-            self.poll_index += 1;
+            let index = this.poll_index % len;
+            this.poll_index += 1;
 
             loop {
-                match self.transports[index].poll_next_unpin(cx) {
+                match this.transports[index].poll_next_unpin(cx) {
                     Poll::Pending => break,
                     Poll::Ready(None) => return Poll::Ready(()),
                     Poll::Ready(Some(TransportEvent::ConnectionEstablished {
                         direction,
                         router_id,
                     })) => match direction {
-                        Direction::Inbound if self.pending_connections.contains(&router_id) => {
+                        Direction::Inbound if this.pending_connections.contains(&router_id) => {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 %router_id,
                                 "outbound connection pending, rejecting inbound connection",
                             );
 
-                            self.router_ctx.metrics_handle().counter(NUM_REJECTED).increment(1);
-                            self.transports[index].reject(&router_id);
+                            this.router_ctx.metrics_handle().counter(NUM_REJECTED).increment(1);
+                            this.transports[index].reject(&router_id);
                         }
-                        Direction::Outbound if !self.pending_connections.contains(&router_id) => {
+                        Direction::Outbound if !this.pending_connections.contains(&router_id) => {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 %router_id,
                                 "pending connection doesn't exist for router, rejecting connection",
                             );
 
-                            self.router_ctx.metrics_handle().counter(NUM_REJECTED).increment(1);
-                            self.transports[index].reject(&router_id);
+                            this.router_ctx.metrics_handle().counter(NUM_REJECTED).increment(1);
+                            this.transports[index].reject(&router_id);
                         }
-                        direction => match self.routers.insert(router_id.clone()) {
+                        direction => match this.routers.insert(router_id.clone()) {
                             true => {
                                 tracing::trace!(
                                     target: LOG_TARGET,
@@ -770,14 +821,14 @@ impl<R: Runtime> Future for TransportManager<R> {
                                     "connection established",
                                 );
 
-                                self.transports[index].accept(&router_id);
-                                self.pending_connections.remove(&router_id);
-                                self.router_ctx
+                                this.transports[index].accept(&router_id);
+                                this.pending_connections.remove(&router_id);
+                                this.router_ctx
                                     .metrics_handle()
                                     .gauge(NUM_CONNECTIONS)
                                     .increment(1);
-                                self.router_ctx.metrics_handle().counter(NUM_ACCEPTED).increment(1);
-                                self.router_ctx.profile_storage().dial_succeeded(&router_id);
+                                this.router_ctx.metrics_handle().counter(NUM_ACCEPTED).increment(1);
+                                this.router_ctx.profile_storage().dial_succeeded(&router_id);
                             }
                             false => {
                                 tracing::debug!(
@@ -786,8 +837,8 @@ impl<R: Runtime> Future for TransportManager<R> {
                                     "router already connected, rejecting",
                                 );
 
-                                self.router_ctx.metrics_handle().counter(NUM_REJECTED).increment(1);
-                                self.transports[index].reject(&router_id);
+                                this.router_ctx.metrics_handle().counter(NUM_REJECTED).increment(1);
+                                this.transports[index].reject(&router_id);
                             }
                         },
                     },
@@ -813,8 +864,8 @@ impl<R: Runtime> Future for TransportManager<R> {
                             ),
                         }
 
-                        self.routers.remove(&router_id);
-                        self.router_ctx.metrics_handle().gauge(NUM_CONNECTIONS).decrement(1);
+                        this.routers.remove(&router_id);
+                        this.router_ctx.metrics_handle().gauge(NUM_CONNECTIONS).decrement(1);
                     }
                     Poll::Ready(Some(TransportEvent::ConnectionFailure { router_id })) => {
                         tracing::trace!(
@@ -823,22 +874,29 @@ impl<R: Runtime> Future for TransportManager<R> {
                             "failed to dial router",
                         );
 
-                        self.router_ctx.metrics_handle().counter(NUM_DIAL_FAILURES).increment(1);
-                        self.router_ctx.profile_storage().dial_failed(&router_id);
-                        self.pending_connections.remove(&router_id);
+                        this.router_ctx.metrics_handle().counter(NUM_DIAL_FAILURES).increment(1);
+                        this.router_ctx.profile_storage().dial_failed(&router_id);
+                        this.pending_connections.remove(&router_id);
                     }
                     Poll::Ready(Some(TransportEvent::FirewallStatus { status })) =>
-                        self.on_firewall_status(status),
+                        this.on_firewall_status(status),
+                    Poll::Ready(Some(TransportEvent::IntroducerAdded {
+                        relay_tag,
+                        router_id,
+                        expires,
+                    })) => this.on_introducer_added(router_id, relay_tag, expires),
+                    Poll::Ready(Some(TransportEvent::IntroducerRemoved { router_id })) =>
+                        this.on_introducer_removed(&router_id),
                 }
             }
 
-            if self.poll_index == start_index + len {
+            if this.poll_index == start_index + len {
                 break;
             }
         }
 
         loop {
-            match self.pending_query_futures.poll_next_unpin(cx) {
+            match this.pending_query_futures.poll_next_unpin(cx) {
                 Poll::Pending => break,
                 Poll::Ready(None) => return Poll::Ready(()),
                 Poll::Ready(Some((router_id, Ok(())))) => {
@@ -848,14 +906,14 @@ impl<R: Runtime> Future for TransportManager<R> {
                         "router info query succeeded, dial pending router",
                     );
 
-                    self.pending_queries.remove(&router_id);
-                    self.pending_connections.remove(&router_id);
-                    self.router_ctx
+                    this.pending_queries.remove(&router_id);
+                    this.pending_connections.remove(&router_id);
+                    this.router_ctx
                         .metrics_handle()
                         .counter(NUM_NETDB_QUERY_SUCCESSES)
                         .increment(1);
 
-                    self.on_dial_router(router_id);
+                    this.on_dial_router(router_id);
                 }
                 Poll::Ready(Some((router_id, Err(error)))) => {
                     tracing::debug!(
@@ -864,13 +922,13 @@ impl<R: Runtime> Future for TransportManager<R> {
                         ?error,
                         "router info query failed",
                     );
-                    self.pending_connections.remove(&router_id);
-                    self.pending_queries.remove(&router_id);
-                    self.router_ctx.metrics_handle().gauge(NUM_DIAL_FAILURES).increment(1);
-                    self.router_ctx.metrics_handle().counter(NUM_NETDB_QUERY_FAILURES).increment(1);
+                    this.pending_connections.remove(&router_id);
+                    this.pending_queries.remove(&router_id);
+                    this.router_ctx.metrics_handle().gauge(NUM_DIAL_FAILURES).increment(1);
+                    this.router_ctx.metrics_handle().counter(NUM_NETDB_QUERY_FAILURES).increment(1);
 
                     // report connection failure to subsystems
-                    let transport_tx = self.transport_tx.clone();
+                    let transport_tx = this.transport_tx.clone();
 
                     R::spawn(async move {
                         // subsystem manager never dies
@@ -884,46 +942,86 @@ impl<R: Runtime> Future for TransportManager<R> {
         }
 
         loop {
-            match self.dial_rx.poll_recv(cx) {
+            match this.dial_rx.poll_recv(cx) {
                 Poll::Pending => break,
                 Poll::Ready(None) => return Poll::Ready(()),
-                Poll::Ready(Some(router_id)) => self.on_dial_router(router_id),
+                Poll::Ready(Some(router_id)) => this.on_dial_router(router_id),
             }
         }
 
-        if self.router_info_republish_timer.poll_unpin(cx).is_ready() {
+        if this.router_info_republish_timer.poll_unpin(cx).is_ready() {
             // reset publish time and serialize our new router info
-            self.local_router_info.published = Date::new(R::time_since_epoch().as_millis() as u64);
+            this.local_router_info.published = Date::new(R::time_since_epoch().as_millis() as u64);
 
-            // publish `G`, i.e., rejecting all tunnels if the router is shutting down
-            // or if transit tunnels have been disabled
-            if self.shutting_down || self.transit_tunnels_disabled {
+            // publish `G`, i.e., rejecting all tunnels if transit tunnels have been disabled
+            if this.transit_tunnels_disabled {
                 tracing::trace!(
                     target: LOG_TARGET,
-                    shutting_down = ?self.shutting_down,
-                    transit_tunnels_disabled = ?self.transit_tunnels_disabled,
+                    shutting_down = ?this.shutting_down,
+                    transit_tunnels_disabled = ?this.transit_tunnels_disabled,
                     "publishing router info with `G`",
                 );
 
-                self.local_router_info.options.insert(Str::from("caps"), Str::from("GR"));
+                this.local_router_info.options.insert(Str::from("caps"), Str::from("GR"));
+            }
+
+            // update ssu2's address if we have any active introducers
+            if let Some(RouterAddress::Ssu2 { options, .. }) =
+                this.local_router_info.ssu2_ipv4_mut()
+            {
+                // remove old introducers
+                for i in 0..3 {
+                    options.remove(&Str::from(format!("iexp{i}")));
+                    options.remove(&Str::from(format!("ih{i}")));
+                    options.remove(&Str::from(format!("itag{i}")));
+                }
+
+                // add introducers to our router info, skipping any expired introducers
+                let now = R::time_since_epoch();
+
+                for (i, (router_id, relay_tag, expires)) in this.introducers.iter().enumerate() {
+                    if expires > &(now + INTRODUCER_EXPIRATION) {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            %router_id,
+                            ?relay_tag,
+                            expired = ?(*expires - now - INTRODUCER_EXPIRATION),
+                            "skip expired introducer"
+                        );
+                        continue;
+                    }
+
+                    options.insert(
+                        Str::from(format!("iexp{i}")),
+                        Str::from(expires.as_secs().to_string()),
+                    );
+                    options.insert(
+                        Str::from(format!("ih{i}")),
+                        Str::from(base64_encode(router_id.to_vec())),
+                    );
+                    options.insert(
+                        Str::from(format!("itag{i}")),
+                        Str::from(relay_tag.to_string()),
+                    );
+                }
             }
 
             let serialized =
-                Bytes::from(self.local_router_info.serialize(self.router_ctx.signing_key()));
+                Bytes::from(this.local_router_info.serialize(this.router_ctx.signing_key()));
 
             // reset router info in router context so all subsystems are using the latest version of
             // it and publish it to netdb
-            self.router_ctx.set_router_info(serialized.clone());
-            self.netdb_handle
-                .publish_router_info(self.router_ctx.router_id().clone(), serialized);
+            this.router_ctx.set_router_info(serialized.clone());
+            this.netdb_handle
+                .publish_router_info(this.router_ctx.router_id().clone(), serialized);
 
             // reset timer and register it into the executor
-            self.router_info_republish_timer = R::timer(ROUTER_INFO_REPUBLISH_INTERVAL);
-            let _ = self.router_info_republish_timer.poll_unpin(cx);
+            this.router_info_republish_timer = R::timer(ROUTER_INFO_REPUBLISH_INTERVAL);
+            let _ = this.router_info_republish_timer.poll_unpin(cx);
         }
 
-        if self.event_handle.poll_unpin(cx).is_ready() {
-            self.event_handle.num_connected_routers(self.routers.len());
+        if this.event_handle.poll_unpin(cx).is_ready() {
+            this.event_handle.num_connected_routers(this.routers.len());
         }
 
         Poll::Pending
@@ -936,9 +1034,10 @@ mod tests {
     use crate::{
         events::EventManager,
         i2np::{Message, MessageType, I2NP_MESSAGE_EXPIRATION},
-        netdb::NetDbAction,
+        netdb::{NetDbAction, NetDbActionRecycle},
         primitives::{Capabilities, RouterInfoBuilder, Str},
         profile::ProfileStorage,
+        router::context::builder::RouterContextBuilder,
         runtime::mock::MockRuntime,
         subsystem::OutboundMessage,
     };
@@ -953,6 +1052,7 @@ mod tests {
         TransportManagerBuilder<MockRuntime>,
         Sender<RouterId>,
         Receiver<SubsystemEvent>,
+        Receiver<NetDbAction, NetDbActionRecycle>,
     ) {
         let (router_info, static_key, signing_key) = {
             let mut builder = RouterInfoBuilder::default();
@@ -970,7 +1070,7 @@ mod tests {
         let serialized = Bytes::from(router_info.serialize(&signing_key));
         let (dial_tx, dial_rx) = channel(100);
         let (transport_tx, transport_rx) = channel(100);
-        let (handle, _) = NetDbHandle::create();
+        let (handle, netdb_rx) = NetDbHandle::create();
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let ctx = RouterContext::new(
@@ -993,7 +1093,7 @@ mod tests {
         );
         builder.register_netdb_handle(handle);
 
-        (builder, dial_tx, transport_rx)
+        (builder, dial_tx, transport_rx, netdb_rx)
     }
 
     #[tokio::test]
@@ -1009,7 +1109,7 @@ mod tests {
         .unwrap()
         .0
         .unwrap();
-        let (mut builder, _dial_tx, _transport_rx) =
+        let (mut builder, _dial_tx, _transport_rx, _netdb_rx) =
             make_transport_manager(Some(context.config()), None);
         builder.register_ntcp2(context);
         let mut manager = builder.build();
@@ -1054,7 +1154,7 @@ mod tests {
         .0
         .unwrap();
 
-        let (mut builder, _dial_tx, _transport_rx) =
+        let (mut builder, _dial_tx, _transport_rx, _netdb_rx) =
             make_transport_manager(Some(context.config()), None);
         builder.register_ntcp2(context);
         let mut manager = builder.build();
@@ -1096,7 +1196,7 @@ mod tests {
         };
         let context =
             Ssu2Transport::<MockRuntime>::initialize(Some(ssu2)).await.unwrap().0.unwrap();
-        let (mut builder, _dial_tx, _transport_rx) =
+        let (mut builder, _dial_tx, _transport_rx, _netdb_rx) =
             make_transport_manager(None, Some(context.config()));
         builder.register_ssu2(context);
         let mut manager = builder.build();
@@ -1139,7 +1239,7 @@ mod tests {
         .0
         .unwrap();
 
-        let (mut builder, _dial_tx, _transport_rx) =
+        let (mut builder, _dial_tx, _transport_rx, _netdb_rx) =
             make_transport_manager(None, Some(context.config()));
         builder.register_ssu2(context);
         let mut manager = builder.build();
@@ -1193,7 +1293,7 @@ mod tests {
         .0
         .unwrap();
 
-        let (mut builder, _dial_tx, _transport_rx) =
+        let (mut builder, _dial_tx, _transport_rx, _netdb_rx) =
             make_transport_manager(Some(ntcp2_context.config()), Some(ssu2_context.config()));
         builder.register_ssu2(ssu2_context);
         builder.register_ntcp2(ntcp2_context);
@@ -1255,7 +1355,7 @@ mod tests {
         .unwrap()
         .0
         .unwrap();
-        let (mut builder, _dial_tx, _transport_rx) =
+        let (mut builder, _dial_tx, _transport_rx, _netdb_rx) =
             make_transport_manager(Some(context.config()), None);
         builder.register_ntcp2(context);
         let mut manager = builder.build();
@@ -1300,7 +1400,7 @@ mod tests {
         .0
         .unwrap();
 
-        let (mut builder, _dial_tx, _transport_rx) =
+        let (mut builder, _dial_tx, _transport_rx, _netdb_rx) =
             make_transport_manager(None, Some(context.config()));
         builder.register_ssu2(context);
         let mut manager = builder.build();
@@ -1721,70 +1821,6 @@ mod tests {
             }
             _ => panic!("invalid command"),
         }
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn router_shutting_down() {
-        let (router_info, static_key, signing_key) = RouterInfoBuilder::default().build();
-        let serialized = Bytes::from(router_info.serialize(&signing_key));
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
-        let (_event_mgr, _event_subscriber, event_handle) =
-            EventManager::new(None, MockRuntime::register_metrics(vec![], None));
-        let (handle, _netdb_rx) = NetDbHandle::create();
-        let ctx = RouterContext::new(
-            MockRuntime::register_metrics(vec![], None),
-            storage.clone(),
-            router_info.identity.id(),
-            serialized.clone(),
-            static_key,
-            signing_key,
-            2u8,
-            event_handle.clone(),
-        );
-        let context = Ntcp2Transport::<MockRuntime>::initialize(Some(Ntcp2Config {
-            port: 0,
-            host: Some("192.168.0.1".parse().unwrap()),
-            publish: true,
-            key: [0u8; 32],
-            iv: [0u8; 16],
-        }))
-        .await
-        .unwrap()
-        .0
-        .unwrap();
-
-        let (_dial_tx, dial_rx) = channel(100);
-        let (transport_tx, _transport_rx) = channel(100);
-        let mut builder = TransportManagerBuilder::<MockRuntime>::new(
-            ctx,
-            router_info,
-            true,
-            dial_rx,
-            transport_tx,
-        );
-        builder.register_netdb_handle(handle);
-        builder.register_ntcp2(context);
-
-        let mut manager = builder.build();
-
-        assert!(Capabilities::parse(
-            &manager.local_router_info.options.get(&Str::from("caps")).unwrap()
-        )
-        .unwrap()
-        .is_usable());
-
-        // shutdown the manager, set RI republish timeout smaller and wait for RI to be published
-        manager.shutdown();
-        manager.router_info_republish_timer = MockRuntime::timer(Duration::from_secs(1));
-
-        assert!(tokio::time::timeout(Duration::from_secs(3), &mut manager).await.is_err());
-
-        // verify that the local router is no longer considered usable due to the `G` flag
-        assert!(!Capabilities::parse(
-            &manager.local_router_info.options.get(&Str::from("caps")).unwrap()
-        )
-        .unwrap()
-        .is_usable());
     }
 
     #[tokio::test]
@@ -2408,6 +2444,184 @@ mod tests {
             Ok(Command::Connect(router_id)) if router_id == remote_router_id =>
                 panic!("connected router dialed"),
             _ => panic!("unexpected event"),
+        }
+    }
+
+    #[tokio::test]
+    async fn introducers_published() {
+        let (router_info, static_key, signing_key) = RouterInfoBuilder::default()
+            .with_ssu2(Ssu2Config {
+                port: 888,
+                host: None,
+                publish: false,
+                static_key: [0x33; 32],
+                intro_key: [0x34; 32],
+            })
+            .build();
+
+        let (handle, netdb_rx) = NetDbHandle::create();
+        let ctx = RouterContextBuilder::default()
+            .with_router_info(router_info.clone(), static_key, signing_key)
+            .build();
+
+        let (_dial_tx, dial_rx) = channel(100);
+        let (transport_tx, _transport_rx) = channel(100);
+        let mut builder = TransportManagerBuilder::<MockRuntime>::new(
+            ctx,
+            router_info,
+            true,
+            dial_rx,
+            transport_tx,
+        );
+        builder.register_netdb_handle(handle);
+        let mut manager = builder.build();
+
+        pub struct MockTransport {
+            events: tokio::sync::mpsc::Receiver<TransportEvent>,
+        }
+
+        impl Transport for MockTransport {
+            fn connect(&mut self, _: RouterInfo) {}
+            fn accept(&mut self, _: &RouterId) {}
+            fn reject(&mut self, _: &RouterId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+
+            fn poll_next(
+                mut self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+            ) -> Poll<Option<Self::Item>> {
+                Poll::Ready(futures::ready!(self.events.poll_recv(cx)))
+            }
+        }
+
+        let (t_event_tx, t_event_rx) = tokio::sync::mpsc::channel(16);
+        manager.transports.push(Box::new(MockTransport { events: t_event_rx }));
+
+        // set lower timeout for publishing router info
+        assert!(manager.introducers.is_empty());
+        manager.router_info_republish_timer =
+            <MockRuntime as Runtime>::timer(Duration::from_secs(0));
+
+        let router_info = tokio::select! {
+            _ = &mut manager => panic!("manager exited"),
+            event = netdb_rx.recv() => match event.unwrap() {
+                NetDbAction::PublishRouterInfo { router_info, .. } => router_info,
+                _ => panic!("invalid event"),
+            },
+            _ = tokio::time::sleep(Duration::from_secs(5)) => panic!("timeout"),
+        };
+
+        let parsed = RouterInfo::parse::<MockRuntime>(&router_info).unwrap();
+        assert_eq!(parsed.addresses.len(), 1);
+
+        match &parsed.addresses[0] {
+            RouterAddress::Ssu2 { options, .. } => {
+                // verify address is not published
+                assert!(options.get(&Str::from("port")).is_none());
+                assert!(options.get(&Str::from("host")).is_none());
+
+                // verify there are no introducers
+                for i in 0..3 {
+                    assert!(options.get(&Str::from(format!("iexp{i}"))).is_none());
+                    assert!(options.get(&Str::from(format!("ih{i}"))).is_none());
+                    assert!(options.get(&Str::from(format!("itag{i}"))).is_none());
+                }
+            }
+            _ => panic!("no ssu2 address available"),
+        }
+
+        // register introducers
+        let introducer1 = RouterId::random();
+        let introducer2 = RouterId::random();
+        let introducer3 = RouterId::random();
+
+        t_event_tx
+            .send(TransportEvent::IntroducerAdded {
+                relay_tag: 1337,
+                router_id: introducer1.clone(),
+                expires: MockRuntime::time_since_epoch() + Duration::from_secs(80 * 60),
+            })
+            .await
+            .unwrap();
+        t_event_tx
+            .send(TransportEvent::IntroducerAdded {
+                relay_tag: 1338,
+                router_id: introducer2.clone(),
+                expires: MockRuntime::time_since_epoch() + Duration::from_secs(80 * 60),
+            })
+            .await
+            .unwrap();
+
+        // last introducer has expired
+        t_event_tx
+            .send(TransportEvent::IntroducerAdded {
+                relay_tag: 1339,
+                router_id: introducer3.clone(),
+                expires: MockRuntime::time_since_epoch() - Duration::from_secs(1),
+            })
+            .await
+            .unwrap();
+
+        // reset publish timer
+        manager.router_info_republish_timer =
+            <MockRuntime as Runtime>::timer(Duration::from_secs(0));
+
+        let router_info = tokio::select! {
+            _ = &mut manager => panic!("manager exited"),
+            event = netdb_rx.recv() => match event.unwrap() {
+                NetDbAction::PublishRouterInfo { router_info, .. } => router_info,
+                _ => panic!("invalid event"),
+            },
+            _ = tokio::time::sleep(Duration::from_secs(5)) => panic!("timeout"),
+        };
+
+        let parsed = RouterInfo::parse::<MockRuntime>(&router_info).unwrap();
+        assert_eq!(parsed.addresses.len(), 1);
+
+        match &parsed.addresses[0] {
+            RouterAddress::Ssu2 {
+                options,
+                introducers,
+                ..
+            } => {
+                // verify address is not published
+                assert!(options.get(&Str::from("port")).is_none());
+                assert!(options.get(&Str::from("host")).is_none());
+
+                assert_eq!(introducers.len(), 2);
+                assert_eq!(introducers[0].0, introducer1);
+                assert_eq!(introducers[0].1, 1337);
+                assert_eq!(introducers[1].0, introducer2);
+                assert_eq!(introducers[1].1, 1338);
+
+                // first introducer
+                {
+                    assert_eq!(
+                        options.get(&Str::from(format!("itag0"))),
+                        Some(&Str::from("1337")),
+                    );
+                    assert_eq!(
+                        options.get(&Str::from(format!("ih0"))),
+                        Some(&Str::from(base64_encode(introducer1.to_vec()))),
+                    );
+                }
+
+                // second introducer
+                {
+                    assert_eq!(
+                        options.get(&Str::from(format!("itag1"))),
+                        Some(&Str::from("1338")),
+                    );
+                    assert_eq!(
+                        options.get(&Str::from(format!("ih1"))),
+                        Some(&Str::from(base64_encode(introducer2.to_vec()))),
+                    );
+                }
+            }
+            _ => panic!("no ssu2 address available"),
         }
     }
 }

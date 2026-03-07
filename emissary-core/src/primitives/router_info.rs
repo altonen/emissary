@@ -126,7 +126,7 @@ impl RouterInfo {
         }
     }
 
-    fn parse_frame(input: &[u8]) -> IResult<&[u8], RouterInfo, RouterInfoParseError> {
+    fn parse_frame<R: Runtime>(input: &[u8]) -> IResult<&[u8], RouterInfo, RouterInfoParseError> {
         let (rest, identity) = RouterIdentity::parse_frame(input).map_err(Err::convert)?;
         let (rest, published) = Date::parse_frame(rest).map_err(Err::convert)?;
         let (rest, num_addresses) = be_u8(rest)?;
@@ -134,7 +134,7 @@ impl RouterInfo {
             .try_fold(
                 (rest, Vec::<RouterAddress>::new()),
                 |(rest, mut addresses), _| {
-                    let (rest, address) = RouterAddress::parse_frame(rest).ok()?;
+                    let (rest, address) = RouterAddress::parse_frame::<R>(rest).ok()?;
                     addresses.push(address);
 
                     Some((rest, addresses))
@@ -219,8 +219,8 @@ impl RouterInfo {
     }
 
     /// Try to parse router information from `bytes`.
-    pub fn parse(bytes: impl AsRef<[u8]>) -> Result<Self, RouterInfoParseError> {
-        Ok(Self::parse_frame(bytes.as_ref())?.1)
+    pub fn parse<R: Runtime>(bytes: impl AsRef<[u8]>) -> Result<Self, RouterInfoParseError> {
+        Ok(Self::parse_frame::<R>(bytes.as_ref())?.1)
     }
 
     /// Returns `true` if the router is a floodfill router.
@@ -284,6 +284,15 @@ impl RouterInfo {
     /// Try to locate SSU2 over IPv4.
     pub fn ssu2_ipv4(&self) -> Option<&RouterAddress> {
         self.addresses.iter().find(|address| match address {
+            RouterAddress::Ssu2 { socket_address, .. } =>
+                socket_address.is_some_and(|address| address.is_ipv4()),
+            _ => false,
+        })
+    }
+
+    /// Try to locate SSU2 over IPv4 and return mutable reference to it.
+    pub fn ssu2_ipv4_mut(&mut self) -> Option<&mut RouterAddress> {
+        self.addresses.iter_mut().find(|address| match address {
             RouterAddress::Ssu2 { socket_address, .. } =>
                 socket_address.is_some_and(|address| address.is_ipv4()),
             _ => false,
@@ -468,7 +477,7 @@ mod tests {
     #[test]
     fn parse_router_1() {
         let router_info_bytes = include_bytes!("../../test-vectors/router1.dat");
-        let router_info = RouterInfo::parse(router_info_bytes).unwrap();
+        let router_info = RouterInfo::parse::<MockRuntime>(router_info_bytes).unwrap();
 
         assert_eq!(router_info.addresses.len(), 2);
 
@@ -516,7 +525,7 @@ mod tests {
     #[test]
     fn parse_router_2() {
         let router_info_bytes = include_bytes!("../../test-vectors/router2.dat");
-        let router_info = RouterInfo::parse(router_info_bytes).unwrap();
+        let router_info = RouterInfo::parse::<MockRuntime>(router_info_bytes).unwrap();
 
         assert_eq!(router_info.addresses.len(), 4);
 
@@ -560,7 +569,7 @@ mod tests {
     fn parse_router_3() {
         let router_info_bytes = include_bytes!("../../test-vectors/router3.dat");
         assert_eq!(
-            RouterInfo::parse(router_info_bytes).unwrap_err(),
+            RouterInfo::parse::<MockRuntime>(router_info_bytes).unwrap_err(),
             RouterInfoParseError::InvalidIdentity(RouterIdentityParseError::InvalidPublicKey(0))
         );
     }
@@ -569,14 +578,14 @@ mod tests {
     fn is_not_floodfill() {
         let router_info_bytes = include_bytes!("../../test-vectors/router2.dat");
 
-        assert!(!RouterInfo::parse(router_info_bytes).unwrap().is_floodfill())
+        assert!(!RouterInfo::parse::<MockRuntime>(router_info_bytes).unwrap().is_floodfill())
     }
 
     #[test]
     fn is_floodfill() {
         let router_info_bytes = include_bytes!("../../test-vectors/router4.dat");
 
-        assert!(RouterInfo::parse(router_info_bytes).unwrap().is_floodfill())
+        assert!(RouterInfo::parse::<MockRuntime>(router_info_bytes).unwrap().is_floodfill())
     }
 
     #[test]
@@ -601,7 +610,7 @@ mod tests {
         .serialize(&sgk);
 
         assert_eq!(
-            RouterInfo::parse(&serialized).unwrap_err(),
+            RouterInfo::parse::<MockRuntime>(&serialized).unwrap_err(),
             RouterInfoParseError::NetIdMissing
         );
     }
@@ -628,7 +637,7 @@ mod tests {
         .serialize(&sgk);
 
         assert_eq!(
-            RouterInfo::parse(&serialized).unwrap_err(),
+            RouterInfo::parse::<MockRuntime>(&serialized).unwrap_err(),
             RouterInfoParseError::CapabilitiesMissing
         );
     }
@@ -657,7 +666,7 @@ mod tests {
         }
         .serialize(&sgk);
 
-        assert!(!RouterInfo::parse(&serialized).unwrap().is_reachable());
+        assert!(!RouterInfo::parse::<MockRuntime>(&serialized).unwrap().is_reachable());
     }
 
     #[test]
@@ -679,7 +688,7 @@ mod tests {
         }
         .serialize(&sgk);
 
-        assert!(!RouterInfo::parse(&serialized).unwrap().is_reachable());
+        assert!(!RouterInfo::parse::<MockRuntime>(&serialized).unwrap().is_reachable());
     }
 
     #[test]
@@ -701,7 +710,7 @@ mod tests {
         }
         .serialize(&sgk);
 
-        assert!(!RouterInfo::parse(&serialized).unwrap().is_reachable());
+        assert!(!RouterInfo::parse::<MockRuntime>(&serialized).unwrap().is_reachable());
     }
 
     #[test]
@@ -728,7 +737,7 @@ mod tests {
         }
         .serialize(&sgk);
 
-        assert!(RouterInfo::parse(&serialized).unwrap().is_reachable());
+        assert!(RouterInfo::parse::<MockRuntime>(&serialized).unwrap().is_reachable());
     }
 
     // router doesn't explicitly specify the `R` flag
@@ -756,7 +765,7 @@ mod tests {
         }
         .serialize(&sgk);
 
-        assert!(RouterInfo::parse(&serialized).unwrap().is_reachable());
+        assert!(RouterInfo::parse::<MockRuntime>(&serialized).unwrap().is_reachable());
     }
 
     #[test]
@@ -786,7 +795,7 @@ mod tests {
         }
         .serialize(&sgk);
 
-        assert!(RouterInfo::parse(&serialized).unwrap().is_reachable());
+        assert!(RouterInfo::parse::<MockRuntime>(&serialized).unwrap().is_reachable());
     }
 
     #[test]
@@ -821,7 +830,7 @@ mod tests {
         }
         .serialize(&sgk);
 
-        assert!(RouterInfo::parse(&serialized).unwrap().is_reachable());
+        assert!(RouterInfo::parse::<MockRuntime>(&serialized).unwrap().is_reachable());
     }
 
     #[test]
@@ -846,6 +855,6 @@ mod tests {
         }
         .serialize(&sgk);
 
-        assert!(!RouterInfo::parse(&serialized).unwrap().is_reachable());
+        assert!(!RouterInfo::parse::<MockRuntime>(&serialized).unwrap().is_reachable());
     }
 }

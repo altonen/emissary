@@ -205,7 +205,10 @@ impl NetDbHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::primitives::{RouterInfo, RouterInfoBuilder};
+    use crate::{
+        primitives::{RouterInfo, RouterInfoBuilder},
+        runtime::mock::MockRuntime,
+    };
 
     #[test]
     fn send_leaseset_query() {
@@ -256,7 +259,7 @@ mod tests {
                 router_info,
             }) => {
                 assert_eq!(key, router_id);
-                assert!(RouterInfo::parse(router_info).is_ok());
+                assert!(RouterInfo::parse::<MockRuntime>(router_info).is_ok());
             }
             _ => panic!("invalid event"),
         }

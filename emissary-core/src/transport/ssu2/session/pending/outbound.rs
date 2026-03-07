@@ -355,7 +355,7 @@ impl<R: Runtime> OutboundSsu2Session<R> {
             .decrypt_with_ad(&pkt[..32], &mut payload)?;
 
         // check if the message contains a termination block
-        let blocks = Block::parse(&payload).map_err(|error| {
+        let blocks = Block::parse::<R>(&payload).map_err(|error| {
             tracing::trace!(
                 target: LOG_TARGET,
                 router_id = %self.router_id,
@@ -515,7 +515,7 @@ impl<R: Runtime> OutboundSsu2Session<R> {
         ChaChaPoly::with_nonce(&cipher_key, 0u64)
             .decrypt_with_ad(self.noise_ctx.state(), &mut payload)?;
 
-        let blocks = Block::parse(&payload).map_err(|_| Ssu2Error::Malformed)?;
+        let blocks = Block::parse::<R>(&payload).map_err(|_| Ssu2Error::Malformed)?;
         let relay_tag = blocks.iter().find_map(|block| match block {
             Block::RelayTag { relay_tag } => self.request_tag.then_some(*relay_tag),
             _ => None,
@@ -648,7 +648,7 @@ impl<R: Runtime> OutboundSsu2Session<R> {
             "handle Data (first ack)",
         );
 
-        let relay_tag = match Block::parse(&payload) {
+        let relay_tag = match Block::parse::<R>(&payload) {
             Ok(blocks) => {
                 if let Some(Block::Termination { reason, .. }) =
                     blocks.iter().find(|block| core::matches!(block, Block::Termination { .. }))

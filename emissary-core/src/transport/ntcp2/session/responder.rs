@@ -304,7 +304,10 @@ impl Responder {
     ///
     /// <https://geti2p.net/spec/ntcp2#key-derivation-function-kdf-for-handshake-message-3-part-2>
     /// <https://geti2p.net/spec/ntcp2#key-derivation-function-kdf-for-data-phase>
-    pub fn finalize(&mut self, message: Vec<u8>) -> crate::Result<(KeyContext, RouterInfo, Bytes)> {
+    pub fn finalize<R: Runtime>(
+        &mut self,
+        message: Vec<u8>,
+    ) -> crate::Result<(KeyContext, RouterInfo, Bytes)> {
         let ResponderState::SessionCreated {
             ephemeral_private,
             mut local_key,
@@ -365,17 +368,18 @@ impl Responder {
             noise_ctx.mix_hash(&message[48..]);
 
             match MessageBlock::parse(&router_info) {
-                Ok(MessageBlock::RouterInfo { router_info, .. }) => RouterInfo::parse(router_info)
-                    .map(|parsed| (parsed, Bytes::from(router_info.to_vec())))
-                    .map_err(|error| {
-                        tracing::warn!(
-                            target: LOG_TARGET,
-                            ?error,
-                            "failed to parse remote router info",
-                        );
+                Ok(MessageBlock::RouterInfo { router_info, .. }) =>
+                    RouterInfo::parse::<R>(router_info)
+                        .map(|parsed| (parsed, Bytes::from(router_info.to_vec())))
+                        .map_err(|error| {
+                            tracing::warn!(
+                                target: LOG_TARGET,
+                                ?error,
+                                "failed to parse remote router info",
+                            );
 
-                        Error::InvalidData
-                    }),
+                            Error::InvalidData
+                        }),
                 Ok(message) => {
                     tracing::warn!(
                         target: LOG_TARGET,

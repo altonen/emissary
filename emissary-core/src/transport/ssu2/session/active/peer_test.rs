@@ -732,7 +732,7 @@ mod tests {
             .decrypt_with_ad(&ad, &mut pkt)
             .unwrap();
 
-        match Block::parse(&pkt)
+        match Block::parse::<MockRuntime>(&pkt)
             .unwrap()
             .iter()
             .find(|block| core::matches!(block, Block::PeerTest { .. }))
@@ -843,7 +843,7 @@ mod tests {
             .decrypt_with_ad(&ad, &mut pkt)
             .unwrap();
 
-        match Block::parse(&pkt)
+        match Block::parse::<MockRuntime>(&pkt)
             .unwrap()
             .iter()
             .find(|block| core::matches!(block, Block::PeerTest { .. }))
@@ -959,7 +959,7 @@ mod tests {
             .decrypt_with_ad(&ad, &mut pkt)
             .unwrap();
 
-        match Block::parse(&pkt)
+        match Block::parse::<MockRuntime>(&pkt)
             .unwrap()
             .iter()
             .find(|block| core::matches!(block, Block::PeerTest { .. }))
@@ -1075,7 +1075,7 @@ mod tests {
             .decrypt_with_ad(&ad, &mut pkt)
             .unwrap();
 
-        match Block::parse(&pkt)
+        match Block::parse::<MockRuntime>(&pkt)
             .unwrap()
             .iter()
             .find(|block| core::matches!(block, Block::PeerTest { .. }))
@@ -1219,7 +1219,7 @@ mod tests {
             .decrypt_with_ad(&ad, &mut pkt)
             .unwrap();
 
-        match Block::parse(&pkt)
+        match Block::parse::<MockRuntime>(&pkt)
             .unwrap()
             .iter()
             .find(|block| core::matches!(block, Block::PeerTest { .. }))
@@ -1344,7 +1344,7 @@ mod tests {
             .decrypt_with_ad(&ad, &mut pkt)
             .unwrap();
 
-        match Block::parse(&pkt)
+        match Block::parse::<MockRuntime>(&pkt)
             .unwrap()
             .iter()
             .find(|block| core::matches!(block, Block::PeerTest { .. }))
@@ -1464,7 +1464,7 @@ mod tests {
             .decrypt_with_ad(&ad, &mut pkt)
             .unwrap();
 
-        match Block::parse(&pkt)
+        match Block::parse::<MockRuntime>(&pkt)
             .unwrap()
             .iter()
             .find(|block| core::matches!(block, Block::PeerTest { .. }))
@@ -1586,7 +1586,7 @@ mod tests {
             .decrypt_with_ad(&ad, &mut pkt)
             .unwrap();
 
-        match Block::parse(&pkt)
+        match Block::parse::<MockRuntime>(&pkt)
             .unwrap()
             .iter()
             .find(|block| core::matches!(block, Block::PeerTest { .. }))
@@ -1708,7 +1708,7 @@ mod tests {
             .decrypt_with_ad(&ad, &mut pkt)
             .unwrap();
 
-        match Block::parse(&pkt)
+        match Block::parse::<MockRuntime>(&pkt)
             .unwrap()
             .iter()
             .find(|block| core::matches!(block, Block::PeerTest { .. }))

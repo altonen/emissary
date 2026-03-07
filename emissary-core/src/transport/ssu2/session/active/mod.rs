@@ -390,7 +390,7 @@ impl<R: Runtime> Ssu2Session<R> {
             self.ack_timer.schedule_immediate_ack(self.transmission.round_trip_time());
         }
 
-        for block in Block::parse(&payload).map_err(|error| {
+        for block in Block::parse::<R>(&payload).map_err(|error| {
             tracing::warn!(
                 target: LOG_TARGET,
                 router_id = %self.router_id,

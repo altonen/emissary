@@ -274,7 +274,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
         ChaChaPoly::with_nonce(&intro_key, pkt_num as u64)
             .decrypt_with_ad(&pkt[..32], &mut payload)?;
 
-        let blocks = Block::parse(&payload).map_err(|error| {
+        let blocks = Block::parse::<R>(&payload).map_err(|error| {
             tracing::warn!(
                 target: LOG_TARGET,
                 ?dst_id,
@@ -547,7 +547,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
         // MixHash(ciphertext)
         self.noise_ctx.mix_hash(&pkt[64..pkt.len()]);
 
-        let blocks = Block::parse(&payload)
+        let blocks = Block::parse::<R>(&payload)
             .map_err(|error| {
                 tracing::warn!(
                     target: LOG_TARGET,
@@ -692,7 +692,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
             .decrypt_with_ad(self.noise_ctx.state(), &mut payload)?;
         cipher_key.zeroize();
 
-        let blocks = Block::parse(&payload).map_err(|error| {
+        let blocks = Block::parse::<R>(&payload).map_err(|error| {
             tracing::warn!(
                 target: LOG_TARGET,
                 ?error,

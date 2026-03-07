@@ -19,14 +19,18 @@
 use crate::{
     crypto::{base64_decode, base64_encode, StaticPrivateKey, StaticPublicKey},
     error::parser::RouterAddressParseError,
-    primitives::{Date, Mapping, Str},
+    primitives::{Date, Mapping, RouterId, Str},
+    runtime::Runtime,
 };
 
 use bytes::{BufMut, BytesMut};
 use nom::{number::complete::be_u8, Err, IResult};
 
-use alloc::string::ToString;
+use alloc::{format, string::ToString, vec::Vec};
 use core::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+/// Maximum amount of introducers.
+const MAX_INTRODUCERS: usize = 3usize;
 
 /// Router address.
 #[derive(Debug, Clone)]
@@ -57,6 +61,9 @@ pub enum RouterAddress {
 
     /// SSU2.
     Ssu2 {
+        /// Introducers.
+        introducers: Vec<(RouterId, u32)>,
+
         /// Router cost.
         cost: u8,
 
@@ -136,6 +143,7 @@ impl RouterAddress {
             intro_key,
             static_key,
             socket_address: Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)),
+            introducers: Vec::new(),
             options,
         }
     }
@@ -164,12 +172,15 @@ impl RouterAddress {
             static_key,
             intro_key,
             options,
+            introducers: Vec::new(),
             socket_address: Some(SocketAddr::new(IpAddr::V4(host), port)),
         }
     }
 
     /// Parse [`RouterAddress`] from `input`, returning rest of `input` and parsed address.
-    pub fn parse_frame(input: &[u8]) -> IResult<&[u8], RouterAddress, RouterAddressParseError> {
+    pub fn parse_frame<R: Runtime>(
+        input: &[u8],
+    ) -> IResult<&[u8], RouterAddress, RouterAddressParseError> {
         let (rest, cost) = be_u8(input)?;
         let (rest, _expires) = Date::parse_frame(rest)
             .map_err(|_| Err::Error(RouterAddressParseError::InvalidExpiration))?;
@@ -248,15 +259,45 @@ impl RouterAddress {
                     TryInto::<[u8; 32]>::try_into(bytes)
                         .map_err(|_| Err::Error(RouterAddressParseError::InvalidSsu2IntroKey))?
                 };
+                // introducers may be present if `socket_address` is not specified, from spec:
+                //
+                // "A router must not publish host or port in the address when publishing
+                // introducers."
+                let introducers = if socket_address.is_none() {
+                    (0..MAX_INTRODUCERS)
+                        .filter_map(|i| {
+                            let expiration = options
+                                .get(&Str::from(format!("iexp{i}")))
+                                .and_then(|exp| exp.parse::<u32>().ok());
+                            let router_id = options
+                                .get(&Str::from(format!("ih{i}")))
+                                .and_then(|hash| base64_decode(&**hash))
+                                .map(RouterId::from);
+                            let relay_tag = options
+                                .get(&Str::from(format!("itag{i}")))
+                                .and_then(|tag| tag.parse::<u32>().ok());
+
+                            match (expiration, router_id, relay_tag) {
+                                (Some(expiration), Some(router_id), Some(relay_tag)) => (expiration
+                                    > R::time_since_epoch().as_secs() as u32)
+                                    .then_some((router_id, relay_tag)),
+                                _ => None,
+                            }
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
 
                 Ok((
                     rest,
                     Self::Ssu2 {
                         cost,
-                        static_key,
+                        introducers,
                         intro_key,
                         options,
                         socket_address,
+                        static_key,
                     },
                 ))
             }
@@ -308,8 +349,10 @@ impl RouterAddress {
     }
 
     /// Try to convert `bytes` into a [`RouterAddress`].
-    pub fn parse(bytes: impl AsRef<[u8]>) -> Result<RouterAddress, RouterAddressParseError> {
-        Ok(Self::parse_frame(bytes.as_ref())?.1)
+    pub fn parse<R: Runtime>(
+        bytes: impl AsRef<[u8]>,
+    ) -> Result<RouterAddress, RouterAddressParseError> {
+        Ok(Self::parse_frame::<R>(bytes.as_ref())?.1)
     }
 
     /// Serialize [`RouterAddress`].
@@ -357,13 +400,14 @@ impl RouterAddress {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::mock::MockRuntime;
 
     #[test]
     fn serialize_deserialize_unpublished_ntcp2() {
         let serialized = RouterAddress::new_unpublished_ntcp2([1u8; 32], 8888).serialize();
         let static_key = StaticPrivateKey::from([1u8; 32]).public();
 
-        match RouterAddress::parse(&serialized).unwrap() {
+        match RouterAddress::parse::<MockRuntime>(&serialized).unwrap() {
             RouterAddress::Ntcp2 {
                 cost,
                 options,
@@ -395,7 +439,7 @@ mod tests {
         .serialize();
         let static_key = StaticPrivateKey::from([1u8; 32]).public();
 
-        match RouterAddress::parse(&serialized).unwrap() {
+        match RouterAddress::parse::<MockRuntime>(&serialized).unwrap() {
             RouterAddress::Ntcp2 {
                 cost,
                 options,
@@ -433,7 +477,7 @@ mod tests {
         let static_key = StaticPrivateKey::from([1u8; 32]).public();
         let intro_key = [2u8; 32];
 
-        match RouterAddress::parse(&serialized).unwrap() {
+        match RouterAddress::parse::<MockRuntime>(&serialized).unwrap() {
             RouterAddress::Ssu2 {
                 cost,
                 options,
@@ -472,13 +516,14 @@ mod tests {
         let static_key = StaticPrivateKey::from([1u8; 32]).public();
         let intro_key = [2u8; 32];
 
-        match RouterAddress::parse(&serialized).unwrap() {
+        match RouterAddress::parse::<MockRuntime>(&serialized).unwrap() {
             RouterAddress::Ssu2 {
                 cost,
                 static_key: s,
                 intro_key: i,
                 options,
                 socket_address,
+                ..
             } => {
                 assert_eq!(cost, 8);
                 assert_eq!(s.to_vec(), static_key.to_vec());
@@ -516,7 +561,7 @@ mod tests {
         }
 
         assert_eq!(
-            RouterAddress::parse(&address.serialize()).unwrap_err(),
+            RouterAddress::parse::<MockRuntime>(&address.serialize()).unwrap_err(),
             RouterAddressParseError::Ntcp2StaticKeyMissing
         );
     }
@@ -534,7 +579,7 @@ mod tests {
         }
 
         assert_eq!(
-            RouterAddress::parse(&address.serialize()).unwrap_err(),
+            RouterAddress::parse::<MockRuntime>(&address.serialize()).unwrap_err(),
             RouterAddressParseError::InvalidNtcp2StaticKey
         );
     }
@@ -552,7 +597,7 @@ mod tests {
         }
 
         assert_eq!(
-            RouterAddress::parse(&address.serialize()).unwrap_err(),
+            RouterAddress::parse::<MockRuntime>(&address.serialize()).unwrap_err(),
             RouterAddressParseError::Ssu2StaticKeyMissing
         );
     }
@@ -570,7 +615,7 @@ mod tests {
         }
 
         assert_eq!(
-            RouterAddress::parse(&address.serialize()).unwrap_err(),
+            RouterAddress::parse::<MockRuntime>(&address.serialize()).unwrap_err(),
             RouterAddressParseError::Ssu2IntroKeyMissing
         );
     }
@@ -588,7 +633,7 @@ mod tests {
         }
 
         assert_eq!(
-            RouterAddress::parse(&address.serialize()).unwrap_err(),
+            RouterAddress::parse::<MockRuntime>(&address.serialize()).unwrap_err(),
             RouterAddressParseError::InvalidSsu2StaticKey
         );
     }
@@ -606,8 +651,75 @@ mod tests {
         }
 
         assert_eq!(
-            RouterAddress::parse(&address.serialize()).unwrap_err(),
+            RouterAddress::parse::<MockRuntime>(&address.serialize()).unwrap_err(),
             RouterAddressParseError::InvalidSsu2IntroKey
         );
     }
+
+    #[test]
+    fn introducers_parsed() {
+        let mut address = RouterAddress::new_unpublished_ssu2([0xaa; 32], [0xbb; 32], 8888);
+        let router_id = RouterId::random();
+
+        match address {
+            RouterAddress::Ssu2 {
+                ref mut options, ..
+            } => {
+                options.insert(
+                    Str::from("iexp0"),
+                    Str::from((MockRuntime::time_since_epoch().as_secs() + 10).to_string()),
+                );
+                options.insert(
+                    Str::from("ih0"),
+                    Str::from(base64_encode(router_id.to_vec())),
+                );
+                options.insert(Str::from("itag0"), Str::from("1337"));
+            }
+            _ => panic!("invalid ssu2 address"),
+        }
+
+        match RouterAddress::parse::<MockRuntime>(&address.serialize()).unwrap() {
+            RouterAddress::Ssu2 { introducers, .. } => {
+                assert_eq!(introducers.len(), 1);
+                assert_eq!(introducers[0].0, router_id);
+                assert_eq!(introducers[0].1, 1337);
+            }
+            _ => panic!("invalid ssu2 address"),
+        }
+    }
+
+    #[test]
+    fn introducers_ignored_for_published_address() {
+        let mut address = RouterAddress::new_published_ssu2(
+            [0xaa; 32],
+            [0xbb; 32],
+            8888,
+            "127.0.0.1".parse().unwrap(),
+        );
+        let router_id = RouterId::random();
+
+        match address {
+            RouterAddress::Ssu2 {
+                ref mut options, ..
+            } => {
+                options.insert(Str::from("iepx0"), Str::from("1337"));
+                options.insert(
+                    Str::from("ih0"),
+                    Str::from(base64_encode(router_id.to_vec())),
+                );
+                options.insert(Str::from("itag0"), Str::from("1337"));
+            }
+            _ => panic!("invalid ssu2 address"),
+        }
+
+        match RouterAddress::parse::<MockRuntime>(&address.serialize()).unwrap() {
+            RouterAddress::Ssu2 { introducers, .. } => {
+                assert!(introducers.is_empty());
+            }
+            _ => panic!("invalid ssu2 address"),
+        }
+    }
+
+    #[test]
+    fn stale_introducers_ignored() {}
 }

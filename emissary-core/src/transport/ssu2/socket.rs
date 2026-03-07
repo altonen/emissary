@@ -29,7 +29,9 @@ use crate::{
             message::{HeaderKind, HeaderReader},
             metrics::*,
             peer_test::{PeerTestManager, PeerTestManagerEvent},
-            relay::{types::RelayTagRequested, RelayManager},
+            relay::{
+                types::RelayTagRequested, RelayManager, RelayManagerEvent, INTRODUCER_EXPIRATION,
+            },
             session::{
                 active::{Ssu2Session, Ssu2SessionContext},
                 pending::{
@@ -192,6 +194,9 @@ pub struct Ssu2Socket<R: Runtime> {
     /// Peer test manager.
     peer_test_manager: PeerTestManager<R>,
 
+    /// Pending events.
+    pending_events: VecDeque<TransportEvent>,
+
     /// Pending outbound sessions.
     ///
     /// Remote routers' intro keys indexed by their socket addresses.
@@ -261,11 +266,12 @@ impl<R: Runtime> Ssu2Socket<R> {
         Self {
             active_sessions: R::join_set(),
             chaining_key: Bytes::from(chaining_key),
-            inbound_state: Bytes::from(inbound_state),
             detector: Detector::new(),
+            inbound_state: Bytes::from(inbound_state),
             intro_key,
             outbound_state: Bytes::from(outbound_state),
             peer_test_manager: PeerTestManager::new(intro_key, socket.clone(), router_ctx.clone()),
+            pending_events: VecDeque::new(),
             pending_outbound: HashMap::new(),
             pending_pkts: VecDeque::new(),
             pending_sessions: R::join_set(),
@@ -517,7 +523,8 @@ impl<R: Runtime> Ssu2Socket<R> {
                 net_id: self.router_ctx.net_id(),
                 remote_intro_key: *intro_key,
                 request_tag: core::matches!(self.detector.status(), FirewallStatus::Firewalled)
-                    && ssu2_address.supports_relay(),
+                    && ssu2_address.supports_relay()
+                    && self.relay_manager.needs_introducers(),
                 router_id,
                 router_info: our_router_info,
                 rx,
@@ -604,6 +611,11 @@ impl<R: Runtime> Ssu2Socket<R> {
                 // register relay server to `RelayManager`
                 if let Some(relay_tag) = relay_tag {
                     self.relay_manager.register_relay_server(context.router_id.clone(), relay_tag);
+                    self.pending_events.push_back(TransportEvent::IntroducerAdded {
+                        relay_tag,
+                        router_id: context.router_id.clone(),
+                        expires: R::time_since_epoch() + INTRODUCER_EXPIRATION,
+                    });
                 }
 
                 context
@@ -714,6 +726,10 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = &mut *self;
 
+        if let Some(event) = this.pending_events.pop_front() {
+            return Poll::Ready(Some(event));
+        }
+
         loop {
             match Pin::new(&mut this.socket).poll_recv_from(cx, &mut this.read_buffer) {
                 Poll::Pending => break,
@@ -772,7 +788,11 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
                 );
 
                 this.peer_test_manager.remove_session(&router_id);
-                this.relay_manager.register_closed_connection(&router_id);
+                if this.relay_manager.register_closed_connection(&router_id) {
+                    this.pending_events.push_back(TransportEvent::IntroducerRemoved {
+                        router_id: router_id.clone(),
+                    })
+                }
                 this.terminating_session.push(TerminatingSsu2Session::<R>::new(termination_ctx));
                 this.router_ctx.metrics_handle().gauge(NUM_CONNECTIONS).decrement(1);
 
@@ -1064,9 +1084,11 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
             match this.relay_manager.poll_next_unpin(cx) {
                 Poll::Pending => break,
                 Poll::Ready(None) => {}
-                Poll::Ready(Some(token)) => {
+                Poll::Ready(Some(RelayManagerEvent::SessionRequestToken { token })) => {
                     this.tokens.insert(token);
                 }
+                Poll::Ready(Some(RelayManagerEvent::IntroducerExpired { router_id })) =>
+                    return Poll::Ready(Some(TransportEvent::IntroducerRemoved { router_id })),
             }
         }
 

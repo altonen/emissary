@@ -387,7 +387,7 @@ impl<R: Runtime> SessionManager<R> {
         let mut message = alloc::vec![0u8; message_len];
         stream.read_exact::<R>(&mut message).await?;
 
-        match responder.finalize(message) {
+        match responder.finalize::<R>(message) {
             Ok((key_context, router_info, serialized)) => {
                 if router_info.net_id() != net_id {
                     tracing::warn!(

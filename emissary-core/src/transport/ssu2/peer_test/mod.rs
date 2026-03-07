@@ -719,7 +719,7 @@ impl<R: Runtime> PeerTestManager<R> {
             // for peer tests we're a participant we only expect to receive message 6
             let Some(Block::PeerTest {
                 message: PeerTestMessage::Message6,
-            }) = Block::parse(&datagram)
+            }) = Block::parse::<R>(&datagram)
                 .map_err(|_| Ssu2Error::Malformed)?
                 .iter()
                 .find(|block| core::matches!(block, Block::PeerTest { .. }))
@@ -774,7 +774,7 @@ impl<R: Runtime> PeerTestManager<R> {
                 // since the test is still pending, we're only expecting peer test message 5
                 let Some(Block::PeerTest {
                     message: PeerTestMessage::Message5,
-                }) = Block::parse(&datagram)
+                }) = Block::parse::<R>(&datagram)
                     .map_err(|_| Ssu2Error::Malformed)?
                     .iter()
                     .find(|block| core::matches!(block, Block::PeerTest { .. }))
@@ -829,7 +829,7 @@ impl<R: Runtime> PeerTestManager<R> {
                 ChaChaPoly::with_nonce(&self.intro_key, pkt_num as u64)
                     .decrypt_with_ad(&ad, &mut datagram)?;
 
-                let blocks = Block::parse(&datagram).map_err(|_| Ssu2Error::Malformed)?;
+                let blocks = Block::parse::<R>(&datagram).map_err(|_| Ssu2Error::Malformed)?;
                 let address = blocks.iter().find_map(|block| match block {
                     Block::Address { address } => Some(*address),
                     _ => None,
@@ -1375,6 +1375,7 @@ mod tests {
                     "[::]:8888".parse().unwrap()
                 }
             }),
+            introducers: Vec::new(),
         };
         let (identity, _, signing_key) = RouterIdentity::random();
         let router_id = identity.id();
@@ -1688,7 +1689,7 @@ mod tests {
                 assert_eq!(nonce, 1338);
                 assert_eq!(router_id, router_id1);
                 assert_eq!(
-                    RouterInfo::parse(router_info).unwrap().identity.id(),
+                    RouterInfo::parse::<MockRuntime>(router_info).unwrap().identity.id(),
                     router_id1
                 );
             }
@@ -1887,12 +1888,14 @@ mod tests {
             .decrypt_with_ad(&ad, &mut pkt)
             .unwrap();
 
-        assert!(Block::parse(&pkt).unwrap().iter().any(|block| match block {
-            Block::PeerTest {
-                message: PeerTestMessage::Message5,
-            } => true,
-            _ => false,
-        }));
+        assert!(
+            Block::parse::<MockRuntime>(&pkt).unwrap().iter().any(|block| match block {
+                Block::PeerTest {
+                    message: PeerTestMessage::Message5,
+                } => true,
+                _ => false,
+            })
+        );
     }
 
     #[tokio::test]
@@ -2254,12 +2257,14 @@ mod tests {
             .decrypt_with_ad(&ad, &mut pkt)
             .unwrap();
 
-        assert!(Block::parse(&pkt).unwrap().iter().any(|block| match block {
-            Block::PeerTest {
-                message: PeerTestMessage::Message7,
-            } => true,
-            _ => false,
-        }));
+        assert!(
+            Block::parse::<MockRuntime>(&pkt).unwrap().iter().any(|block| match block {
+                Block::PeerTest {
+                    message: PeerTestMessage::Message7,
+                } => true,
+                _ => false,
+            })
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -2412,12 +2417,14 @@ mod tests {
             };
 
             let pkt = decrypt_pkt!([0xdd; 32], buf, nread);
-            assert!(Block::parse(&pkt).unwrap().iter().any(|block| match block {
-                Block::PeerTest {
-                    message: PeerTestMessage::Message6,
-                } => true,
-                _ => false,
-            }));
+            assert!(
+                Block::parse::<MockRuntime>(&pkt).unwrap().iter().any(|block| match block {
+                    Block::PeerTest {
+                        message: PeerTestMessage::Message6,
+                    } => true,
+                    _ => false,
+                })
+            );
         }
 
         // create peer test message 7, decrypt its header and relay to manager
@@ -2740,12 +2747,14 @@ mod tests {
             };
 
             let pkt = decrypt_pkt!([0xdd; 32], buf, nread);
-            assert!(Block::parse(&pkt).unwrap().iter().any(|block| match block {
-                Block::PeerTest {
-                    message: PeerTestMessage::Message6,
-                } => true,
-                _ => false,
-            }));
+            assert!(
+                Block::parse::<MockRuntime>(&pkt).unwrap().iter().any(|block| match block {
+                    Block::PeerTest {
+                        message: PeerTestMessage::Message6,
+                    } => true,
+                    _ => false,
+                })
+            );
         }
 
         // create peer test message 7, decrypt its header and relay to manager
@@ -2907,12 +2916,14 @@ mod tests {
             };
 
             let pkt = decrypt_pkt!([0xdd; 32], buf, nread);
-            assert!(Block::parse(&pkt).unwrap().iter().any(|block| match block {
-                Block::PeerTest {
-                    message: PeerTestMessage::Message6,
-                } => true,
-                _ => false,
-            }));
+            assert!(
+                Block::parse::<MockRuntime>(&pkt).unwrap().iter().any(|block| match block {
+                    Block::PeerTest {
+                        message: PeerTestMessage::Message6,
+                    } => true,
+                    _ => false,
+                })
+            );
         }
 
         // create peer test message 7, decrypt its header and relay to manager
@@ -3104,12 +3115,14 @@ mod tests {
             };
 
             let pkt = decrypt_pkt!([0xdd; 32], buf, nread);
-            assert!(Block::parse(&pkt).unwrap().iter().any(|block| match block {
-                Block::PeerTest {
-                    message: PeerTestMessage::Message6,
-                } => true,
-                _ => false,
-            }));
+            assert!(
+                Block::parse::<MockRuntime>(&pkt).unwrap().iter().any(|block| match block {
+                    Block::PeerTest {
+                        message: PeerTestMessage::Message6,
+                    } => true,
+                    _ => false,
+                })
+            );
         }
 
         // poll manager until firewall status changes to ok

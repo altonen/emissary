@@ -657,7 +657,7 @@ impl Block {
     }
 
     /// Attempt to parse [`Block::RouterInfo`] from `input`.
-    fn parse_router_info(input: &[u8]) -> IResult<&[u8], Block, Ssu2ParseError> {
+    fn parse_router_info<R: Runtime>(input: &[u8]) -> IResult<&[u8], Block, Ssu2ParseError> {
         let (rest, size) = be_u16(input)?;
         if size <= 2 {
             return Err(Err::Error(Ssu2ParseError::EmptyRouterInfo));
@@ -678,7 +678,7 @@ impl Block {
             return Err(Err::Error(Ssu2ParseError::CompressedRouterInfo));
         }
 
-        let parsed = RouterInfo::parse(router_info)
+        let parsed = RouterInfo::parse::<R>(router_info)
             .map_err(|error| Err::Error(Ssu2ParseError::RouterInfo(error)))?;
         let serialized = Bytes::from(router_info.to_vec());
 
@@ -1316,13 +1316,13 @@ impl Block {
 
     /// Attempt to parse [`Block`] from `input`, returning the parsed block
     // and the rest of `input` to caller.
-    fn parse_inner(input: &[u8]) -> IResult<&[u8], Block, Ssu2ParseError> {
+    fn parse_inner<R: Runtime>(input: &[u8]) -> IResult<&[u8], Block, Ssu2ParseError> {
         let (rest, block_type) = be_u8(input)?;
 
         match BlockType::from_u8(block_type) {
             Some(BlockType::DateTime) => Self::parse_date_time(rest),
             Some(BlockType::Options) => Self::parse_options(rest),
-            Some(BlockType::RouterInfo) => Self::parse_router_info(rest),
+            Some(BlockType::RouterInfo) => Self::parse_router_info::<R>(rest),
             Some(BlockType::I2Np) => Self::parse_i2np(rest),
             Some(BlockType::FirstFragment) => Self::parse_first_fragment(rest),
             Some(BlockType::FollowOnFragment) => Self::parse_follow_on_fragment(rest),
@@ -1354,22 +1354,22 @@ impl Block {
 
     /// Attempt to parse `input` into an SSU2 message [`Block`] and recursive call
     /// `Block::parse_multiple()` until there are no bytes or an error was encountered.
-    fn parse_multiple(
+    fn parse_multiple<R: Runtime>(
         input: &[u8],
         mut messages: Vec<Block>,
     ) -> Result<Vec<Block>, Ssu2ParseError> {
-        let (rest, message) = Self::parse_inner(input)?;
+        let (rest, message) = Self::parse_inner::<R>(input)?;
         messages.push(message);
 
         match rest.is_empty() {
             true => Ok(messages),
-            false => Self::parse_multiple(rest, messages),
+            false => Self::parse_multiple::<R>(rest, messages),
         }
     }
 
     /// Attempt to parse `input` into one or more SSU2 message [`Block`]s.
-    pub fn parse(input: &[u8]) -> Result<Vec<Block>, Ssu2ParseError> {
-        Self::parse_multiple(input, Vec::new())
+    pub fn parse<R: Runtime>(input: &[u8]) -> Result<Vec<Block>, Ssu2ParseError> {
+        Self::parse_multiple::<R>(input, Vec::new())
     }
 
     /// Get serialized length of a [`Block`].

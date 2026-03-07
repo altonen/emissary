@@ -190,7 +190,7 @@ impl<R: Runtime> TerminatingSsu2Session<R> {
         ChaChaPoly::with_nonce(&self.recv_key_ctx.k_data, pkt_num as u64)
             .decrypt_with_ad(&pkt[..16], &mut payload)?;
 
-        if !Block::parse(&payload)
+        if !Block::parse::<R>(&payload)
             .map_err(|error| {
                 tracing::warn!(
                     target: LOG_TARGET,
