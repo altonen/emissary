@@ -11,8 +11,8 @@ fuzz_target!(|buffer: &[u8]| {
     let _ = Destination::parse(buffer);
     let _ = LeaseSet2::parse::<Runtime>(buffer);
     let _ = Mapping::parse(buffer);
-    let _ = RouterAddress::parse(buffer);
+    let _ = RouterAddress::parse::<Runtime>(buffer);
     let _ = RouterIdentity::parse(buffer);
-    let _ = RouterInfo::parse(buffer);
+    let _ = RouterInfo::parse::<Runtime>(buffer);
     let _ = Str::parse(buffer);
 });

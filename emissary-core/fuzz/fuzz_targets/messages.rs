@@ -69,7 +69,7 @@ impl Into<MessageType> for GeneratedMessageType {
 }
 
 fuzz_target!(|input: (&[u8], &str, [u8; 32], GeneratedMessageType)| {
-    let _ = Block::parse(&input.0);
+    let _ = Block::parse::<Runtime>(&input.0);
     let _ = SamCommand::parse::<Runtime>(&input.1);
     let _ = Datagram::parse(&input.0);
     let _ = Message::parse::<Runtime>(input.3.into(), &input.0);
