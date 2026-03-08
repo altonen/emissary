@@ -20,7 +20,7 @@ use crate::{
     config::Ssu2Config,
     crypto::StaticPrivateKey,
     error::{ConnectionError, Error},
-    primitives::{RouterAddress, RouterId, RouterInfo},
+    primitives::{RouterAddress, RouterId, RouterInfo, TransportKind},
     router::context::RouterContext,
     runtime::{MetricType, Runtime, UdpSocket},
     subsystem::SubsystemEvent,
@@ -81,12 +81,23 @@ pub struct Ssu2Context<R: Runtime> {
 
     /// Socket address.
     socket_address: SocketAddr,
+
+    /// Force router to be firewalled.
+    firewalled: bool,
 }
 
 impl<R: Runtime> Ssu2Context<R> {
     /// Get the port where [`Ssu2Socket`] is bound to.
     pub fn port(&self) -> u16 {
         self.socket_address.port()
+    }
+
+    /// Classify `Ssu2Socket` into a `TransportKind`.
+    pub fn classify(&self) -> TransportKind {
+        match self.socket_address.ip() {
+            IpAddr::V4(_) => TransportKind::Ssu2V4,
+            IpAddr::V6(_) => TransportKind::Ssu2V6,
+        }
     }
 
     /// Get copy of [`Ssu2Config`].
@@ -113,6 +124,7 @@ impl<R: Runtime> Ssu2Transport<R> {
             socket_address,
             socket,
             config,
+            firewalled,
         } = context;
 
         tracing::info!(
@@ -129,6 +141,7 @@ impl<R: Runtime> Ssu2Transport<R> {
                 config.intro_key,
                 transport_tx,
                 router_ctx.clone(),
+                firewalled,
             ),
         }
     }
@@ -209,6 +222,7 @@ impl<R: Runtime> Ssu2Transport<R> {
                 config,
                 socket,
                 socket_address,
+                firewalled: false,
             }),
             Some(address),
         ))

@@ -26,6 +26,7 @@ pub const NUM_REJECTED: &str = "transport_rejected_connections_count";
 pub const NUM_ACCEPTED: &str = "transport_accepted_connections_count";
 pub const NUM_INITIATED: &str = "transport_initiated_count";
 pub const NUM_DIAL_FAILURES: &str = "transport_dial_failure_count";
+pub const NUM_INTRODUCER_DIAL_FAILURES: &str = "transport_introducer_dial_failure_count";
 
 // netdb-related metrics
 pub const NUM_NETDB_QUERIES: &str = "transport_ri_query_count";
@@ -42,6 +43,10 @@ pub fn register_metrics(mut metrics: Vec<MetricType>) -> Vec<MetricType> {
     metrics.push(MetricType::Counter {
         name: NUM_DIAL_FAILURES,
         description: "number of dial failures",
+    });
+    metrics.push(MetricType::Counter {
+        name: NUM_INTRODUCER_DIAL_FAILURES,
+        description: "number of dial failures caused by introducer errors",
     });
     metrics.push(MetricType::Counter {
         name: NUM_REJECTED,

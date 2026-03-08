@@ -27,10 +27,29 @@ use bytes::{BufMut, BytesMut};
 use nom::{number::complete::be_u8, Err, IResult};
 
 use alloc::{format, string::ToString, vec::Vec};
-use core::net::{IpAddr, Ipv4Addr, SocketAddr};
+use core::{
+    fmt,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+};
 
 /// Maximum amount of introducers.
 const MAX_INTRODUCERS: usize = 3usize;
+
+/// Transport kind.
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub enum TransportKind {
+    /// NTCP2 over IPv4.
+    Ntcp2V4,
+
+    /// NTCP2 over IPv4.
+    Ntcp2V6,
+
+    /// SSU2 over IPv4.
+    Ssu2V4,
+
+    /// SSU2 over IPv6.
+    Ssu2V6,
+}
 
 /// Router address.
 #[derive(Debug, Clone)]
@@ -85,6 +104,15 @@ pub enum RouterAddress {
         /// `None` if router hasn't published an address.
         socket_address: Option<SocketAddr>,
     },
+}
+
+impl fmt::Display for RouterAddress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ntcp2 { socket_address, .. } => write!(f, "ntcp2({socket_address:?})"),
+            Self::Ssu2 { socket_address, .. } => write!(f, "ssu2({socket_address:?})"),
+        }
+    }
 }
 
 impl RouterAddress {
@@ -348,6 +376,50 @@ impl RouterAddress {
         }
     }
 
+    /// Get cost of the transport.
+    pub fn cost(&self) -> u8 {
+        match self {
+            Self::Ntcp2 { cost, .. } => *cost,
+            Self::Ssu2 { cost, .. } => *cost,
+        }
+    }
+
+    /// Attempt to classify `RouterAddress` into a `TransportKind`.
+    ///
+    /// For NTCP2, only the published socket address is used and if no address is published,
+    /// return `None` to indicate that the address could not be classified.
+    ///
+    /// For SSU2, socket address is used for classification first and if it doesn't exist,
+    /// `caps` are checked for `4`/`6` flags, with IPv4 preferred.
+    pub fn classify(&self) -> Option<TransportKind> {
+        match self {
+            Self::Ntcp2 { socket_address, .. } =>
+                socket_address.map(|address| match address.ip() {
+                    IpAddr::V4(_) => TransportKind::Ntcp2V4,
+                    IpAddr::V6(_) => TransportKind::Ntcp2V6,
+                }),
+            Self::Ssu2 {
+                socket_address,
+                options,
+                ..
+            } => match socket_address {
+                Some(address) => match address {
+                    SocketAddr::V4(_) => Some(TransportKind::Ssu2V4),
+                    SocketAddr::V6(_) => Some(TransportKind::Ssu2V6),
+                },
+                None => {
+                    let caps = options.get(&Str::from("caps"))?;
+
+                    if caps.contains("4") {
+                        return Some(TransportKind::Ssu2V4);
+                    }
+
+                    caps.contains("6").then_some(TransportKind::Ssu2V6)
+                }
+            },
+        }
+    }
+
     /// Try to convert `bytes` into a [`RouterAddress`].
     pub fn parse<R: Runtime>(
         bytes: impl AsRef<[u8]>,
@@ -401,6 +473,7 @@ impl RouterAddress {
 mod tests {
     use super::*;
     use crate::runtime::mock::MockRuntime;
+    use std::time::Duration;
 
     #[test]
     fn serialize_deserialize_unpublished_ntcp2() {
@@ -721,5 +794,158 @@ mod tests {
     }
 
     #[test]
-    fn stale_introducers_ignored() {}
+    fn stale_introducers_ignored() {
+        let mut address = RouterAddress::new_unpublished_ssu2([0xaa; 32], [0xbb; 32], 8888);
+        let router_id1 = RouterId::random();
+        let router_id2 = RouterId::random();
+
+        match address {
+            RouterAddress::Ssu2 {
+                ref mut options, ..
+            } => {
+                options.insert(Str::from("iexp0"), Str::from("1337"));
+                options.insert(
+                    Str::from("ih0"),
+                    Str::from(base64_encode(router_id1.to_vec())),
+                );
+                options.insert(Str::from("itag0"), Str::from("1337"));
+
+                options.insert(
+                    Str::from("iexp1"),
+                    Str::from(
+                        (MockRuntime::time_since_epoch() + Duration::from_secs(60))
+                            .as_secs()
+                            .to_string(),
+                    ),
+                );
+                options.insert(
+                    Str::from("ih1"),
+                    Str::from(base64_encode(router_id2.to_vec())),
+                );
+                options.insert(Str::from("itag1"), Str::from("1338"));
+            }
+            _ => panic!("invalid ssu2 address"),
+        }
+
+        match RouterAddress::parse::<MockRuntime>(&address.serialize()).unwrap() {
+            RouterAddress::Ssu2 { introducers, .. } => {
+                assert_eq!(introducers.len(), 1);
+                assert_eq!(introducers[0].0, router_id2);
+                assert_eq!(introducers[0].1, 1338);
+            }
+            _ => panic!("invalid ssu2 address"),
+        }
+    }
+
+    #[test]
+    fn classify_router_address() {
+        // published ntcp2 over ipv4
+        assert_eq!(
+            RouterAddress::Ntcp2 {
+                cost: 8,
+                options: Mapping::default(),
+                static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
+                iv: Some([0xaa; 16]),
+                socket_address: Some("127.0.0.1:8888".parse().unwrap()),
+            }
+            .classify(),
+            Some(TransportKind::Ntcp2V4)
+        );
+
+        // published ntcp2 over ipv6
+        assert_eq!(
+            RouterAddress::Ntcp2 {
+                cost: 8,
+                options: Mapping::default(),
+                static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
+                iv: Some([0xaa; 16]),
+                socket_address: Some("[::]:8888".parse().unwrap()),
+            }
+            .classify(),
+            Some(TransportKind::Ntcp2V6)
+        );
+
+        // unpublished ntcp2
+        assert_eq!(
+            RouterAddress::Ntcp2 {
+                cost: 8,
+                options: Mapping::default(),
+                static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
+                iv: None,
+                socket_address: None,
+            }
+            .classify(),
+            None,
+        );
+
+        // ssu2 over ipv4
+        assert_eq!(
+            RouterAddress::Ssu2 {
+                introducers: Vec::new(),
+                cost: 8,
+                static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
+                intro_key: [0xaa; 32],
+                options: Mapping::default(),
+                socket_address: Some("127.0.0.1:8888".parse().unwrap())
+            }
+            .classify(),
+            Some(TransportKind::Ssu2V4)
+        );
+
+        // ssu2 over ipv6
+        assert_eq!(
+            RouterAddress::Ssu2 {
+                introducers: Vec::new(),
+                cost: 8,
+                static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
+                intro_key: [0xaa; 32],
+                options: Mapping::default(),
+                socket_address: Some("[::]:8888".parse().unwrap())
+            }
+            .classify(),
+            Some(TransportKind::Ssu2V6)
+        );
+
+        // unpublished ssu2 with `4` caps
+        assert_eq!(
+            RouterAddress::Ssu2 {
+                introducers: Vec::new(),
+                cost: 8,
+                static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
+                intro_key: [0xaa; 32],
+                options: Mapping::from_iter([(Str::from("caps"), Str::from("4"))]),
+                socket_address: None,
+            }
+            .classify(),
+            Some(TransportKind::Ssu2V4)
+        );
+
+        // unpublished ssu2 with `6` caps
+        assert_eq!(
+            RouterAddress::Ssu2 {
+                introducers: Vec::new(),
+                cost: 8,
+                static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
+                intro_key: [0xaa; 32],
+                options: Mapping::from_iter([(Str::from("caps"), Str::from("6"))]),
+                socket_address: None,
+            }
+            .classify(),
+            Some(TransportKind::Ssu2V6)
+        );
+
+        // unpublished ssu2 without caps
+        assert_eq!(
+            RouterAddress::Ssu2 {
+                introducers: Vec::new(),
+                cost: 8,
+                static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
+                intro_key: [0xaa; 32],
+                options: Mapping::default(),
+                socket_address: None,
+            }
+            .classify(),
+            None,
+        );
+    }
 }

@@ -243,11 +243,19 @@ pub struct PeerTestManager<R: Runtime> {
 
     /// Write buffer.
     write_buffer: VecDeque<(BytesMut, SocketAddr)>,
+
+    /// Has the router been forced to consider itself firewalled.
+    force_firewall: bool,
 }
 
 impl<R: Runtime> PeerTestManager<R> {
     /// Create new `PeerTestManager`.
-    pub fn new(intro_key: [u8; 32], socket: R::UdpSocket, router_ctx: RouterContext<R>) -> Self {
+    pub fn new(
+        intro_key: [u8; 32],
+        socket: R::UdpSocket,
+        router_ctx: RouterContext<R>,
+        firewalled: bool,
+    ) -> Self {
         let (tx, rx) = with_recycle(256, PeerTestEventRecycle::default());
 
         Self {
@@ -256,6 +264,7 @@ impl<R: Runtime> PeerTestManager<R> {
             candidates: HashMap::new(),
             connected: HashSet::new(),
             external_address: None,
+            force_firewall: firewalled,
             intro_key,
             maintenance_timer: R::timer(MAINTENANCE_INTERVAL),
             pending_remote: HashMap::new(),
@@ -891,6 +900,11 @@ impl<R: Runtime> PeerTestManager<R> {
 
     /// Maintain the state of `PeerTestManager`.
     fn maintain(&mut self) -> Option<PeerTestManagerEvent> {
+        // don't do peer testing if firewall has been force
+        if self.force_firewall {
+            return None;
+        }
+
         // skip peer test since we don't know what our external address is
         let external_address = self.external_address?;
 
@@ -1403,6 +1417,7 @@ mod tests {
                 .await
                 .unwrap(),
             RouterContextBuilder::default().build(),
+            false,
         );
         let (tx, _rx) = channel(16);
         let router_id = RouterId::random();
@@ -1423,6 +1438,7 @@ mod tests {
                 .await
                 .unwrap(),
             RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
         );
         let (tx, _rx) = channel(16);
         manager.add_session(&router_id, tx);
@@ -1442,6 +1458,7 @@ mod tests {
                 .await
                 .unwrap(),
             RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
         );
         let (tx, _rx) = channel(16);
         manager.add_session(&router_id, tx);
@@ -1461,6 +1478,7 @@ mod tests {
                 .await
                 .unwrap(),
             RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
         );
         let (tx, _rx) = channel(16);
         manager.add_session(&router_id, tx);
@@ -1480,6 +1498,7 @@ mod tests {
                 .await
                 .unwrap(),
             RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
         );
         let (tx, _rx) = channel(16);
         manager.add_session(&router_id, tx);
@@ -1500,6 +1519,7 @@ mod tests {
                 .await
                 .unwrap(),
             RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
         );
         let (tx, _rx) = channel(16);
         manager.add_session(&router_id, tx);
@@ -1521,6 +1541,7 @@ mod tests {
                 .await
                 .unwrap(),
             RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
         );
         let (tx, _rx) = channel(16);
         manager.add_session(&router_id, tx);
@@ -1551,6 +1572,7 @@ mod tests {
                 .await
                 .unwrap(),
             RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
         );
         let (tx, rx) = channel(16);
         manager.add_session(&router_id, tx.clone());
@@ -1588,6 +1610,7 @@ mod tests {
                 .await
                 .unwrap(),
             RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
         );
         let (tx, rx) = channel(16);
         manager.add_session(&router_id1, tx.clone());
@@ -1625,6 +1648,7 @@ mod tests {
                 .await
                 .unwrap(),
             RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
         );
         let (tx, rx) = channel(16);
         manager.add_session(&router_id1, tx.clone());
@@ -1662,6 +1686,7 @@ mod tests {
                 .await
                 .unwrap(),
             RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
         );
         let (charlie_tx, charlie_rx) = channel(16);
         manager.add_session(&router_id2, charlie_tx.clone());
@@ -1723,6 +1748,7 @@ mod tests {
                 .await
                 .unwrap(),
             RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
         );
         let manager_tx = manager.tx.clone();
         let (alice_tx, _alice_rx) = channel(16);
@@ -1773,6 +1799,7 @@ mod tests {
                 .await
                 .unwrap(),
             RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
         );
         let manager_tx = manager.tx.clone();
         let (bob_tx, bob_rx) = channel(16);
@@ -1828,6 +1855,7 @@ mod tests {
                 .await
                 .unwrap(),
             RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
         );
         let manager_tx = manager.tx.clone();
         let (bob_tx, bob_rx) = channel(16);
@@ -1914,6 +1942,7 @@ mod tests {
                 .await
                 .unwrap(),
             RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
         );
         let manager_tx = manager.tx.clone();
         let (alice_tx, alice_rx) = channel(16);
@@ -1976,6 +2005,7 @@ mod tests {
                 .await
                 .unwrap(),
             RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
         );
         let manager_tx = manager.tx.clone();
         let (alice_tx, alice_rx) = channel(16);
@@ -2041,6 +2071,7 @@ mod tests {
                 .await
                 .unwrap(),
             RouterContextBuilder::default().build(),
+            false,
         );
 
         match manager.handle_peer_test(
@@ -2062,6 +2093,7 @@ mod tests {
                 .await
                 .unwrap(),
             RouterContextBuilder::default().build(),
+            false,
         );
 
         match manager.handle_peer_test(1337, 1338, vec![0u8; 40], "127.0.0.1:8888".parse().unwrap())
@@ -2079,6 +2111,7 @@ mod tests {
                 .await
                 .unwrap(),
             RouterContextBuilder::default().build(),
+            false,
         );
         let socket = <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
             .await
@@ -2126,6 +2159,7 @@ mod tests {
                 .await
                 .unwrap(),
             RouterContextBuilder::default().build(),
+            false,
         );
         let socket = <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
             .await
@@ -2186,6 +2220,7 @@ mod tests {
                 .await
                 .unwrap(),
             RouterContextBuilder::default().build(),
+            false,
         );
         let mut socket = <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
             .await
@@ -2316,6 +2351,7 @@ mod tests {
             [0xff; 32],
             socket,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
         );
 
         // register bob as an active session
@@ -2489,6 +2525,7 @@ mod tests {
             [0xff; 32],
             socket,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
         );
 
         // register bob as an active session
@@ -2632,6 +2669,7 @@ mod tests {
             [0xff; 32],
             socket,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
         );
 
         // register bob as an active session
@@ -2830,6 +2868,7 @@ mod tests {
             [0xff; 32],
             socket,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
         );
 
         // register bob as an active session
@@ -2999,6 +3038,7 @@ mod tests {
             [0xff; 32],
             socket,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
         );
 
         // register bob as an active session
@@ -3172,6 +3212,7 @@ mod tests {
             [0xff; 32],
             socket,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
         );
 
         // register bob as an active session
@@ -3245,6 +3286,7 @@ mod tests {
                 .await
                 .unwrap(),
             RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
         );
         manager.add_external_address("127.0.0.1:8888".parse().unwrap());
 
@@ -3297,6 +3339,7 @@ mod tests {
                 .await
                 .unwrap(),
             RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
         );
         manager.add_external_address("127.0.0.1:8888".parse().unwrap());
 
@@ -3349,6 +3392,7 @@ mod tests {
                 .await
                 .unwrap(),
             RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
         );
         manager.add_external_address("127.0.0.1:8888".parse().unwrap());
 

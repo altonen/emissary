@@ -20,11 +20,15 @@ use crate::{
     config::Config,
     crypto::{SigningPrivateKey, StaticPrivateKey},
     error::parser::RouterInfoParseError,
-    primitives::{Capabilities, Date, Mapping, RouterAddress, RouterIdentity, Str, LOG_TARGET},
+    primitives::{
+        router_address::TransportKind, Capabilities, Date, Mapping, RouterAddress, RouterIdentity,
+        Str, LOG_TARGET,
+    },
     runtime::Runtime,
 };
 
 use bytes::{BufMut, BytesMut};
+use hashbrown::HashSet;
 use nom::{number::complete::be_u8, Err, IResult};
 
 use alloc::{string::ToString, vec::Vec};
@@ -245,6 +249,18 @@ impl RouterInfo {
         })
     }
 
+    /// Returns `true` if the router is considered reachable over SSU2
+    pub fn is_reachable_ssu2(&self) -> bool {
+        if !self.capabilities.is_reachable() {
+            return false;
+        }
+
+        self.addresses.iter().any(|address| match address {
+            RouterAddress::Ssu2 { socket_address, .. } => socket_address.is_some(),
+            _ => false,
+        })
+    }
+
     /// Is the router usable.
     ///
     /// Any router who hasn't published `G` or `E` congestion caps is considered usable.
@@ -296,6 +312,28 @@ impl RouterInfo {
             RouterAddress::Ssu2 { socket_address, .. } =>
                 socket_address.is_some_and(|address| address.is_ipv4()),
             _ => false,
+        })
+    }
+
+    /// Attempt to select best transport for an outbound connection.
+    ///
+    /// `supported` contains the transports the local router supports.
+    ///
+    /// `None` is returned if no compatible transport is found.
+    pub fn select_transport(&self, supported: &HashSet<TransportKind>) -> Option<&RouterAddress> {
+        self.addresses.iter().fold(None, |selected, transport| {
+            match transport.classify() {
+                None => return selected,
+                Some(kind) =>
+                    if !supported.contains(&kind) {
+                        return selected;
+                    },
+            }
+
+            match selected {
+                Some(selected) if selected.cost() <= transport.cost() => Some(selected),
+                _ => Some(transport),
+            }
         })
     }
 }
@@ -470,9 +508,29 @@ mod tests {
     use super::*;
     use crate::{
         error::parser::RouterIdentityParseError,
+        primitives::RouterId,
         runtime::{mock::MockRuntime, Runtime},
     };
     use std::{str::FromStr, time::Duration};
+
+    // make router info with addresses
+    fn make_router_info(addresses: Vec<RouterAddress>, caps: Option<Capabilities>) -> RouterInfo {
+        let (identity, _sk, _sgk) = RouterIdentity::random();
+
+        RouterInfo {
+            identity,
+            published: Date::new(
+                (MockRuntime::time_since_epoch() - Duration::from_secs(60)).as_millis() as u64,
+            ),
+            addresses,
+            options: Mapping::from_iter([
+                (Str::from("netId"), Str::from("2")),
+                (Str::from("caps"), Str::from("LR")),
+            ]),
+            net_id: 2,
+            capabilities: caps.unwrap_or(Capabilities::parse(&Str::from("LU")).unwrap()),
+        }
+    }
 
     #[test]
     fn parse_router_1() {
@@ -856,5 +914,291 @@ mod tests {
         .serialize(&sgk);
 
         assert!(!RouterInfo::parse::<MockRuntime>(&serialized).unwrap().is_reachable());
+    }
+
+    #[test]
+    fn select_transport() {
+        // no compatible transport (ipv4/ipv6 mismatch)
+        {
+            // router supports ipv4
+            let router_info = make_router_info(
+                vec![
+                    RouterAddress::Ntcp2 {
+                        cost: 8,
+                        options: Mapping::default(),
+                        static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
+                        iv: Some([0xaa; 16]),
+                        socket_address: Some("127.0.0.1:8888".parse().unwrap()),
+                    },
+                    RouterAddress::Ssu2 {
+                        introducers: Vec::new(),
+                        cost: 10,
+                        static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
+                        intro_key: [0xbb; 32],
+                        options: Mapping::default(),
+                        socket_address: Some("127.0.0.1:8889".parse().unwrap()),
+                    },
+                ],
+                None,
+            );
+
+            // we support ipv6
+            assert!(router_info
+                .select_transport(&HashSet::from_iter([
+                    TransportKind::Ntcp2V6,
+                    TransportKind::Ssu2V6
+                ]))
+                .is_none());
+        }
+
+        // no compatible transport (ntcp2/ssu2 mismatch)
+        {
+            // router only supports ssu2
+            let router_info = make_router_info(
+                vec![
+                    RouterAddress::Ssu2 {
+                        introducers: Vec::new(),
+                        cost: 10,
+                        static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
+                        intro_key: [0xbb; 32],
+                        options: Mapping::default(),
+                        socket_address: Some("127.0.0.1:8889".parse().unwrap()),
+                    },
+                    RouterAddress::Ssu2 {
+                        introducers: Vec::new(),
+                        cost: 12,
+                        static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
+                        intro_key: [0xbb; 32],
+                        options: Mapping::default(),
+                        socket_address: Some("127.0.0.1:8889".parse().unwrap()),
+                    },
+                ],
+                None,
+            );
+
+            // we only support ntcp2
+            assert!(router_info
+                .select_transport(&HashSet::from_iter([
+                    TransportKind::Ntcp2V4,
+                    TransportKind::Ntcp2V6
+                ]))
+                .is_none());
+        }
+
+        // ntcp2 reachable/ssu2 reachable
+        {
+            // ntcp2 has lower cost
+            let router_info = make_router_info(
+                vec![
+                    RouterAddress::Ntcp2 {
+                        cost: 8,
+                        options: Mapping::default(),
+                        static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
+                        iv: Some([0xaa; 16]),
+                        socket_address: Some("127.0.0.1:8888".parse().unwrap()),
+                    },
+                    RouterAddress::Ssu2 {
+                        introducers: Vec::new(),
+                        cost: 10,
+                        static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
+                        intro_key: [0xbb; 32],
+                        options: Mapping::default(),
+                        socket_address: Some("127.0.0.1:8889".parse().unwrap()),
+                    },
+                ],
+                None,
+            );
+
+            match router_info
+                .select_transport(&HashSet::from_iter([
+                    TransportKind::Ntcp2V4,
+                    TransportKind::Ssu2V4,
+                ]))
+                .unwrap()
+            {
+                RouterAddress::Ntcp2 {
+                    cost,
+                    iv,
+                    socket_address,
+                    ..
+                } => {
+                    assert_eq!(*cost, 8);
+                    assert_eq!(*iv, Some([0xaa; 16]));
+                    assert_eq!(*socket_address, Some("127.0.0.1:8888".parse().unwrap()));
+                }
+                _ => panic!("expected ntcp2 to be chosen"),
+            }
+        }
+
+        // ntcp2 unreachable/ssu2 reachable
+        {
+            // ntcp2 is not reachable, ssu2 reachable
+            let router_info = make_router_info(
+                vec![
+                    RouterAddress::Ntcp2 {
+                        cost: 14,
+                        options: Mapping::default(),
+                        static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
+                        iv: None,
+                        socket_address: None,
+                    },
+                    RouterAddress::Ssu2 {
+                        introducers: Vec::new(),
+                        cost: 10,
+                        static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
+                        intro_key: [0xbb; 32],
+                        options: Mapping::default(),
+                        socket_address: Some("127.0.0.1:8889".parse().unwrap()),
+                    },
+                ],
+                None,
+            );
+
+            match router_info
+                .select_transport(&HashSet::from_iter([
+                    TransportKind::Ntcp2V4,
+                    TransportKind::Ssu2V4,
+                ]))
+                .unwrap()
+            {
+                RouterAddress::Ssu2 {
+                    cost,
+                    socket_address,
+                    ..
+                } => {
+                    assert_eq!(*cost, 10);
+                    assert_eq!(*socket_address, Some("127.0.0.1:8889".parse().unwrap()));
+                }
+                _ => panic!("expected ssu2 to be chosen"),
+            }
+        }
+
+        // ntcp2 unreachable/ssu2 unreachable (no introducers)
+        {
+            // ntcp2 and ssu2 not reachable
+            let router_info = make_router_info(
+                vec![
+                    RouterAddress::Ntcp2 {
+                        cost: 14,
+                        options: Mapping::default(),
+                        static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
+                        iv: None,
+                        socket_address: None,
+                    },
+                    RouterAddress::Ssu2 {
+                        introducers: Vec::new(),
+                        cost: 10,
+                        static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
+                        intro_key: [0xbb; 32],
+                        options: Mapping::default(),
+                        socket_address: None,
+                    },
+                ],
+                None,
+            );
+
+            assert!(router_info
+                .select_transport(&HashSet::from_iter([
+                    TransportKind::Ntcp2V4,
+                    TransportKind::Ssu2V4,
+                ]))
+                .is_none());
+        }
+
+        // ntcp2 unreachable/ssu2 unreachable (with introducers)
+        {
+            // ntcp2 and ssu2 not reachable
+            let router_info = make_router_info(
+                vec![
+                    RouterAddress::Ntcp2 {
+                        cost: 14,
+                        options: Mapping::default(),
+                        static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
+                        iv: None,
+                        socket_address: None,
+                    },
+                    RouterAddress::Ssu2 {
+                        introducers: vec![(RouterId::random(), 1337)],
+                        cost: 10,
+                        static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
+                        intro_key: [0xbb; 32],
+                        options: Mapping::from_iter([(Str::from("caps"), Str::from("4"))]),
+                        socket_address: None,
+                    },
+                ],
+                None,
+            );
+
+            match router_info
+                .select_transport(&HashSet::from_iter([
+                    TransportKind::Ntcp2V4,
+                    TransportKind::Ssu2V4,
+                ]))
+                .unwrap()
+            {
+                RouterAddress::Ssu2 {
+                    cost,
+                    socket_address,
+                    introducers,
+                    ..
+                } => {
+                    assert_eq!(*cost, 10);
+                    assert_eq!(introducers.len(), 1);
+                    assert_eq!(*socket_address, None);
+                }
+                _ => panic!("expected ssu2 to be chosen"),
+            }
+        }
+    }
+
+    #[test]
+    fn reachable_ssu2() {
+        // reachable ssu2
+        {
+            let router_info = make_router_info(
+                vec![RouterAddress::Ssu2 {
+                    introducers: Vec::new(),
+                    cost: 10,
+                    static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
+                    intro_key: [0xbb; 32],
+                    options: Mapping::default(),
+                    socket_address: Some("127.0.0.1:8889".parse().unwrap()),
+                }],
+                Some(Capabilities::parse(&Str::from("XR")).expect("to succeed")),
+            );
+            assert!(router_info.is_reachable_ssu2());
+        }
+
+        // unreachable ssu2
+        {
+            let router_info = make_router_info(
+                vec![RouterAddress::Ssu2 {
+                    introducers: Vec::new(),
+                    cost: 10,
+                    static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
+                    intro_key: [0xbb; 32],
+                    options: Mapping::default(),
+                    socket_address: None,
+                }],
+                Some(Capabilities::parse(&Str::from("XR")).expect("to succeed")),
+            );
+            assert!(!router_info.is_reachable_ssu2());
+        }
+
+        // address published but caps say `U`
+        {
+            let router_info = make_router_info(
+                vec![RouterAddress::Ssu2 {
+                    introducers: Vec::new(),
+                    cost: 10,
+                    static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
+                    intro_key: [0xbb; 32],
+                    options: Mapping::default(),
+                    socket_address: Some("127.0.0.1:8889".parse().unwrap()),
+                }],
+                Some(Capabilities::parse(&Str::from("XU")).expect("to succeed")),
+            );
+            assert!(!router_info.is_reachable_ssu2());
+        }
     }
 }

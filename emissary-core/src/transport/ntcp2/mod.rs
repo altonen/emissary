@@ -19,7 +19,7 @@
 use crate::{
     config::Ntcp2Config,
     error::{ConnectionError, Error},
-    primitives::{RouterAddress, RouterId, RouterInfo},
+    primitives::{RouterAddress, RouterId, RouterInfo, TransportKind},
     router::context::RouterContext,
     runtime::{
         Counter, Gauge, Histogram, Instant, JoinSet, MetricType, MetricsHandle, Runtime,
@@ -38,14 +38,14 @@ use crate::{
 
 use futures::{Stream, StreamExt};
 use hashbrown::{hash_map::Entry, HashMap};
+use thingbuf::mpsc::Sender;
 
 use alloc::{format, vec::Vec};
 use core::{
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     pin::Pin,
     task::{Context, Poll, Waker},
 };
-use thingbuf::mpsc::Sender;
 
 mod listener;
 mod message;
@@ -72,9 +72,17 @@ pub struct Ntcp2Context<R: Runtime> {
 }
 
 impl<R: Runtime> Ntcp2Context<R> {
-    /// Get the port where [`Ntcp2Listener`] is bound to.
+    /// Get the port of `Ntcp2Listener`.
     pub fn port(&self) -> u16 {
         self.socket_address.port()
+    }
+
+    /// Classify `Ntcp2Listener` into a `TransportKind`.
+    pub fn classify(&self) -> TransportKind {
+        match self.socket_address.ip() {
+            IpAddr::V4(_) => TransportKind::Ntcp2V4,
+            IpAddr::V6(_) => TransportKind::Ntcp2V6,
+        }
     }
 
     /// Get copy of [`Ntcp2Config`].

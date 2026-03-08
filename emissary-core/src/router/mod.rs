@@ -465,7 +465,6 @@ impl<R: Runtime> Router<R> {
             );
 
             self.shutdown_context.shutdown();
-            self.transport_manager.shutdown();
             self.event_manager.shutdown();
         } else {
             tracing::info!(

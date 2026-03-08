@@ -254,6 +254,7 @@ impl<R: Runtime> Ssu2Socket<R> {
         intro_key: [u8; 32],
         transport_tx: Sender<SubsystemEvent>,
         router_ctx: RouterContext<R>,
+        firewalled: bool,
     ) -> Self {
         let state = Sha256::new().update(PROTOCOL_NAME.as_bytes()).finalize();
         let chaining_key = state.clone();
@@ -266,11 +267,16 @@ impl<R: Runtime> Ssu2Socket<R> {
         Self {
             active_sessions: R::join_set(),
             chaining_key: Bytes::from(chaining_key),
-            detector: Detector::new(),
+            detector: Detector::new(firewalled),
             inbound_state: Bytes::from(inbound_state),
             intro_key,
             outbound_state: Bytes::from(outbound_state),
-            peer_test_manager: PeerTestManager::new(intro_key, socket.clone(), router_ctx.clone()),
+            peer_test_manager: PeerTestManager::new(
+                intro_key,
+                socket.clone(),
+                router_ctx.clone(),
+                firewalled,
+            ),
             pending_events: VecDeque::new(),
             pending_outbound: HashMap::new(),
             pending_pkts: VecDeque::new(),
@@ -475,6 +481,19 @@ impl<R: Runtime> Ssu2Socket<R> {
         }
     }
 
+    /// Send relay request to one of the introducers listed in `router_info`.
+    fn send_relay_request(&mut self, router_info: RouterInfo) {
+        let router_id = router_info.identity.id();
+
+        tracing::error!(
+            target: LOG_TARGET,
+            %router_id,
+            "relay dialing not implemented",
+        );
+
+        self.pending_events.push_back(TransportEvent::ConnectionFailure { router_id });
+    }
+
     /// Attempt to establish outbound connection remote router.
     pub fn connect(&mut self, router_info: RouterInfo) {
         // must succeed since `TransportManager` has ensured `router_info` contains
@@ -490,7 +509,7 @@ impl<R: Runtime> Ssu2Socket<R> {
             },
         ) = router_info.ssu2_ipv4()
         else {
-            panic!("introducer support not implemented");
+            return self.send_relay_request(router_info);
         };
 
         let our_router_info = self.router_ctx.router_info();
@@ -1137,6 +1156,7 @@ mod tests {
             [0xaa; 32],
             transport_tx,
             router_ctx,
+            false,
         );
         let udp_socket = <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
             .await

@@ -21,7 +21,7 @@ use crate::{
     error::QueryError,
     events::EventHandle,
     netdb::NetDbHandle,
-    primitives::{Date, RouterAddress, RouterId, RouterInfo, Str},
+    primitives::{Date, RouterAddress, RouterId, RouterInfo, Str, TransportKind},
     router::context::RouterContext,
     runtime::{Counter, Gauge, JoinSet, MetricType, MetricsHandle, Runtime},
     subsystem::SubsystemEvent,
@@ -31,10 +31,10 @@ use crate::{
 
 use bytes::Bytes;
 use futures::{FutureExt, Stream, StreamExt};
-use hashbrown::HashSet;
-use thingbuf::mpsc::{Receiver, Sender};
+use hashbrown::{HashMap, HashSet};
+use thingbuf::mpsc::{errors::TrySendError, Receiver, Sender};
 
-use alloc::{boxed::Box, format, string::ToString, vec::Vec};
+use alloc::{boxed::Box, format, string::ToString, vec, vec::Vec};
 use core::{
     future::Future,
     net::Ipv4Addr,
@@ -343,6 +343,9 @@ pub struct TransportManagerBuilder<R: Runtime> {
     /// SSU2 config.
     ssu2_config: Option<Ssu2Config>,
 
+    /// Supported transports.
+    supported_transports: HashSet<TransportKind>,
+
     /// Are transit tunnels disabled.
     transit_tunnels_disabled: bool,
 
@@ -371,6 +374,7 @@ impl<R: Runtime> TransportManagerBuilder<R> {
             ntcp2_config: None,
             router_ctx,
             ssu2_config: None,
+            supported_transports: HashSet::new(),
             transit_tunnels_disabled: false,
             transports: Vec::with_capacity(2),
             transport_tx,
@@ -379,6 +383,7 @@ impl<R: Runtime> TransportManagerBuilder<R> {
 
     /// Register NTCP2 as an active transport.
     pub fn register_ntcp2(&mut self, context: Ntcp2Context<R>) {
+        self.supported_transports.insert(context.classify());
         self.ntcp2_config = Some(context.config());
         self.transports.push(Box::new(Ntcp2Transport::new(
             context,
@@ -390,6 +395,7 @@ impl<R: Runtime> TransportManagerBuilder<R> {
 
     /// Register SSU2 as an active transport.
     pub fn register_ssu2(&mut self, context: Ssu2Context<R>) {
+        self.supported_transports.insert(context.classify());
         self.ssu2_config = Some(context.config());
         self.transports.push(Box::new(Ssu2Transport::new(
             context,
@@ -419,8 +425,10 @@ impl<R: Runtime> TransportManagerBuilder<R> {
             introducers: Vec::new(),
             local_router_info: self.local_router_info,
             netdb_handle: self.netdb_handle.expect("to exist"),
+            supported_transports: self.supported_transports,
             ntcp2_config: self.ntcp2_config,
-            pending_connections: HashSet::new(),
+            pending_connections: HashMap::new(),
+            pending_introducers: HashMap::new(),
             pending_queries: HashSet::new(),
             pending_query_futures: R::join_set(),
             transport_tx: self.transport_tx.clone(),
@@ -430,12 +438,41 @@ impl<R: Runtime> TransportManagerBuilder<R> {
             // in intervals of [`ROUTER_INFO_REPUBLISH_INTERVAL`]
             router_info_republish_timer: R::timer(Duration::from_secs(10)),
             routers: HashSet::new(),
-            shutting_down: false,
             ssu2_config: self.ssu2_config,
             transit_tunnels_disabled: self.transit_tunnels_disabled,
             transports: self.transports,
         }
     }
+}
+
+/// Object representing the state of a pending connection that requires relay.
+///
+/// Each unreachable SSU2 connection that requires and has published introducers has an
+/// `IntroducerConnection` which tracks the connection state while it's pending. If an introducer
+/// for the router is already connected, the router is dialed immediately, without creating context.
+///
+/// `IntroducerConnection` tracks the overall state of all intrducers and it is destroyed when:
+///
+/// a) connection was established the one of the introducers, allowing the router to be dialed
+/// b) local router failed to dial all of the introducers, making it impossible to ial the router
+struct IntroducerConnection {
+    /// `RouterInfo` of the router that needs relay.
+    router_info: RouterInfo,
+
+    /// Pending connections to introducers.
+    ///
+    /// All introducers are dialed in parallel and whichever of the connections succeeds
+    /// first is selected as the relay.
+    ///
+    /// If all connections fail, the router cannot be dialed and a dial failure is reported.
+    pending_connections: HashSet<RouterId>,
+
+    /// Pending router info queries.
+    ///
+    /// If an introducer's router info is not known, it must queried from NetDb.
+    ///
+    /// If all introducer router info queries fail, dialing the router fails.
+    pending_queries: HashSet<RouterId>,
 }
 
 /// Transport manager.
@@ -454,6 +491,8 @@ pub struct TransportManager<R: Runtime> {
     external_address: Option<Ipv4Addr>,
 
     /// Introducers.
+    ///
+    /// Linear scans are OK since there are only 1-3 introducers.
     introducers: Vec<(RouterId, u32, Duration)>,
 
     /// Local router info.
@@ -466,7 +505,12 @@ pub struct TransportManager<R: Runtime> {
     ntcp2_config: Option<Ntcp2Config>,
 
     /// Pending outbound connections.
-    pending_connections: HashSet<RouterId>,
+    pending_connections: HashMap<RouterId, Vec<RouterId>>,
+
+    /// Pending introducer connections.
+    ///
+    /// Indexed by the ID of the router that needs relay.
+    pending_introducers: HashMap<RouterId, IntroducerConnection>,
 
     /// Pending queries.
     pending_queries: HashSet<RouterId>,
@@ -486,11 +530,11 @@ pub struct TransportManager<R: Runtime> {
     /// Connected routers.
     routers: HashSet<RouterId>,
 
-    /// Is the router shutting down.
-    shutting_down: bool,
-
     /// SSU2 config.
     ssu2_config: Option<Ssu2Config>,
+
+    /// Supported transports.
+    supported_transports: HashSet<TransportKind>,
 
     /// Are transit tunnels disabled.
     transit_tunnels_disabled: bool,
@@ -509,13 +553,6 @@ impl<R: Runtime> TransportManager<R> {
         let metrics = Ntcp2Transport::<R>::metrics(metrics);
 
         Ssu2Transport::<R>::metrics(metrics)
-    }
-
-    /// Mark the router as shutting down.
-    ///
-    /// This causes the next publish router info to have `G` capabilities.
-    pub fn shutdown(&mut self) {
-        self.shutting_down = true;
     }
 
     /// Add external address for the router.
@@ -607,11 +644,73 @@ impl<R: Runtime> TransportManager<R> {
         }
     }
 
+    /// Report dial failure to `SubsystemManager`.
+    ///
+    /// Attempts to send the event in a non-blocking way and if the channel is clogged, informs
+    /// `SubsystemManager` in the background.
+    fn report_dial_failure(&self, router_id: RouterId) {
+        match self.transport_tx.try_send(SubsystemEvent::ConnectionFailure { router_id }) {
+            Ok(()) => {}
+            Err(TrySendError::Full(event)) => {
+                let transport_tx = self.transport_tx.clone();
+
+                R::spawn(async move {
+                    let _ = transport_tx.send(event).await;
+                });
+            }
+            Err(error) => tracing::error!(
+                target: LOG_TARGET,
+                ?error,
+                "failed to inform subsystem manager of a closed connection",
+            ),
+        }
+    }
+
+    /// Send `RouterInfo` query to NetDb for `router_id`.
+    ///
+    /// `clients` contain the list routers that are interested in the result of the query.
+    fn send_router_info_query(&mut self, router_id: RouterId, clients: Vec<RouterId>) {
+        match self.netdb_handle.try_query_router_info(router_id.clone()) {
+            Err(error) => tracing::warn!(
+                target: LOG_TARGET,
+                %router_id,
+                ?error,
+                "failed to send router info query",
+            ),
+            Ok(rx) => {
+                self.pending_connections.insert(router_id.clone(), clients);
+                self.pending_queries.insert(router_id.clone());
+                self.pending_query_futures.push(async move {
+                    match rx.await {
+                        // `Err(_)` indicates that `NetDb` didn't finish the query and
+                        // instead dropped the channel which shouldn't happen unless there
+                        // is a bug in router info query logic
+                        Err(error) => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                %router_id,
+                                ?error,
+                                "netdb didn't properly finish the router info lookup",
+                            );
+
+                            (router_id, Err(QueryError::Timeout))
+                        }
+                        Ok(Err(error)) => (router_id, Err(error)),
+                        Ok(Ok(lease_set)) => (router_id, Ok(lease_set)),
+                    }
+                });
+            }
+        }
+    }
+
     /// Attempt to dial `router_id`.
     ///
     /// If `router_id` is not found in local storage, send [`RouterInfo`] query for `router_id` to
     /// [`NetDb`] and if the [`RouterInfo`] is found, attempt to dial it.
-    fn on_dial_router(&mut self, router_id: RouterId) {
+    ///
+    /// `clients` are IDs of the routers that are interested in knowing about the result of this
+    /// connection attempt.
+    fn on_dial_router(&mut self, router_id: RouterId, clients: Vec<RouterId>) {
         if &router_id == self.router_ctx.router_id() {
             tracing::error!(target: LOG_TARGET, "tried to dial self");
             debug_assert!(false);
@@ -642,7 +741,7 @@ impl<R: Runtime> TransportManager<R> {
                 // still pending
                 //
                 // ensure that the router is not being dialed before dialing them
-                if !self.pending_connections.insert(router_id.clone()) {
+                if self.pending_connections.contains_key(&router_id) {
                     tracing::debug!(
                         target: LOG_TARGET,
                         %router_id,
@@ -651,41 +750,184 @@ impl<R: Runtime> TransportManager<R> {
                     return;
                 }
 
-                // TODO: ssu2 support
-                if self.ntcp2_config.is_some() && !router_info.is_reachable_ntcp2() {
+                let Some(transport) = router_info.select_transport(&self.supported_transports)
+                else {
                     tracing::debug!(
                         target: LOG_TARGET,
                         %router_id,
                         caps = %router_info.capabilities,
-                        "cannot dial router, ntcp2 address is not reachable",
+                        "cannot dial router, no reachable transport",
                     );
 
-                    self.pending_connections.remove(&router_id);
                     self.router_ctx.metrics_handle().counter(NUM_DIAL_FAILURES).increment(1);
-
-                    // report connection failure to subsystems
-                    let transport_tx = self.transport_tx.clone();
-
-                    R::spawn(async move {
-                        // subsystem manager never dies
-                        transport_tx
-                            .send(SubsystemEvent::ConnectionFailure { router_id })
-                            .await
-                            .expect("channel to stay open");
-                    });
-
-                    return;
-                }
+                    return self.report_dial_failure(router_id);
+                };
 
                 tracing::trace!(
                     target: LOG_TARGET,
                     %router_id,
+                    %transport,
                     "start dialing router",
                 );
 
-                // TODO: compare transport costs
-                self.transports[0].connect(router_info);
-                self.router_ctx.metrics_handle().counter(NUM_INITIATED).increment(1);
+                // if not ssu2, dial the router over ntcp2
+                let RouterAddress::Ssu2 {
+                    introducers,
+                    socket_address,
+                    ..
+                } = transport
+                else {
+                    self.router_ctx.metrics_handle().counter(NUM_INITIATED).increment(1);
+                    self.pending_connections.insert(router_id.clone(), clients);
+                    self.transports[0].connect(router_info);
+                    return;
+                };
+
+                // ssu2 is always the last transport
+                //
+                // if only ssu2 is active, index is 0
+                // if both ntcp2 and ssu2 are active, index is 1
+                let ssu2_index = self.transports.len() - 1;
+
+                // if a socket address has been published, dial the router directly
+                if socket_address.is_some() {
+                    self.router_ctx.metrics_handle().counter(NUM_INITIATED).increment(1);
+                    self.pending_connections.insert(router_id.clone(), clients);
+                    self.transports[ssu2_index].connect(router_info);
+                    return;
+                }
+
+                // if we're connected to one of the introducers, we can dial right away
+                if let Some((introducer, relay_tag)) =
+                    introducers.iter().find(|(router_id, _)| self.routers.contains(router_id))
+                {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        %router_id,
+                        %introducer,
+                        ?relay_tag,
+                        "already connected to an introducer, starting relayed connection",
+                    );
+
+                    self.router_ctx.metrics_handle().counter(NUM_INITIATED).increment(1);
+                    self.pending_connections.insert(router_id.clone(), clients);
+                    self.transports[ssu2_index].connect(router_info);
+                    return;
+                }
+
+                // start dialing introducers in parallel
+                let mut pending_connections = HashSet::new();
+                let mut pending_queries = HashSet::new();
+
+                for (introducer, relay_tag) in introducers {
+                    // check if a connection to one of the introducers is already pending
+                    //
+                    // if so, store `router_id` into the pending context and when the dial
+                    // resolves, either report dial failure (cannot connect to introducer) or
+                    // start "dialing" the target router by contacting the introducer
+                    if self.pending_connections.contains_key(introducer) {
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            %router_id,
+                            %introducer,
+                            ?relay_tag,
+                            "connection to introducer pending",
+                        );
+
+                        // entry must exist since it was just checked above
+                        self.pending_connections
+                            .get_mut(introducer)
+                            .expect("to exist")
+                            .push(router_id.clone());
+                        pending_connections.insert(introducer.clone());
+
+                        continue;
+                    }
+
+                    // check if the introducer's router info is available and if so, start dialing
+                    {
+                        let reader = self.router_ctx.profile_storage().reader();
+                        match reader.router_info(introducer) {
+                            None => {
+                                // introducer router info not found, start nedb query
+                            }
+                            Some(introducer_router_info) => {
+                                if !introducer_router_info.is_reachable_ssu2() {
+                                    tracing::warn!(
+                                        target: LOG_TARGET,
+                                        %router_id,
+                                        %introducer,
+                                        ?relay_tag,
+                                        "introducer is not reachable over ssu2",
+                                    );
+                                    continue;
+                                }
+
+                                tracing::trace!(
+                                    target: LOG_TARGET,
+                                    %router_id,
+                                    %introducer,
+                                    ?relay_tag,
+                                    "dialing introducer",
+                                );
+
+                                // dial introducer directly
+                                //
+                                // at this point it has already been verified that there is neither
+                                // active or pending connection to the
+                                // introducer and that they're reachable over
+                                // ssu2
+                                pending_connections.insert(introducer.clone());
+                                self.router_ctx
+                                    .metrics_handle()
+                                    .counter(NUM_INITIATED)
+                                    .increment(1);
+                                self.pending_connections
+                                    .insert(introducer.clone(), vec![router_id.clone()]);
+                                self.transports[ssu2_index].connect(introducer_router_info.clone());
+
+                                continue;
+                            }
+                        }
+                    }
+
+                    // the introducer is not connected, doens't have a pending connection and
+                    // doesn't exist in router storage
+                    //
+                    // start a netdb lookup for their router info
+                    if self.pending_queries.contains(introducer) {
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            %router_id,
+                            %introducer,
+                            ?relay_tag,
+                            "router info query pending for introducer",
+                        );
+
+                        pending_queries.insert(introducer.clone());
+                    } else {
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            %router_id,
+                            %introducer,
+                            ?relay_tag,
+                            "start router info query for introducer",
+                        );
+
+                        pending_queries.insert(introducer.clone());
+                        self.send_router_info_query(introducer.clone(), vec![router_id.clone()]);
+                    }
+                }
+
+                self.pending_connections.insert(router_id.clone(), clients);
+                self.pending_introducers.insert(
+                    router_id.clone(),
+                    IntroducerConnection {
+                        router_info,
+                        pending_connections,
+                        pending_queries,
+                    },
+                );
             }
             None => {
                 tracing::debug!(
@@ -703,37 +945,7 @@ impl<R: Runtime> TransportManager<R> {
                     return;
                 }
 
-                match self.netdb_handle.try_query_router_info(router_id.clone()) {
-                    Err(error) => tracing::warn!(
-                        target: LOG_TARGET,
-                        %router_id,
-                        ?error,
-                        "failed to send router info query",
-                    ),
-                    Ok(rx) => {
-                        self.pending_connections.insert(router_id.clone());
-                        self.pending_queries.insert(router_id.clone());
-                        self.pending_query_futures.push(async move {
-                            match rx.await {
-                                // `Err(_)` indicates that `NetDb` didn't finish the query and
-                                // instead dropped the channel which shouldn't happen unless there
-                                // is a bug in router info query logic
-                                Err(error) => {
-                                    tracing::debug!(
-                                        target: LOG_TARGET,
-                                        %router_id,
-                                        ?error,
-                                        "netdb didn't properly finish the router info lookup",
-                                    );
-
-                                    (router_id, Err(QueryError::Timeout))
-                                }
-                                Ok(Err(error)) => (router_id, Err(error)),
-                                Ok(Ok(lease_set)) => (router_id, Ok(lease_set)),
-                            }
-                        });
-                    }
-                }
+                self.send_router_info_query(router_id, Vec::new());
             }
         }
     }
@@ -792,7 +1004,7 @@ impl<R: Runtime> Future for TransportManager<R> {
                         direction,
                         router_id,
                     })) => match direction {
-                        Direction::Inbound if this.pending_connections.contains(&router_id) => {
+                        Direction::Inbound if this.pending_connections.contains_key(&router_id) => {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 %router_id,
@@ -802,7 +1014,9 @@ impl<R: Runtime> Future for TransportManager<R> {
                             this.router_ctx.metrics_handle().counter(NUM_REJECTED).increment(1);
                             this.transports[index].reject(&router_id);
                         }
-                        Direction::Outbound if !this.pending_connections.contains(&router_id) => {
+                        Direction::Outbound
+                            if !this.pending_connections.contains_key(&router_id) =>
+                        {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 %router_id,
@@ -822,7 +1036,47 @@ impl<R: Runtime> Future for TransportManager<R> {
                                 );
 
                                 this.transports[index].accept(&router_id);
-                                this.pending_connections.remove(&router_id);
+
+                                // if this was a successful connection to an introducer with active
+                                // client(s), start dialing each of the clients
+                                //
+                                // the routers can be dialed directly (without calling
+                                // `on_dial_request()`) as they've already been validated and were
+                                // only awaiting for an introducer connection
+                                //
+                                // `IntroducerConnection` may not exist if some other introducer
+                                // connected first and thus removed the connection
+                                if let Some(routers) = this.pending_connections.remove(&router_id) {
+                                    let ssu2_index = this.transports.len() - 1;
+
+                                    for client_router_id in routers {
+                                        let Some(IntroducerConnection { router_info, .. }) =
+                                            this.pending_introducers.remove(&client_router_id)
+                                        else {
+                                            tracing::trace!(
+                                                target: LOG_TARGET,
+                                                router_id = %client_router_id,
+                                                introducer = %router_id,
+                                                "context for client doesn't exist"
+                                            );
+                                            continue;
+                                        };
+
+                                        tracing::trace!(
+                                            target: LOG_TARGET,
+                                            router_id = %client_router_id,
+                                            introducer = %router_id,
+                                            "introducer connected, dialing router",
+                                        );
+
+                                        this.router_ctx
+                                            .metrics_handle()
+                                            .counter(NUM_INITIATED)
+                                            .increment(1);
+                                        this.transports[ssu2_index].connect(router_info);
+                                    }
+                                }
+
                                 this.router_ctx
                                     .metrics_handle()
                                     .gauge(NUM_CONNECTIONS)
@@ -876,7 +1130,58 @@ impl<R: Runtime> Future for TransportManager<R> {
 
                         this.router_ctx.metrics_handle().counter(NUM_DIAL_FAILURES).increment(1);
                         this.router_ctx.profile_storage().dial_failed(&router_id);
-                        this.pending_connections.remove(&router_id);
+
+                        // if the router for which the dial failed was also a pending introducer,
+                        // remove the introducer from each client's `IntroducerConnection` and
+                        // if this was the last introducer (all others failed), send dial failure
+                        // for the client router
+                        if let Some(routers) = this.pending_connections.remove(&router_id) {
+                            for client_router_id in routers {
+                                let Some(IntroducerConnection {
+                                    pending_connections,
+                                    pending_queries,
+                                    ..
+                                }) = this.pending_introducers.get_mut(&client_router_id)
+                                else {
+                                    tracing::trace!(
+                                        target: LOG_TARGET,
+                                        router_id = %client_router_id,
+                                        introducer = %router_id,
+                                        "context for client doesn't exist"
+                                    );
+                                    continue;
+                                };
+
+                                tracing::trace!(
+                                    target: LOG_TARGET,
+                                    router_id = %client_router_id,
+                                    introducer = %router_id,
+                                    "failed to dial introducer",
+                                );
+                                pending_connections.remove(&router_id);
+
+                                if pending_connections.is_empty() && pending_queries.is_empty() {
+                                    tracing::debug!(
+                                        target: LOG_TARGET,
+                                        router_id = %client_router_id,
+                                        introducer = %router_id,
+                                        "failed to dial all introducers, unable to dial router",
+                                    );
+
+                                    this.router_ctx
+                                        .metrics_handle()
+                                        .counter(NUM_DIAL_FAILURES)
+                                        .increment(1);
+                                    this.router_ctx
+                                        .metrics_handle()
+                                        .counter(NUM_INTRODUCER_DIAL_FAILURES)
+                                        .increment(1);
+                                    this.pending_connections.remove(&client_router_id);
+                                    this.pending_introducers.remove(&client_router_id);
+                                    this.report_dial_failure(client_router_id);
+                                }
+                            }
+                        }
                     }
                     Poll::Ready(Some(TransportEvent::FirewallStatus { status })) =>
                         this.on_firewall_status(status),
@@ -905,15 +1210,37 @@ impl<R: Runtime> Future for TransportManager<R> {
                         %router_id,
                         "router info query succeeded, dial pending router",
                     );
-
                     this.pending_queries.remove(&router_id);
-                    this.pending_connections.remove(&router_id);
+
+                    let clients = match this.pending_connections.remove(&router_id) {
+                        None => {
+                            tracing::error!(
+                                target: LOG_TARGET,
+                                %router_id,
+                                "router does not have dial context",
+                            );
+                            debug_assert!(false);
+                            Vec::new()
+                        }
+                        Some(clients) => clients,
+                    };
+
+                    // remove pending query from all client connections
+                    for client_router_id in &clients {
+                        if let Some(IntroducerConnection {
+                            pending_queries, ..
+                        }) = this.pending_introducers.get_mut(client_router_id)
+                        {
+                            pending_queries.remove(&router_id);
+                        };
+                    }
+
                     this.router_ctx
                         .metrics_handle()
                         .counter(NUM_NETDB_QUERY_SUCCESSES)
                         .increment(1);
 
-                    this.on_dial_router(router_id);
+                    this.on_dial_router(router_id, clients);
                 }
                 Poll::Ready(Some((router_id, Err(error)))) => {
                     tracing::debug!(
@@ -922,21 +1249,63 @@ impl<R: Runtime> Future for TransportManager<R> {
                         ?error,
                         "router info query failed",
                     );
-                    this.pending_connections.remove(&router_id);
-                    this.pending_queries.remove(&router_id);
+
                     this.router_ctx.metrics_handle().gauge(NUM_DIAL_FAILURES).increment(1);
                     this.router_ctx.metrics_handle().counter(NUM_NETDB_QUERY_FAILURES).increment(1);
+                    this.pending_queries.remove(&router_id);
 
-                    // report connection failure to subsystems
-                    let transport_tx = this.transport_tx.clone();
+                    // remove the pending query for the introducer from all client connections
+                    //
+                    // if this was the last pending query, report dial failures for the client
+                    if let Some(routers) = this.pending_connections.remove(&router_id) {
+                        for client_router_id in routers {
+                            let Some(IntroducerConnection {
+                                pending_connections,
+                                pending_queries,
+                                ..
+                            }) = this.pending_introducers.get_mut(&client_router_id)
+                            else {
+                                tracing::trace!(
+                                    target: LOG_TARGET,
+                                    router_id = %client_router_id,
+                                    introducer = %router_id,
+                                    "context for client doesn't exist"
+                                );
+                                continue;
+                            };
 
-                    R::spawn(async move {
-                        // subsystem manager never dies
-                        transport_tx
-                            .send(SubsystemEvent::ConnectionFailure { router_id })
-                            .await
-                            .expect("channel to stay open");
-                    });
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                router_id = %client_router_id,
+                                introducer = %router_id,
+                                "router info query failed for introducer",
+                            );
+                            pending_queries.remove(&router_id);
+
+                            if pending_connections.is_empty() && pending_queries.is_empty() {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    router_id = %client_router_id,
+                                    introducer = %router_id,
+                                    "failed to dial all introducers, unable to dial router",
+                                );
+
+                                this.router_ctx
+                                    .metrics_handle()
+                                    .counter(NUM_DIAL_FAILURES)
+                                    .increment(1);
+                                this.router_ctx
+                                    .metrics_handle()
+                                    .counter(NUM_INTRODUCER_DIAL_FAILURES)
+                                    .increment(1);
+                                this.pending_connections.remove(&client_router_id);
+                                this.pending_introducers.remove(&client_router_id);
+                                this.report_dial_failure(client_router_id);
+                            }
+                        }
+                    }
+
+                    this.report_dial_failure(router_id);
                 }
             }
         }
@@ -945,7 +1314,7 @@ impl<R: Runtime> Future for TransportManager<R> {
             match this.dial_rx.poll_recv(cx) {
                 Poll::Pending => break,
                 Poll::Ready(None) => return Poll::Ready(()),
-                Poll::Ready(Some(router_id)) => this.on_dial_router(router_id),
+                Poll::Ready(Some(router_id)) => this.on_dial_router(router_id, Vec::new()),
             }
         }
 
@@ -953,11 +1322,10 @@ impl<R: Runtime> Future for TransportManager<R> {
             // reset publish time and serialize our new router info
             this.local_router_info.published = Date::new(R::time_since_epoch().as_millis() as u64);
 
-            // publish `G`, i.e., rejecting all tunnels if transit tunnels have been disabled
+            // publish `G`, i.e., rejecting all tunnels, if transit tunnels have been disabled
             if this.transit_tunnels_disabled {
                 tracing::trace!(
                     target: LOG_TARGET,
-                    shutting_down = ?this.shutting_down,
                     transit_tunnels_disabled = ?this.transit_tunnels_disabled,
                     "publishing router info with `G`",
                 );
@@ -1040,6 +1408,7 @@ mod tests {
         router::context::builder::RouterContextBuilder,
         runtime::mock::MockRuntime,
         subsystem::OutboundMessage,
+        timeout,
     };
     use std::collections::VecDeque;
     use thingbuf::mpsc::channel;
@@ -1625,6 +1994,7 @@ mod tests {
         let (event_tx, event_rx) = mpsc::channel(64);
 
         manager.transports.push(Box::new(MockTransport { event_rx, tx }));
+        manager.supported_transports.insert(TransportKind::Ntcp2V4);
         tokio::spawn(manager);
 
         dial_tx.send(router_id.clone()).await.unwrap();
@@ -2419,7 +2789,7 @@ mod tests {
 
         // verify that router doesn't exist in either connected or pending
         assert!(!manager.routers.contains(&remote_router_id));
-        assert!(!manager.pending_connections.contains(&remote_router_id));
+        assert!(!manager.pending_connections.contains_key(&remote_router_id));
 
         futures::future::poll_fn(|cx| {
             let _ = manager.poll_unpin(cx);
@@ -2429,7 +2799,7 @@ mod tests {
 
         // verify that `TransportManager` now has the router as a connected peer
         assert!(manager.routers.contains(&remote_router_id));
-        assert!(!manager.pending_connections.contains(&remote_router_id));
+        assert!(!manager.pending_connections.contains_key(&remote_router_id));
         assert!(netdb_rx.try_recv().is_err());
 
         // verify the inbound connection is accepted
@@ -2623,5 +2993,2517 @@ mod tests {
             }
             _ => panic!("no ssu2 address available"),
         }
+    }
+
+    #[derive(Default)]
+    struct TestContextBuilder {
+        ssu2: Option<Box<dyn Transport<Item = TransportEvent>>>,
+        ntcp2: Option<Box<dyn Transport<Item = TransportEvent>>>,
+        routers: Vec<RouterInfo>,
+    }
+
+    impl TestContextBuilder {
+        fn with_ssu2(mut self, ssu2: Box<dyn Transport<Item = TransportEvent>>) -> Self {
+            self.ssu2 = Some(ssu2);
+            self
+        }
+
+        fn with_ntcp2(mut self, ntcp2: Box<dyn Transport<Item = TransportEvent>>) -> Self {
+            self.ntcp2 = Some(ntcp2);
+            self
+        }
+
+        fn with_router(mut self, router_info: RouterInfo) -> Self {
+            self.routers.push(router_info);
+            self
+        }
+
+        fn build(
+            self,
+        ) -> (
+            TransportManager<MockRuntime>,
+            Receiver<NetDbAction, NetDbActionRecycle>,
+            Sender<RouterId>,
+            Receiver<SubsystemEvent>,
+        ) {
+            let mut builder = RouterInfoBuilder::default();
+
+            if self.ssu2.is_some() {
+                builder = builder.with_ssu2(Ssu2Config {
+                    port: 8888,
+                    host: None,
+                    publish: false,
+                    static_key: [0x33; 32],
+                    intro_key: [0x34; 32],
+                });
+            }
+
+            if self.ntcp2.is_some() {
+                builder = builder.with_ntcp2(Ntcp2Config {
+                    port: 8889,
+                    host: None,
+                    publish: false,
+                    key: [0xaa; 32],
+                    iv: [0xbb; 16],
+                });
+            }
+            let (router_info, static_key, signing_key) = builder.build();
+
+            let profile_storage = if self.routers.is_empty() {
+                ProfileStorage::new(&[], &[])
+            } else {
+                let storage = ProfileStorage::new(&[], &[]);
+
+                for router in self.routers {
+                    storage.add_router(router);
+                }
+
+                storage
+            };
+
+            let (handle, netdb_rx) = NetDbHandle::create();
+            let ctx = RouterContextBuilder::default()
+                .with_profile_storage(profile_storage)
+                .with_router_info(router_info.clone(), static_key, signing_key)
+                .build();
+
+            let (dial_tx, dial_rx) = channel(100);
+            let (transport_tx, transport_rx) = channel(100);
+            let mut builder = TransportManagerBuilder::<MockRuntime>::new(
+                ctx,
+                router_info,
+                true,
+                dial_rx,
+                transport_tx,
+            );
+            builder.register_netdb_handle(handle);
+
+            let mut manager = builder.build();
+
+            if let Some(ntcp2) = self.ntcp2 {
+                manager.transports.push(ntcp2);
+                manager.supported_transports.insert(TransportKind::Ntcp2V4);
+            }
+
+            if let Some(ssu2) = self.ssu2 {
+                manager.transports.push(ssu2);
+                manager.supported_transports.insert(TransportKind::Ssu2V4);
+            }
+
+            (manager, netdb_rx, dial_tx, transport_rx)
+        }
+    }
+
+    #[tokio::test]
+    async fn dial_ntcp2() {
+        pub struct MockTransport {
+            tx: tokio::sync::mpsc::Sender<RouterId>,
+        }
+
+        impl Transport for MockTransport {
+            fn connect(&mut self, router_info: RouterInfo) {
+                self.tx.try_send(router_info.identity.id()).unwrap();
+            }
+            fn accept(&mut self, _: &RouterId) {}
+            fn reject(&mut self, _: &RouterId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+
+            fn poll_next(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+                Poll::Pending
+            }
+        }
+
+        let (router_info, ..) = RouterInfoBuilder::default()
+            .with_ntcp2(Ntcp2Config {
+                port: 9999,
+                host: Some("127.0.0.1".parse().unwrap()),
+                publish: true,
+                key: [0x11; 32],
+                iv: [0x22; 16],
+            })
+            .build();
+        let router_id = router_info.identity.id();
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let (manager, _netdb_rx, dial_tx, _subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ntcp2(Box::new(MockTransport { tx }))
+            .build();
+        tokio::spawn(manager);
+
+        dial_tx.send(router_id.clone()).await.unwrap();
+
+        assert_eq!(timeout!(rx.recv()).await.unwrap().unwrap(), router_id);
+    }
+
+    // attempt to dial router over ntcp2 but transport not enabled
+    #[tokio::test]
+    async fn dial_ntcp2_not_available() {
+        pub struct MockTransport {
+            tx: tokio::sync::mpsc::Sender<RouterId>,
+        }
+
+        impl Transport for MockTransport {
+            fn connect(&mut self, router_info: RouterInfo) {
+                self.tx.try_send(router_info.identity.id()).unwrap();
+            }
+            fn accept(&mut self, _: &RouterId) {}
+            fn reject(&mut self, _: &RouterId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+
+            fn poll_next(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+                Poll::Pending
+            }
+        }
+
+        let (router_info, ..) = RouterInfoBuilder::default()
+            .with_ntcp2(Ntcp2Config {
+                port: 9999,
+                host: Some("127.0.0.1".parse().unwrap()),
+                publish: true,
+                key: [0x11; 32],
+                iv: [0x22; 16],
+            })
+            .build();
+        let router_id = router_info.identity.id();
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let (manager, _netdb_rx, dial_tx, subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ssu2(Box::new(MockTransport { tx }))
+            .build();
+        tokio::spawn(manager);
+
+        dial_tx.send(router_id.clone()).await.unwrap();
+
+        match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
+            SubsystemEvent::ConnectionFailure { router_id: remote } =>
+                assert_eq!(remote, router_id),
+            _ => panic!("invalid event"),
+        }
+
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn dial_ssu2() {
+        pub struct MockTransport {
+            tx: tokio::sync::mpsc::Sender<RouterId>,
+        }
+
+        impl Transport for MockTransport {
+            fn connect(&mut self, router_info: RouterInfo) {
+                self.tx.try_send(router_info.identity.id()).unwrap();
+            }
+            fn accept(&mut self, _: &RouterId) {}
+            fn reject(&mut self, _: &RouterId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+
+            fn poll_next(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+                Poll::Pending
+            }
+        }
+
+        let (router_info, ..) = RouterInfoBuilder::default()
+            .with_ssu2(Ssu2Config {
+                port: 9999,
+                host: Some("127.0.0.1".parse().unwrap()),
+                publish: true,
+                static_key: [0x11; 32],
+                intro_key: [0x22; 32],
+            })
+            .build();
+        let router_id = router_info.identity.id();
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let (manager, _netdb_rx, dial_tx, _subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ssu2(Box::new(MockTransport { tx }))
+            .build();
+        tokio::spawn(manager);
+
+        dial_tx.send(router_id.clone()).await.unwrap();
+
+        assert_eq!(timeout!(rx.recv()).await.unwrap().unwrap(), router_id);
+    }
+
+    // attempt to dial router over ssu2 but transport not enabled
+    #[tokio::test]
+    async fn dial_ssu2_not_available() {
+        pub struct MockTransport {
+            tx: tokio::sync::mpsc::Sender<RouterId>,
+        }
+
+        impl Transport for MockTransport {
+            fn connect(&mut self, router_info: RouterInfo) {
+                self.tx.try_send(router_info.identity.id()).unwrap();
+            }
+            fn accept(&mut self, _: &RouterId) {}
+            fn reject(&mut self, _: &RouterId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+
+            fn poll_next(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+                Poll::Pending
+            }
+        }
+
+        let (router_info, ..) = RouterInfoBuilder::default()
+            .with_ssu2(Ssu2Config {
+                port: 9999,
+                host: Some("127.0.0.1".parse().unwrap()),
+                publish: true,
+                static_key: [0x11; 32],
+                intro_key: [0x22; 32],
+            })
+            .build();
+        let router_id = router_info.identity.id();
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let (manager, _netdb_rx, dial_tx, subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ntcp2(Box::new(MockTransport { tx }))
+            .build();
+        tokio::spawn(manager);
+
+        dial_tx.send(router_id.clone()).await.unwrap();
+
+        match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
+            SubsystemEvent::ConnectionFailure { router_id: remote } =>
+                assert_eq!(remote, router_id),
+            _ => panic!("invalid event"),
+        }
+
+        assert!(rx.try_recv().is_err());
+    }
+
+    // attempt to dial router which doens't have a published address
+    //
+    // verify that since the router's introducer is already connected,
+    // the router is also dialed immediately
+    #[tokio::test]
+    async fn dial_ssu2_connected_introducer() {
+        pub struct MockTransport {
+            tx: tokio::sync::mpsc::Sender<RouterId>,
+        }
+
+        impl Transport for MockTransport {
+            fn connect(&mut self, router_info: RouterInfo) {
+                self.tx.try_send(router_info.identity.id()).unwrap();
+            }
+            fn accept(&mut self, _: &RouterId) {}
+            fn reject(&mut self, _: &RouterId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+
+            fn poll_next(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+                Poll::Pending
+            }
+        }
+
+        let (introducer, introducer_router_id) = {
+            let (introducer, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 9999,
+                    host: Some("127.0.0.1".parse().unwrap()),
+                    publish: true,
+                    static_key: [0x11; 32],
+                    intro_key: [0x22; 32],
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(introducer.serialize(&sigkey)).unwrap(),
+                introducer.identity.id(),
+            )
+        };
+
+        let (mut router_info, router_id) = {
+            let (router_info, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 10000,
+                    host: None,
+                    publish: false,
+                    static_key: [0x33; 32],
+                    intro_key: [0x44; 32],
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(router_info.serialize(&sigkey)).unwrap(),
+                router_info.identity.id(),
+            )
+        };
+
+        // add introducer for `router_info`
+        match router_info.addresses.get_mut(0).unwrap() {
+            RouterAddress::Ssu2 { introducers, .. } => {
+                introducers.push((introducer_router_id.clone(), 1337));
+            }
+            _ => panic!("expected ssu2"),
+        }
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let (mut manager, _netdb_rx, dial_tx, _subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_router(introducer)
+            .with_ssu2(Box::new(MockTransport { tx }))
+            .build();
+
+        // mark introducer as connected router
+        manager.routers.insert(introducer_router_id);
+        tokio::spawn(manager);
+
+        dial_tx.send(router_id.clone()).await.unwrap();
+
+        assert_eq!(timeout!(rx.recv()).await.unwrap().unwrap(), router_id);
+    }
+
+    // introducer is already being dialed and then the dial fails
+    //
+    // report that a dial failure is also reported for the router that needed relay
+    #[tokio::test]
+    async fn dial_ssu2_introducer_pending_then_fails() {
+        pub struct MockTransport {
+            rx: tokio::sync::mpsc::Receiver<RouterId>,
+        }
+
+        impl Transport for MockTransport {
+            fn connect(&mut self, _: RouterInfo) {}
+            fn accept(&mut self, _: &RouterId) {}
+            fn reject(&mut self, _: &RouterId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+
+            fn poll_next(
+                mut self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+            ) -> Poll<Option<Self::Item>> {
+                let router_id = futures::ready!(self.rx.poll_recv(cx)).unwrap();
+
+                Poll::Ready(Some(TransportEvent::ConnectionFailure { router_id }))
+            }
+        }
+
+        let (introducer, introducer_router_id) = {
+            let (introducer, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 9999,
+                    host: Some("127.0.0.1".parse().unwrap()),
+                    publish: true,
+                    static_key: [0x11; 32],
+                    intro_key: [0x22; 32],
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(introducer.serialize(&sigkey)).unwrap(),
+                introducer.identity.id(),
+            )
+        };
+
+        let (mut router_info, router_id) = {
+            let (router_info, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 10000,
+                    host: None,
+                    publish: false,
+                    static_key: [0x33; 32],
+                    intro_key: [0x44; 32],
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(router_info.serialize(&sigkey)).unwrap(),
+                router_info.identity.id(),
+            )
+        };
+
+        // add introducer for `router_info`
+        match router_info.addresses.get_mut(0).unwrap() {
+            RouterAddress::Ssu2 { introducers, .. } => {
+                introducers.push((introducer_router_id.clone(), 1337));
+            }
+            _ => panic!("expected ssu2"),
+        }
+
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        let (mut manager, _netdb_rx, dial_tx, subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_router(introducer)
+            .with_ssu2(Box::new(MockTransport { rx }))
+            .build();
+
+        // mark introducer as pending
+        manager.pending_connections.insert(introducer_router_id.clone(), Vec::new());
+
+        // send dial request for router that needs relay
+        dial_tx.send(router_id.clone()).await.unwrap();
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify that router is tracked in introducer's pending context
+        //
+        // also verify the router has a pending connection
+        assert!(manager
+            .pending_connections
+            .get(&introducer_router_id)
+            .unwrap()
+            .iter()
+            .any(|client| client == &router_id));
+        assert!(manager.pending_connections.contains_key(&router_id));
+
+        // send dial failure for introducer
+        tx.send(introducer_router_id.clone()).await.unwrap();
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify that both the introducer and the router are no longer considered pending
+        assert!(!manager.pending_connections.contains_key(&introducer_router_id));
+        assert!(!manager.pending_connections.contains_key(&router_id));
+        assert!(!manager.routers.contains(&introducer_router_id));
+        assert!(!manager.routers.contains(&router_id));
+
+        // verify that dial failure is reported to subsystem manager for `router_id`
+        //
+        // dial failure for the introducer is reported by the transport (omitted for
+        // `MockTransport`) so the channel only contains an event for the client
+        match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
+            SubsystemEvent::ConnectionFailure { router_id: remote } =>
+                assert_eq!(remote, router_id),
+            _ => panic!("invalid event"),
+        }
+        assert!(subsys_rx.try_recv().is_err());
+    }
+
+    // introducer is already being dialed and then the dial succeeds
+    //
+    // verify that a dial is started for the router who needed relay
+    #[tokio::test]
+    async fn dial_ssu2_introducer_pending_then_succeeds() {
+        pub struct MockTransport {
+            event_rx: tokio::sync::mpsc::Receiver<RouterId>,
+            conn_tx: tokio::sync::mpsc::Sender<RouterId>,
+        }
+
+        impl Transport for MockTransport {
+            fn connect(&mut self, router_info: RouterInfo) {
+                self.conn_tx.try_send(router_info.identity.id()).unwrap();
+            }
+            fn accept(&mut self, _: &RouterId) {}
+            fn reject(&mut self, _: &RouterId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+
+            fn poll_next(
+                mut self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+            ) -> Poll<Option<Self::Item>> {
+                let router_id = futures::ready!(self.event_rx.poll_recv(cx)).unwrap();
+
+                Poll::Ready(Some(TransportEvent::ConnectionEstablished {
+                    direction: Direction::Outbound,
+                    router_id,
+                }))
+            }
+        }
+
+        let (introducer, introducer_router_id) = {
+            let (introducer, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 9999,
+                    host: Some("127.0.0.1".parse().unwrap()),
+                    publish: true,
+                    static_key: [0x11; 32],
+                    intro_key: [0x22; 32],
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(introducer.serialize(&sigkey)).unwrap(),
+                introducer.identity.id(),
+            )
+        };
+
+        let (mut router_info, router_id) = {
+            let (router_info, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 10000,
+                    host: None,
+                    publish: false,
+                    static_key: [0x33; 32],
+                    intro_key: [0x44; 32],
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(router_info.serialize(&sigkey)).unwrap(),
+                router_info.identity.id(),
+            )
+        };
+
+        // add introducer for `router_info`
+        match router_info.addresses.get_mut(0).unwrap() {
+            RouterAddress::Ssu2 { introducers, .. } => {
+                introducers.push((introducer_router_id.clone(), 1337));
+            }
+            _ => panic!("expected ssu2"),
+        }
+
+        let (event_tx, event_rx) = tokio::sync::mpsc::channel(16);
+        let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel(16);
+
+        let (mut manager, _netdb_rx, dial_tx, _subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_router(introducer)
+            .with_ssu2(Box::new(MockTransport { event_rx, conn_tx }))
+            .build();
+
+        // mark introducer as pending
+        manager.pending_connections.insert(introducer_router_id.clone(), Vec::new());
+
+        // send dial request for router that needs relay
+        dial_tx.send(router_id.clone()).await.unwrap();
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify that router is tracked in introducer's pending context
+        //
+        // also verify the router has a pending connection
+        assert!(manager
+            .pending_connections
+            .get(&introducer_router_id)
+            .unwrap()
+            .iter()
+            .any(|client| client == &router_id));
+        assert!(manager.pending_connections.contains_key(&router_id));
+
+        // send dial success for introducer
+        event_tx.send(introducer_router_id.clone()).await.unwrap();
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify that the introducer is considered connected
+        assert!(!manager.pending_connections.contains_key(&introducer_router_id));
+        assert!(manager.routers.contains(&introducer_router_id));
+
+        // and that the router is considered pending
+        assert!(manager.pending_connections.contains_key(&router_id));
+        assert!(!manager.routers.contains(&router_id));
+
+        // verify that transport manager started to dial the router
+        assert_eq!(timeout!(conn_rx.recv()).await.unwrap().unwrap(), router_id);
+    }
+
+    // introducer found in storage
+    //
+    // start dialing the router and once the connection fails,
+    // verify that tha dial failure is reported for the router
+    #[tokio::test]
+    async fn dial_ssu2_introducer_found_in_storage_dial_fails() {
+        pub struct MockTransport {
+            event_rx: tokio::sync::mpsc::Receiver<RouterId>,
+            conn_tx: tokio::sync::mpsc::Sender<RouterId>,
+        }
+
+        impl Transport for MockTransport {
+            fn connect(&mut self, router_info: RouterInfo) {
+                self.conn_tx.try_send(router_info.identity.id()).unwrap();
+            }
+            fn accept(&mut self, _: &RouterId) {}
+            fn reject(&mut self, _: &RouterId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+
+            fn poll_next(
+                mut self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+            ) -> Poll<Option<Self::Item>> {
+                let router_id = futures::ready!(self.event_rx.poll_recv(cx)).unwrap();
+
+                Poll::Ready(Some(TransportEvent::ConnectionFailure { router_id }))
+            }
+        }
+
+        let (introducer, introducer_router_id) = {
+            let (introducer, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 9999,
+                    host: Some("127.0.0.1".parse().unwrap()),
+                    publish: true,
+                    static_key: [0x11; 32],
+                    intro_key: [0x22; 32],
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(introducer.serialize(&sigkey)).unwrap(),
+                introducer.identity.id(),
+            )
+        };
+
+        let (mut router_info, router_id) = {
+            let (router_info, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 10000,
+                    host: None,
+                    publish: false,
+                    static_key: [0x33; 32],
+                    intro_key: [0x44; 32],
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(router_info.serialize(&sigkey)).unwrap(),
+                router_info.identity.id(),
+            )
+        };
+
+        // add introducer for `router_info`
+        match router_info.addresses.get_mut(0).unwrap() {
+            RouterAddress::Ssu2 { introducers, .. } => {
+                introducers.push((introducer_router_id.clone(), 1337));
+            }
+            _ => panic!("expected ssu2"),
+        }
+
+        let (event_tx, event_rx) = tokio::sync::mpsc::channel(16);
+        let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel(16);
+
+        let (mut manager, _netdb_rx, dial_tx, subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_router(introducer)
+            .with_ssu2(Box::new(MockTransport { event_rx, conn_tx }))
+            .build();
+
+        // send dial request for router that needs relay
+        dial_tx.send(router_id.clone()).await.unwrap();
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify that router is tracked in introducer's pending context
+        //
+        // also verify the router has a pending connection
+        assert!(manager
+            .pending_connections
+            .get(&introducer_router_id)
+            .unwrap()
+            .iter()
+            .any(|client| client == &router_id));
+        assert!(manager.pending_connections.contains_key(&router_id));
+
+        // verify that the introducer is dialed
+        assert_eq!(
+            timeout!(conn_rx.recv()).await.unwrap().unwrap(),
+            introducer_router_id
+        );
+
+        // send dial failure for introducer
+        event_tx.send(introducer_router_id.clone()).await.unwrap();
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify that the introducer is no longer pending nor connected
+        assert!(!manager.pending_connections.contains_key(&introducer_router_id));
+        assert!(!manager.routers.contains(&introducer_router_id));
+
+        // and that the router is no longer pending
+        assert!(!manager.pending_connections.contains_key(&router_id));
+        assert!(!manager.routers.contains(&router_id));
+
+        // verify that subsystem manager is notified of the dial failure
+        match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
+            SubsystemEvent::ConnectionFailure { router_id: remote } =>
+                assert_eq!(remote, router_id),
+            _ => panic!("invalid event"),
+        }
+        assert!(subsys_rx.try_recv().is_err());
+    }
+
+    // introducer found in storage
+    //
+    // start dialing the introducer and once the connection succeeds,
+    // verify that tha dial failure is reported for the router
+    #[tokio::test]
+    async fn dial_ssu2_introducer_found_in_storage_dial_succeeds() {
+        pub struct MockTransport {
+            event_rx: tokio::sync::mpsc::Receiver<RouterId>,
+            conn_tx: tokio::sync::mpsc::Sender<RouterId>,
+        }
+
+        impl Transport for MockTransport {
+            fn connect(&mut self, router_info: RouterInfo) {
+                self.conn_tx.try_send(router_info.identity.id()).unwrap();
+            }
+            fn accept(&mut self, _: &RouterId) {}
+            fn reject(&mut self, _: &RouterId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+
+            fn poll_next(
+                mut self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+            ) -> Poll<Option<Self::Item>> {
+                let router_id = futures::ready!(self.event_rx.poll_recv(cx)).unwrap();
+
+                Poll::Ready(Some(TransportEvent::ConnectionEstablished {
+                    direction: Direction::Outbound,
+                    router_id,
+                }))
+            }
+        }
+
+        let (introducer, introducer_router_id) = {
+            let (introducer, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 9999,
+                    host: Some("127.0.0.1".parse().unwrap()),
+                    publish: true,
+                    static_key: [0x11; 32],
+                    intro_key: [0x22; 32],
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(introducer.serialize(&sigkey)).unwrap(),
+                introducer.identity.id(),
+            )
+        };
+
+        let (mut router_info, router_id) = {
+            let (router_info, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 10000,
+                    host: None,
+                    publish: false,
+                    static_key: [0x33; 32],
+                    intro_key: [0x44; 32],
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(router_info.serialize(&sigkey)).unwrap(),
+                router_info.identity.id(),
+            )
+        };
+
+        // add introducer for `router_info`
+        match router_info.addresses.get_mut(0).unwrap() {
+            RouterAddress::Ssu2 { introducers, .. } => {
+                introducers.push((introducer_router_id.clone(), 1337));
+            }
+            _ => panic!("expected ssu2"),
+        }
+
+        let (event_tx, event_rx) = tokio::sync::mpsc::channel(16);
+        let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel(16);
+
+        let (mut manager, _netdb_rx, dial_tx, _subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_router(introducer)
+            .with_ssu2(Box::new(MockTransport { event_rx, conn_tx }))
+            .build();
+
+        // send dial request for router that needs relay
+        dial_tx.send(router_id.clone()).await.unwrap();
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify that router is tracked in introducer's pending context
+        //
+        // also verify the router has a pending connection
+        assert!(manager
+            .pending_connections
+            .get(&introducer_router_id)
+            .unwrap()
+            .iter()
+            .any(|client| client == &router_id));
+        assert!(manager.pending_connections.contains_key(&router_id));
+
+        // verify that the introducer is dialed
+        assert_eq!(
+            timeout!(conn_rx.recv()).await.unwrap().unwrap(),
+            introducer_router_id
+        );
+
+        // send dial success for introducer
+        event_tx.send(introducer_router_id.clone()).await.unwrap();
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify that the introducer is considered connected
+        assert!(!manager.pending_connections.contains_key(&introducer_router_id));
+        assert!(manager.routers.contains(&introducer_router_id));
+
+        // and that the router is considered pending
+        assert!(manager.pending_connections.contains_key(&router_id));
+        assert!(!manager.routers.contains(&router_id));
+
+        // verify that transport manager started to dial the router
+        assert_eq!(timeout!(conn_rx.recv()).await.unwrap().unwrap(), router_id);
+    }
+
+    // introducer not found in storage and netdb query is started
+    //
+    // the query fails and since the router had only a single introducer,
+    // the dial fails
+    #[tokio::test]
+    async fn dial_ssu2_introducer_router_info_query_fails() {
+        pub struct MockTransport {
+            event_rx: tokio::sync::mpsc::Receiver<RouterId>,
+            conn_tx: tokio::sync::mpsc::Sender<RouterId>,
+        }
+
+        impl Transport for MockTransport {
+            fn connect(&mut self, router_info: RouterInfo) {
+                self.conn_tx.try_send(router_info.identity.id()).unwrap();
+            }
+            fn accept(&mut self, _: &RouterId) {}
+            fn reject(&mut self, _: &RouterId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+
+            fn poll_next(
+                mut self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+            ) -> Poll<Option<Self::Item>> {
+                let router_id = futures::ready!(self.event_rx.poll_recv(cx)).unwrap();
+
+                Poll::Ready(Some(TransportEvent::ConnectionEstablished {
+                    direction: Direction::Outbound,
+                    router_id,
+                }))
+            }
+        }
+
+        let (_introducer, introducer_router_id) = {
+            let (introducer, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 9999,
+                    host: Some("127.0.0.1".parse().unwrap()),
+                    publish: true,
+                    static_key: [0x11; 32],
+                    intro_key: [0x22; 32],
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(introducer.serialize(&sigkey)).unwrap(),
+                introducer.identity.id(),
+            )
+        };
+
+        let (mut router_info, router_id) = {
+            let (router_info, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 10000,
+                    host: None,
+                    publish: false,
+                    static_key: [0x33; 32],
+                    intro_key: [0x44; 32],
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(router_info.serialize(&sigkey)).unwrap(),
+                router_info.identity.id(),
+            )
+        };
+
+        // add introducer for `router_info`
+        match router_info.addresses.get_mut(0).unwrap() {
+            RouterAddress::Ssu2 { introducers, .. } => {
+                introducers.push((introducer_router_id.clone(), 1337));
+            }
+            _ => panic!("expected ssu2"),
+        }
+
+        let (_event_tx, event_rx) = tokio::sync::mpsc::channel(16);
+        let (conn_tx, _conn_rx) = tokio::sync::mpsc::channel(16);
+
+        let (mut manager, netdb_rx, dial_tx, subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ssu2(Box::new(MockTransport { event_rx, conn_tx }))
+            .build();
+
+        // send dial request for router that needs relay
+        dial_tx.send(router_id.clone()).await.unwrap();
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify that router is tracked in introducer's pending context
+        //
+        // also verify the router has a pending connection
+        assert!(manager
+            .pending_connections
+            .get(&introducer_router_id)
+            .unwrap()
+            .iter()
+            .any(|client| client == &router_id));
+        assert!(manager.pending_queries.contains(&introducer_router_id));
+        assert!(manager.pending_connections.contains_key(&router_id));
+
+        // send query failure back
+        match timeout!(netdb_rx.recv()).await.unwrap().unwrap() {
+            NetDbAction::QueryRouterInfo {
+                router_id: target,
+                tx,
+            } => {
+                assert_eq!(target, introducer_router_id);
+                tx.send(Err(QueryError::Timeout)).unwrap();
+            }
+            _ => panic!("unexpected netdb action"),
+        }
+
+        let future = {
+            futures::future::poll_fn(|cx| loop {
+                match manager.poll_unpin(cx) {
+                    Poll::Pending => {
+                        if !manager.pending_connections.contains_key(&introducer_router_id)
+                            && !manager.pending_queries.contains(&introducer_router_id)
+                        {
+                            return Poll::Ready(());
+                        } else {
+                            return Poll::Pending;
+                        }
+                    }
+                    Poll::Ready(_) => panic!("manager returned"),
+                }
+            })
+        };
+        let _: () = timeout!(future).await.unwrap();
+
+        // verify that the introducer is no longer considered pending
+        assert!(!manager.pending_connections.contains_key(&introducer_router_id));
+        assert!(!manager.pending_queries.contains(&introducer_router_id));
+
+        // and that the router is not considered pending
+        assert!(!manager.pending_connections.contains_key(&router_id));
+        assert!(!manager.routers.contains(&router_id));
+
+        // verify that subsystem manager is notified of the client dial failure
+        match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
+            SubsystemEvent::ConnectionFailure { router_id: remote } =>
+                assert_eq!(remote, router_id),
+            _ => panic!("invalid event"),
+        }
+
+        // since the dial failure originated from transport and not from transport, subsystem
+        // manager is notified of the introducer dial failure directly
+        match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
+            SubsystemEvent::ConnectionFailure { router_id: remote } =>
+                assert_eq!(remote, introducer_router_id),
+            _ => panic!("invalid event"),
+        }
+    }
+
+    // introducer not found in storage and netdb query is started
+    //
+    // router info query succeeds but the subsequent dial of the introducer fails,
+    // causing the dial for the original router to fail
+    #[tokio::test]
+    async fn dial_ssu2_introducer_router_info_query_succeeds_dial_fails() {
+        pub struct MockTransport {
+            event_rx: tokio::sync::mpsc::Receiver<RouterId>,
+            conn_tx: tokio::sync::mpsc::Sender<RouterId>,
+        }
+
+        impl Transport for MockTransport {
+            fn connect(&mut self, router_info: RouterInfo) {
+                self.conn_tx.try_send(router_info.identity.id()).unwrap();
+            }
+            fn accept(&mut self, _: &RouterId) {}
+            fn reject(&mut self, _: &RouterId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+
+            fn poll_next(
+                mut self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+            ) -> Poll<Option<Self::Item>> {
+                let router_id = futures::ready!(self.event_rx.poll_recv(cx)).unwrap();
+
+                Poll::Ready(Some(TransportEvent::ConnectionFailure { router_id }))
+            }
+        }
+
+        let (introducer, introducer_router_id) = {
+            let (introducer, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 9999,
+                    host: Some("127.0.0.1".parse().unwrap()),
+                    publish: true,
+                    static_key: [0x11; 32],
+                    intro_key: [0x22; 32],
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(introducer.serialize(&sigkey)).unwrap(),
+                introducer.identity.id(),
+            )
+        };
+
+        let (mut router_info, router_id) = {
+            let (router_info, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 10000,
+                    host: None,
+                    publish: false,
+                    static_key: [0x33; 32],
+                    intro_key: [0x44; 32],
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(router_info.serialize(&sigkey)).unwrap(),
+                router_info.identity.id(),
+            )
+        };
+
+        // add introducer for `router_info`
+        match router_info.addresses.get_mut(0).unwrap() {
+            RouterAddress::Ssu2 { introducers, .. } => {
+                introducers.push((introducer_router_id.clone(), 1337));
+            }
+            _ => panic!("expected ssu2"),
+        }
+
+        let (event_tx, event_rx) = tokio::sync::mpsc::channel(16);
+        let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel(16);
+
+        let (mut manager, netdb_rx, dial_tx, subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ssu2(Box::new(MockTransport { event_rx, conn_tx }))
+            .build();
+
+        let profile_storage = manager.router_ctx.profile_storage().clone();
+
+        // send dial request for router that needs relay
+        dial_tx.send(router_id.clone()).await.unwrap();
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify that router is tracked in introducer's pending context
+        //
+        // also verify the router has a pending connection
+        assert!(manager
+            .pending_connections
+            .get(&introducer_router_id)
+            .unwrap()
+            .iter()
+            .any(|client| client == &router_id));
+        assert!(manager.pending_queries.contains(&introducer_router_id));
+        assert!(manager.pending_connections.contains_key(&router_id));
+
+        match timeout!(netdb_rx.recv()).await.unwrap().unwrap() {
+            NetDbAction::QueryRouterInfo {
+                router_id: target,
+                tx,
+            } => {
+                assert_eq!(target, introducer_router_id);
+                profile_storage.add_router(introducer);
+                tx.send(Ok(())).unwrap();
+            }
+            _ => panic!("unexpected netdb action"),
+        }
+
+        let future = {
+            futures::future::poll_fn(|cx| loop {
+                match manager.poll_unpin(cx) {
+                    Poll::Pending =>
+                        if !manager.pending_queries.contains(&introducer_router_id) {
+                            return Poll::Ready(());
+                        } else {
+                            return Poll::Pending;
+                        },
+                    Poll::Ready(_) => panic!("manager returned"),
+                }
+            })
+        };
+        let _: () = timeout!(future).await.unwrap();
+
+        // verify that the introducer is still pending but no longer has a pending query
+        assert!(manager.pending_connections.contains_key(&introducer_router_id));
+        assert!(!manager.pending_queries.contains(&introducer_router_id));
+        assert!(!manager.routers.contains(&introducer_router_id));
+
+        // and that the original router is still pending
+        assert!(manager.pending_connections.contains_key(&router_id));
+        assert!(!manager.routers.contains(&router_id));
+
+        // verify that the introducer is dialed
+        assert_eq!(
+            timeout!(conn_rx.recv()).await.unwrap().unwrap(),
+            introducer_router_id
+        );
+
+        // send dial failure for introducer
+        event_tx.send(introducer_router_id.clone()).await.unwrap();
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify that subsystem manager is notified of the client dial failure
+        match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
+            SubsystemEvent::ConnectionFailure { router_id: remote } =>
+                assert_eq!(remote, router_id),
+            _ => panic!("invalid event"),
+        }
+    }
+
+    // introducer not found in storage and netdb query is started
+    //
+    // router info query succeeds and the subsequent dial of the introducer succeeds,
+    // causing the client router to be dialed
+    #[tokio::test]
+    async fn dial_ssu2_introducer_router_info_query_succeeds_dial_succeeds() {
+        pub struct MockTransport {
+            event_rx: tokio::sync::mpsc::Receiver<RouterId>,
+            conn_tx: tokio::sync::mpsc::Sender<RouterId>,
+        }
+
+        impl Transport for MockTransport {
+            fn connect(&mut self, router_info: RouterInfo) {
+                self.conn_tx.try_send(router_info.identity.id()).unwrap();
+            }
+            fn accept(&mut self, _: &RouterId) {}
+            fn reject(&mut self, _: &RouterId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+
+            fn poll_next(
+                mut self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+            ) -> Poll<Option<Self::Item>> {
+                let router_id = futures::ready!(self.event_rx.poll_recv(cx)).unwrap();
+
+                Poll::Ready(Some(TransportEvent::ConnectionEstablished {
+                    direction: Direction::Outbound,
+                    router_id,
+                }))
+            }
+        }
+
+        let (introducer, introducer_router_id) = {
+            let (introducer, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 9999,
+                    host: Some("127.0.0.1".parse().unwrap()),
+                    publish: true,
+                    static_key: [0x11; 32],
+                    intro_key: [0x22; 32],
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(introducer.serialize(&sigkey)).unwrap(),
+                introducer.identity.id(),
+            )
+        };
+
+        let (mut router_info, router_id) = {
+            let (router_info, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 10000,
+                    host: None,
+                    publish: false,
+                    static_key: [0x33; 32],
+                    intro_key: [0x44; 32],
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(router_info.serialize(&sigkey)).unwrap(),
+                router_info.identity.id(),
+            )
+        };
+
+        // add introducer for `router_info`
+        match router_info.addresses.get_mut(0).unwrap() {
+            RouterAddress::Ssu2 { introducers, .. } => {
+                introducers.push((introducer_router_id.clone(), 1337));
+            }
+            _ => panic!("expected ssu2"),
+        }
+
+        let (event_tx, event_rx) = tokio::sync::mpsc::channel(16);
+        let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel(16);
+
+        let (mut manager, netdb_rx, dial_tx, _subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ssu2(Box::new(MockTransport { event_rx, conn_tx }))
+            .build();
+
+        let profile_storage = manager.router_ctx.profile_storage().clone();
+
+        // send dial request for router that needs relay
+        dial_tx.send(router_id.clone()).await.unwrap();
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify that router is tracked in introducer's pending context
+        //
+        // also verify the router has a pending connection
+        assert!(manager
+            .pending_connections
+            .get(&introducer_router_id)
+            .unwrap()
+            .iter()
+            .any(|client| client == &router_id));
+        assert!(manager.pending_queries.contains(&introducer_router_id));
+        assert!(manager.pending_connections.contains_key(&router_id));
+
+        match timeout!(netdb_rx.recv()).await.unwrap().unwrap() {
+            NetDbAction::QueryRouterInfo {
+                router_id: target,
+                tx,
+            } => {
+                assert_eq!(target, introducer_router_id);
+                profile_storage.add_router(introducer);
+                tx.send(Ok(())).unwrap();
+            }
+            _ => panic!("unexpected netdb action"),
+        }
+
+        let future = {
+            futures::future::poll_fn(|cx| loop {
+                match manager.poll_unpin(cx) {
+                    Poll::Pending =>
+                        if !manager.pending_queries.contains(&introducer_router_id) {
+                            return Poll::Ready(());
+                        } else {
+                            return Poll::Pending;
+                        },
+                    Poll::Ready(_) => panic!("manager returned"),
+                }
+            })
+        };
+        let _: () = timeout!(future).await.unwrap();
+
+        // verify that the introducer is still pending but no longer has a pending query
+        assert!(manager.pending_connections.contains_key(&introducer_router_id));
+        assert!(!manager.pending_queries.contains(&introducer_router_id));
+        assert!(!manager.routers.contains(&introducer_router_id));
+
+        // and that the original router is still pending
+        assert!(manager.pending_connections.contains_key(&router_id));
+        assert!(!manager.routers.contains(&router_id));
+
+        // verify that the introducer is dialed
+        assert_eq!(
+            timeout!(conn_rx.recv()).await.unwrap().unwrap(),
+            introducer_router_id
+        );
+
+        // send dial success for introducer
+        event_tx.send(introducer_router_id.clone()).await.unwrap();
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify that the router is dialed
+        assert_eq!(timeout!(conn_rx.recv()).await.unwrap().unwrap(), router_id);
+    }
+
+    #[tokio::test]
+    async fn dial_ssu2_introducer_all_dials_fail() {
+        pub struct MockTransport {
+            event_rx: tokio::sync::mpsc::Receiver<Event>,
+            conn_tx: tokio::sync::mpsc::Sender<RouterId>,
+        }
+
+        enum Event {
+            Failure(RouterId),
+        }
+
+        impl Transport for MockTransport {
+            fn connect(&mut self, router_info: RouterInfo) {
+                self.conn_tx.try_send(router_info.identity.id()).unwrap();
+            }
+            fn accept(&mut self, _: &RouterId) {}
+            fn reject(&mut self, _: &RouterId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+
+            fn poll_next(
+                mut self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+            ) -> Poll<Option<Self::Item>> {
+                match futures::ready!(self.event_rx.poll_recv(cx)).unwrap() {
+                    Event::Failure(router_id) =>
+                        Poll::Ready(Some(TransportEvent::ConnectionFailure { router_id })),
+                }
+            }
+        }
+
+        let introducers = (0..3)
+            .map(|i| {
+                let (introducer, _, sigkey) = RouterInfoBuilder::default()
+                    .with_ssu2(Ssu2Config {
+                        port: 9999,
+                        host: Some("127.0.0.1".parse().unwrap()),
+                        publish: true,
+                        static_key: [0x11 + i; 32],
+                        intro_key: [0x22 + i; 32],
+                    })
+                    .build();
+
+                (
+                    introducer.identity.id(),
+                    RouterInfo::parse::<MockRuntime>(introducer.serialize(&sigkey)).unwrap(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        let (mut router_info, router_id) = {
+            let (router_info, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 10000,
+                    host: None,
+                    publish: false,
+                    static_key: [0x33; 32],
+                    intro_key: [0x44; 32],
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(router_info.serialize(&sigkey)).unwrap(),
+                router_info.identity.id(),
+            )
+        };
+
+        // add introducer for `router_info`
+        match router_info.addresses.get_mut(0).unwrap() {
+            RouterAddress::Ssu2 {
+                introducers: router_introducers,
+                ..
+            } =>
+                for (i, (introducer_router_id, _)) in introducers.iter().enumerate() {
+                    router_introducers.push((introducer_router_id.clone(), 1337 + i as u32));
+                },
+            _ => panic!("expected ssu2"),
+        }
+
+        let (event_tx, event_rx) = tokio::sync::mpsc::channel(16);
+        let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel(16);
+
+        let mut builder = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ssu2(Box::new(MockTransport { event_rx, conn_tx }));
+
+        // add all introducers to profile storage
+        for (_, introducer) in &introducers {
+            builder = builder.with_router(introducer.clone());
+        }
+
+        let (mut manager, _netdb_rx, dial_tx, subsys_rx) = builder.build();
+
+        // send dial request for router that needs relay
+        dial_tx.send(router_id.clone()).await.unwrap();
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify all introducers are dialed
+        for _ in 0..3 {
+            let introducer_router_id = conn_rx.try_recv().unwrap();
+            assert!(introducers.contains_key(&introducer_router_id));
+        }
+
+        // verify that all introducers are being dialed and that the router
+        // is tracked in their dial context
+        assert!(introducers.keys().all(|introducer_id| {
+            match manager.pending_connections.get(introducer_id) {
+                Some(routers) => routers.iter().any(|client| client == &router_id),
+                None => false,
+            }
+        }));
+
+        // verify that all introducers are in the pending introducer context
+        assert!(manager
+            .pending_introducers
+            .get(&router_id)
+            .unwrap()
+            .pending_connections
+            .iter()
+            .all(|key| introducers.contains_key(key)));
+        assert!(manager.pending_introducers.get(&router_id).unwrap().pending_queries.is_empty());
+
+        // verify that the client router is pending
+        assert!(manager.pending_connections.contains_key(&router_id));
+
+        let mut introducers = introducers.into_iter().collect::<Vec<_>>();
+
+        // send dial failures for the first two introducers
+        for _ in 0..2 {
+            let (introducer_router_id, _) = introducers.pop().unwrap();
+            event_tx.send(Event::Failure(introducer_router_id.clone())).await.unwrap();
+            futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+                Poll::Pending => Poll::Ready(()),
+                Poll::Ready(_) => panic!("manager returned"),
+            })
+            .await;
+
+            // verify that the introducer is no longer pending or part of `pending_introducers`
+            assert!(!manager
+                .pending_introducers
+                .get(&router_id)
+                .unwrap()
+                .pending_connections
+                .contains(&introducer_router_id));
+            assert!(!manager.pending_connections.contains_key(&introducer_router_id));
+            assert!(manager.pending_connections.contains_key(&router_id));
+        }
+
+        // send dial failure for the last introducer
+        let (introducer_router_id, _) = introducers.pop().unwrap();
+        event_tx.send(Event::Failure(introducer_router_id.clone())).await.unwrap();
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+        assert!(!manager.pending_introducers.contains_key(&router_id));
+        assert!(!manager.pending_connections.contains_key(&introducer_router_id));
+        assert!(!manager.pending_connections.contains_key(&router_id));
+
+        // verify dial failure is reported for the client router
+        match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
+            SubsystemEvent::ConnectionFailure { router_id: remote } =>
+                assert_eq!(remote, router_id),
+            _ => panic!("invalid event"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dial_ssu2_introducer_all_dials_succeed() {
+        pub struct MockTransport {
+            event_rx: tokio::sync::mpsc::Receiver<Event>,
+            conn_tx: tokio::sync::mpsc::Sender<RouterId>,
+        }
+
+        enum Event {
+            Success(RouterId),
+        }
+
+        impl Transport for MockTransport {
+            fn connect(&mut self, router_info: RouterInfo) {
+                self.conn_tx.try_send(router_info.identity.id()).unwrap();
+            }
+            fn accept(&mut self, _: &RouterId) {}
+            fn reject(&mut self, _: &RouterId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+
+            fn poll_next(
+                mut self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+            ) -> Poll<Option<Self::Item>> {
+                match futures::ready!(self.event_rx.poll_recv(cx)).unwrap() {
+                    Event::Success(router_id) =>
+                        Poll::Ready(Some(TransportEvent::ConnectionEstablished {
+                            direction: Direction::Outbound,
+                            router_id,
+                        })),
+                }
+            }
+        }
+
+        let introducers = (0..3)
+            .map(|i| {
+                let (introducer, _, sigkey) = RouterInfoBuilder::default()
+                    .with_ssu2(Ssu2Config {
+                        port: 9999,
+                        host: Some("127.0.0.1".parse().unwrap()),
+                        publish: true,
+                        static_key: [0x11 + i; 32],
+                        intro_key: [0x22 + i; 32],
+                    })
+                    .build();
+
+                (
+                    introducer.identity.id(),
+                    RouterInfo::parse::<MockRuntime>(introducer.serialize(&sigkey)).unwrap(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        let (mut router_info, router_id) = {
+            let (router_info, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 10000,
+                    host: None,
+                    publish: false,
+                    static_key: [0x33; 32],
+                    intro_key: [0x44; 32],
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(router_info.serialize(&sigkey)).unwrap(),
+                router_info.identity.id(),
+            )
+        };
+
+        // add introducer for `router_info`
+        match router_info.addresses.get_mut(0).unwrap() {
+            RouterAddress::Ssu2 {
+                introducers: router_introducers,
+                ..
+            } =>
+                for (i, (introducer_router_id, _)) in introducers.iter().enumerate() {
+                    router_introducers.push((introducer_router_id.clone(), 1337 + i as u32));
+                },
+            _ => panic!("expected ssu2"),
+        }
+
+        let (event_tx, event_rx) = tokio::sync::mpsc::channel(16);
+        let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel(16);
+
+        let mut builder = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ssu2(Box::new(MockTransport { event_rx, conn_tx }));
+
+        // add all introducers to profile storage
+        for (_, introducer) in &introducers {
+            builder = builder.with_router(introducer.clone());
+        }
+
+        let (mut manager, _netdb_rx, dial_tx, _subsys_rx) = builder.build();
+
+        // send dial request for router that needs relay
+        dial_tx.send(router_id.clone()).await.unwrap();
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify all introducers are dialed
+        for _ in 0..3 {
+            let introducer_router_id = conn_rx.try_recv().unwrap();
+            assert!(introducers.contains_key(&introducer_router_id));
+        }
+
+        // verify that all introducers are being dialed and that the router
+        // is tracked in their dial context
+        assert!(introducers.keys().all(|introducer_id| {
+            match manager.pending_connections.get(introducer_id) {
+                Some(routers) => routers.iter().any(|client| client == &router_id),
+                None => false,
+            }
+        }));
+
+        // verify that all introducers are in the pending introducer context
+        assert!(manager
+            .pending_introducers
+            .get(&router_id)
+            .unwrap()
+            .pending_connections
+            .iter()
+            .all(|key| introducers.contains_key(key)));
+        assert!(manager.pending_introducers.get(&router_id).unwrap().pending_queries.is_empty());
+
+        // verify that the client router is pending
+        assert!(manager.pending_connections.contains_key(&router_id));
+
+        let mut introducers = introducers.into_iter().collect::<Vec<_>>();
+
+        // send dial success for the first introducer
+        let (introducer_router_id, _) = introducers.pop().unwrap();
+        event_tx.send(Event::Success(introducer_router_id.clone())).await.unwrap();
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify pending introducer context no longer exist since the client router was dialed
+        assert!(!manager.pending_introducers.contains_key(&router_id));
+        assert!(!manager.pending_connections.contains_key(&introducer_router_id));
+        assert!(manager.routers.contains(&introducer_router_id));
+        assert!(manager.pending_connections.contains_key(&router_id));
+
+        // verify the client router is dialed
+        assert_eq!(conn_rx.try_recv().unwrap(), router_id);
+
+        // send dial succeses for the remaining introducers
+        for (introducer_router_id, _) in introducers {
+            event_tx.send(Event::Success(introducer_router_id.clone())).await.unwrap();
+            futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+                Poll::Pending => Poll::Ready(()),
+                Poll::Ready(_) => panic!("manager returned"),
+            })
+            .await;
+
+            // verify the pending introducer context is still missing
+            assert!(!manager.pending_introducers.contains_key(&router_id));
+
+            // and that the introducer is no considered connected
+            assert!(!manager.pending_connections.contains_key(&introducer_router_id));
+            assert!(manager.routers.contains(&introducer_router_id));
+
+            // and connection for the client router is still pending
+            assert!(manager.pending_connections.contains_key(&router_id));
+
+            // and that no more dial requests are sent
+            assert!(conn_rx.try_recv().is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn dial_ssu2_introducer_one_dial_succeeds() {
+        pub struct MockTransport {
+            event_rx: tokio::sync::mpsc::Receiver<Event>,
+            conn_tx: tokio::sync::mpsc::Sender<RouterId>,
+        }
+
+        enum Event {
+            Success(RouterId),
+        }
+
+        impl Transport for MockTransport {
+            fn connect(&mut self, router_info: RouterInfo) {
+                self.conn_tx.try_send(router_info.identity.id()).unwrap();
+            }
+            fn accept(&mut self, _: &RouterId) {}
+            fn reject(&mut self, _: &RouterId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+
+            fn poll_next(
+                mut self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+            ) -> Poll<Option<Self::Item>> {
+                match futures::ready!(self.event_rx.poll_recv(cx)).unwrap() {
+                    Event::Success(router_id) =>
+                        Poll::Ready(Some(TransportEvent::ConnectionEstablished {
+                            direction: Direction::Outbound,
+                            router_id,
+                        })),
+                }
+            }
+        }
+
+        let introducers = (0..3)
+            .map(|i| {
+                let (introducer, _, sigkey) = RouterInfoBuilder::default()
+                    .with_ssu2(Ssu2Config {
+                        port: 9999,
+                        host: Some("127.0.0.1".parse().unwrap()),
+                        publish: true,
+                        static_key: [0x11 + i; 32],
+                        intro_key: [0x22 + i; 32],
+                    })
+                    .build();
+
+                (
+                    introducer.identity.id(),
+                    RouterInfo::parse::<MockRuntime>(introducer.serialize(&sigkey)).unwrap(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        let (mut router_info, router_id) = {
+            let (router_info, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 10000,
+                    host: None,
+                    publish: false,
+                    static_key: [0x33; 32],
+                    intro_key: [0x44; 32],
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(router_info.serialize(&sigkey)).unwrap(),
+                router_info.identity.id(),
+            )
+        };
+
+        // add introducer for `router_info`
+        match router_info.addresses.get_mut(0).unwrap() {
+            RouterAddress::Ssu2 {
+                introducers: router_introducers,
+                ..
+            } =>
+                for (i, (introducer_router_id, _)) in introducers.iter().enumerate() {
+                    router_introducers.push((introducer_router_id.clone(), 1337 + i as u32));
+                },
+            _ => panic!("expected ssu2"),
+        }
+
+        let (event_tx, event_rx) = tokio::sync::mpsc::channel(16);
+        let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel(16);
+
+        let mut builder = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ssu2(Box::new(MockTransport { event_rx, conn_tx }));
+
+        // add all introducers to profile storage
+        for (_, introducer) in &introducers {
+            builder = builder.with_router(introducer.clone());
+        }
+
+        let (mut manager, _netdb_rx, dial_tx, _subsys_rx) = builder.build();
+
+        // send dial request for router that needs relay
+        dial_tx.send(router_id.clone()).await.unwrap();
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify all introducers are dialed
+        for _ in 0..3 {
+            let introducer_router_id = conn_rx.try_recv().unwrap();
+            assert!(introducers.contains_key(&introducer_router_id));
+        }
+
+        // verify that all introducers are being dialed and that the router
+        // is tracked in their dial context
+        assert!(introducers.keys().all(|introducer_id| {
+            match manager.pending_connections.get(introducer_id) {
+                Some(routers) => routers.iter().any(|client| client == &router_id),
+                None => false,
+            }
+        }));
+
+        // verify that all introducers are in the pending introducer context
+        assert!(manager
+            .pending_introducers
+            .get(&router_id)
+            .unwrap()
+            .pending_connections
+            .iter()
+            .all(|key| introducers.contains_key(key)));
+        assert!(manager.pending_introducers.get(&router_id).unwrap().pending_queries.is_empty());
+
+        // verify that the client router is pending
+        assert!(manager.pending_connections.contains_key(&router_id));
+
+        let mut introducers = introducers.into_iter().collect::<Vec<_>>();
+
+        // send dial success for the first introducer
+        let (introducer_router_id, _) = introducers.pop().unwrap();
+        event_tx.send(Event::Success(introducer_router_id.clone())).await.unwrap();
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify pending introducer context no longer exist since the client router was dialed
+        assert!(!manager.pending_introducers.contains_key(&router_id));
+        assert!(!manager.pending_connections.contains_key(&introducer_router_id));
+        assert!(manager.routers.contains(&introducer_router_id));
+        assert!(manager.pending_connections.contains_key(&router_id));
+
+        // verify the client router is dialed
+        assert_eq!(conn_rx.try_recv().unwrap(), router_id);
+
+        // send dial succeses for the remaining introducers
+        for (introducer_router_id, _) in introducers {
+            event_tx.send(Event::Success(introducer_router_id.clone())).await.unwrap();
+            futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+                Poll::Pending => Poll::Ready(()),
+                Poll::Ready(_) => panic!("manager returned"),
+            })
+            .await;
+
+            // verify the pending introducer context is still missing
+            assert!(!manager.pending_introducers.contains_key(&router_id));
+
+            // and that the introducer is no considered connected
+            assert!(!manager.pending_connections.contains_key(&introducer_router_id));
+            assert!(manager.routers.contains(&introducer_router_id));
+
+            // and connection for the client router is still pending
+            assert!(manager.pending_connections.contains_key(&router_id));
+
+            // and that no more dial requests are sent
+            assert!(conn_rx.try_recv().is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn dial_ssu2_all_queries_fail() {
+        pub struct MockTransport {
+            conn_tx: tokio::sync::mpsc::Sender<RouterId>,
+        }
+
+        impl Transport for MockTransport {
+            fn connect(&mut self, router_info: RouterInfo) {
+                self.conn_tx.try_send(router_info.identity.id()).unwrap();
+            }
+            fn accept(&mut self, _: &RouterId) {}
+            fn reject(&mut self, _: &RouterId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+
+            fn poll_next(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+                Poll::Pending
+            }
+        }
+
+        let mut introducers = (0..3)
+            .map(|i| {
+                let (introducer, _, sigkey) = RouterInfoBuilder::default()
+                    .with_ssu2(Ssu2Config {
+                        port: 9999,
+                        host: Some("127.0.0.1".parse().unwrap()),
+                        publish: true,
+                        static_key: [0x11 + i; 32],
+                        intro_key: [0x22 + i; 32],
+                    })
+                    .build();
+
+                (
+                    introducer.identity.id(),
+                    RouterInfo::parse::<MockRuntime>(introducer.serialize(&sigkey)).unwrap(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        let (mut router_info, router_id) = {
+            let (router_info, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 10000,
+                    host: None,
+                    publish: false,
+                    static_key: [0x33; 32],
+                    intro_key: [0x44; 32],
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(router_info.serialize(&sigkey)).unwrap(),
+                router_info.identity.id(),
+            )
+        };
+
+        // add introducer for `router_info`
+        match router_info.addresses.get_mut(0).unwrap() {
+            RouterAddress::Ssu2 {
+                introducers: router_introducers,
+                ..
+            } =>
+                for (i, (introducer_router_id, _)) in introducers.iter().enumerate() {
+                    router_introducers.push((introducer_router_id.clone(), 1337 + i as u32));
+                },
+            _ => panic!("expected ssu2"),
+        }
+
+        let (conn_tx, _conn_rx) = tokio::sync::mpsc::channel(16);
+
+        let (mut manager, netdb_rx, dial_tx, subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ssu2(Box::new(MockTransport { conn_tx }))
+            .build();
+
+        // send dial request for router that needs relay
+        dial_tx.send(router_id.clone()).await.unwrap();
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify all introducers are in the pending query context
+        assert!(manager
+            .pending_introducers
+            .get(&router_id)
+            .unwrap()
+            .pending_queries
+            .iter()
+            .all(|key| introducers.contains_key(key)));
+        assert!(manager
+            .pending_introducers
+            .get(&router_id)
+            .unwrap()
+            .pending_connections
+            .is_empty());
+        assert!(introducers.keys().all(|key| manager.pending_connections.contains_key(key)));
+        assert!(introducers.keys().all(|key| manager.pending_queries.contains(key)));
+
+        // verify that all introducers are being dialed and that the router
+        // is tracked in their dial context
+        assert!(introducers.keys().all(|introducer_id| {
+            match manager.pending_connections.get(introducer_id) {
+                Some(routers) => routers.iter().any(|client| client == &router_id),
+                None => false,
+            }
+        }));
+
+        // send router info query failure for the first two introducers
+        for _ in 0..2 {
+            let introducer = match timeout!(netdb_rx.recv()).await.unwrap().unwrap() {
+                NetDbAction::QueryRouterInfo {
+                    tx,
+                    router_id: target,
+                } => {
+                    tx.send(Err(QueryError::Timeout)).unwrap();
+                    target
+                }
+                _ => panic!("unexpected netdb action"),
+            };
+
+            let future = {
+                futures::future::poll_fn(|cx| loop {
+                    match manager.poll_unpin(cx) {
+                        Poll::Pending =>
+                            if !manager.pending_queries.contains(&introducer) {
+                                return Poll::Ready(());
+                            } else {
+                                return Poll::Pending;
+                            },
+                        Poll::Ready(_) => panic!("manager returned"),
+                    }
+                })
+            };
+            let _: () = timeout!(future).await.unwrap();
+
+            // verify the introducer is no longer tracked in any context
+            assert!(!manager
+                .pending_introducers
+                .get(&router_id)
+                .unwrap()
+                .pending_queries
+                .contains(&introducer));
+            assert!(!manager
+                .pending_introducers
+                .get(&router_id)
+                .unwrap()
+                .pending_connections
+                .contains(&introducer));
+            assert!(!manager.pending_connections.contains_key(&introducer));
+            assert!(!manager.pending_queries.contains(&introducer));
+
+            // verify dial failure is reported to the subsystem manager
+            match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
+                SubsystemEvent::ConnectionFailure { router_id: remote } =>
+                    assert_eq!(remote, introducer),
+                _ => panic!("invalid event"),
+            }
+            introducers.remove(&introducer);
+        }
+
+        // send router info query failure for the last introducer
+        let introducer = match timeout!(netdb_rx.recv()).await.unwrap().unwrap() {
+            NetDbAction::QueryRouterInfo {
+                tx,
+                router_id: target,
+            } => {
+                tx.send(Err(QueryError::Timeout)).unwrap();
+                target
+            }
+            _ => panic!("unexpected netdb action"),
+        };
+
+        let future = {
+            futures::future::poll_fn(|cx| loop {
+                match manager.poll_unpin(cx) {
+                    Poll::Pending =>
+                        if !manager.pending_queries.contains(&introducer) {
+                            return Poll::Ready(());
+                        } else {
+                            return Poll::Pending;
+                        },
+                    Poll::Ready(_) => panic!("manager returned"),
+                }
+            })
+        };
+        let _: () = timeout!(future).await.unwrap();
+
+        // verify that there is no pending context for the introducer or the router
+        assert!(!manager.pending_introducers.contains_key(&router_id));
+        assert!(!manager.pending_connections.contains_key(&introducer));
+        assert!(!manager.pending_queries.contains(&introducer));
+        assert!(!manager.pending_connections.contains_key(&router_id));
+        assert!(!manager.pending_queries.contains(&router_id));
+
+        match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
+            SubsystemEvent::ConnectionFailure { router_id: remote } =>
+                assert_eq!(remote, router_id),
+            _ => panic!("invalid event"),
+        }
+
+        match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
+            SubsystemEvent::ConnectionFailure { router_id: remote } =>
+                assert!(introducers.remove(&remote).is_some()),
+            _ => panic!("invalid event"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dial_ssu2_all_queries_succeed_all_dials_fail() {
+        pub struct MockTransport {
+            event_rx: tokio::sync::mpsc::Receiver<Event>,
+            conn_tx: tokio::sync::mpsc::Sender<RouterId>,
+        }
+
+        enum Event {
+            Failure(RouterId),
+        }
+
+        impl Transport for MockTransport {
+            fn connect(&mut self, router_info: RouterInfo) {
+                self.conn_tx.try_send(router_info.identity.id()).unwrap();
+            }
+            fn accept(&mut self, _: &RouterId) {}
+            fn reject(&mut self, _: &RouterId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+
+            fn poll_next(
+                mut self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+            ) -> Poll<Option<Self::Item>> {
+                match futures::ready!(self.event_rx.poll_recv(cx)).unwrap() {
+                    Event::Failure(router_id) =>
+                        Poll::Ready(Some(TransportEvent::ConnectionFailure { router_id })),
+                }
+            }
+        }
+
+        let introducers = (0..3)
+            .map(|i| {
+                let (introducer, _, sigkey) = RouterInfoBuilder::default()
+                    .with_ssu2(Ssu2Config {
+                        port: 9999,
+                        host: Some("127.0.0.1".parse().unwrap()),
+                        publish: true,
+                        static_key: [0x11 + i; 32],
+                        intro_key: [0x22 + i; 32],
+                    })
+                    .build();
+
+                (
+                    introducer.identity.id(),
+                    RouterInfo::parse::<MockRuntime>(introducer.serialize(&sigkey)).unwrap(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        let (mut router_info, router_id) = {
+            let (router_info, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 10000,
+                    host: None,
+                    publish: false,
+                    static_key: [0x33; 32],
+                    intro_key: [0x44; 32],
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(router_info.serialize(&sigkey)).unwrap(),
+                router_info.identity.id(),
+            )
+        };
+
+        // add introducer for `router_info`
+        match router_info.addresses.get_mut(0).unwrap() {
+            RouterAddress::Ssu2 {
+                introducers: router_introducers,
+                ..
+            } =>
+                for (i, (introducer_router_id, _)) in introducers.iter().enumerate() {
+                    router_introducers.push((introducer_router_id.clone(), 1337 + i as u32));
+                },
+            _ => panic!("expected ssu2"),
+        }
+
+        let (event_tx, event_rx) = tokio::sync::mpsc::channel(16);
+        let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel(16);
+
+        let (mut manager, netdb_rx, dial_tx, subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ssu2(Box::new(MockTransport { event_rx, conn_tx }))
+            .build();
+
+        let storage = manager.router_ctx.profile_storage().clone();
+
+        // send dial request for router that needs relay
+        dial_tx.send(router_id.clone()).await.unwrap();
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify all introducers are in the pending query context
+        assert!(manager
+            .pending_introducers
+            .get(&router_id)
+            .unwrap()
+            .pending_queries
+            .iter()
+            .all(|key| introducers.contains_key(key)));
+        assert!(manager
+            .pending_introducers
+            .get(&router_id)
+            .unwrap()
+            .pending_connections
+            .is_empty());
+        assert!(introducers.keys().all(|key| manager.pending_connections.contains_key(key)));
+        assert!(introducers.keys().all(|key| manager.pending_queries.contains(key)));
+
+        // verify that all introducers are being dialed and that the router
+        // is tracked in their dial context
+        assert!(introducers.keys().all(|introducer_id| {
+            match manager.pending_connections.get(introducer_id) {
+                Some(routers) => routers.iter().any(|client| client == &router_id),
+                None => false,
+            }
+        }));
+
+        // send query successes for all queries
+        for _ in 0..3 {
+            match timeout!(netdb_rx.recv()).await.unwrap().unwrap() {
+                NetDbAction::QueryRouterInfo {
+                    tx,
+                    router_id: target,
+                } => {
+                    tx.send(Ok(())).unwrap();
+                    storage.add_router(introducers.get(&target).unwrap().clone());
+                }
+                _ => panic!("unexpected netdb action"),
+            }
+        }
+
+        let future = {
+            futures::future::poll_fn(|cx| loop {
+                match manager.poll_unpin(cx) {
+                    Poll::Pending =>
+                        if manager.pending_queries.is_empty() {
+                            return Poll::Ready(());
+                        } else {
+                            return Poll::Pending;
+                        },
+                    Poll::Ready(_) => panic!("manager returned"),
+                }
+            })
+        };
+        let _: () = timeout!(future).await.unwrap();
+
+        // verify that all introducers have transitioned to pending
+        assert!(manager
+            .pending_introducers
+            .get(&router_id)
+            .unwrap()
+            .pending_connections
+            .iter()
+            .all(|key| introducers.contains_key(key)));
+        assert!(manager.pending_introducers.get(&router_id).unwrap().pending_queries.is_empty());
+
+        // send dial failures for each of the introducers
+        for _ in 0..3 {
+            let introducer = conn_rx.try_recv().unwrap();
+            event_tx.send(Event::Failure(introducer)).await.unwrap();
+        }
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify that there is no pending context for the introducer or the router
+        assert!(!manager.pending_introducers.contains_key(&router_id));
+        assert!(!manager.pending_queries.contains(&router_id));
+        assert!(manager.pending_connections.is_empty());
+
+        match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
+            SubsystemEvent::ConnectionFailure { router_id: remote } =>
+                assert_eq!(remote, router_id),
+            _ => panic!("invalid event"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dial_ssu2_all_queries_succeed_all_dials_succeed() {
+        pub struct MockTransport {
+            event_rx: tokio::sync::mpsc::Receiver<Event>,
+            conn_tx: tokio::sync::mpsc::Sender<RouterId>,
+        }
+
+        enum Event {
+            Success(RouterId),
+        }
+
+        impl Transport for MockTransport {
+            fn connect(&mut self, router_info: RouterInfo) {
+                self.conn_tx.try_send(router_info.identity.id()).unwrap();
+            }
+            fn accept(&mut self, _: &RouterId) {}
+            fn reject(&mut self, _: &RouterId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+
+            fn poll_next(
+                mut self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+            ) -> Poll<Option<Self::Item>> {
+                match futures::ready!(self.event_rx.poll_recv(cx)).unwrap() {
+                    Event::Success(router_id) =>
+                        Poll::Ready(Some(TransportEvent::ConnectionEstablished {
+                            direction: Direction::Outbound,
+                            router_id,
+                        })),
+                }
+            }
+        }
+
+        let introducers = (0..3)
+            .map(|i| {
+                let (introducer, _, sigkey) = RouterInfoBuilder::default()
+                    .with_ssu2(Ssu2Config {
+                        port: 9999,
+                        host: Some("127.0.0.1".parse().unwrap()),
+                        publish: true,
+                        static_key: [0x11 + i; 32],
+                        intro_key: [0x22 + i; 32],
+                    })
+                    .build();
+
+                (
+                    introducer.identity.id(),
+                    RouterInfo::parse::<MockRuntime>(introducer.serialize(&sigkey)).unwrap(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        let (mut router_info, router_id) = {
+            let (router_info, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 10000,
+                    host: None,
+                    publish: false,
+                    static_key: [0x33; 32],
+                    intro_key: [0x44; 32],
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(router_info.serialize(&sigkey)).unwrap(),
+                router_info.identity.id(),
+            )
+        };
+
+        // add introducer for `router_info`
+        match router_info.addresses.get_mut(0).unwrap() {
+            RouterAddress::Ssu2 {
+                introducers: router_introducers,
+                ..
+            } =>
+                for (i, (introducer_router_id, _)) in introducers.iter().enumerate() {
+                    router_introducers.push((introducer_router_id.clone(), 1337 + i as u32));
+                },
+            _ => panic!("expected ssu2"),
+        }
+
+        let (event_tx, event_rx) = tokio::sync::mpsc::channel(16);
+        let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel(16);
+
+        let (mut manager, netdb_rx, dial_tx, _subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ssu2(Box::new(MockTransport { event_rx, conn_tx }))
+            .build();
+
+        let storage = manager.router_ctx.profile_storage().clone();
+
+        // send dial request for router that needs relay
+        dial_tx.send(router_id.clone()).await.unwrap();
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify all introducers are in the pending query context
+        assert!(manager
+            .pending_introducers
+            .get(&router_id)
+            .unwrap()
+            .pending_queries
+            .iter()
+            .all(|key| introducers.contains_key(key)));
+        assert!(manager
+            .pending_introducers
+            .get(&router_id)
+            .unwrap()
+            .pending_connections
+            .is_empty());
+        assert!(introducers.keys().all(|key| manager.pending_connections.contains_key(key)));
+        assert!(introducers.keys().all(|key| manager.pending_queries.contains(key)));
+
+        // verify that all introducers are being dialed and that the router
+        // is tracked in their dial context
+        assert!(introducers.keys().all(|introducer_id| {
+            match manager.pending_connections.get(introducer_id) {
+                Some(routers) => routers.iter().any(|client| client == &router_id),
+                None => false,
+            }
+        }));
+
+        // send query successes for all queries
+        for _ in 0..3 {
+            match timeout!(netdb_rx.recv()).await.unwrap().unwrap() {
+                NetDbAction::QueryRouterInfo {
+                    tx,
+                    router_id: target,
+                } => {
+                    tx.send(Ok(())).unwrap();
+                    storage.add_router(introducers.get(&target).unwrap().clone());
+                }
+                _ => panic!("unexpected netdb action"),
+            }
+        }
+
+        let future = {
+            futures::future::poll_fn(|cx| loop {
+                match manager.poll_unpin(cx) {
+                    Poll::Pending =>
+                        if manager.pending_queries.is_empty() {
+                            return Poll::Ready(());
+                        } else {
+                            return Poll::Pending;
+                        },
+                    Poll::Ready(_) => panic!("manager returned"),
+                }
+            })
+        };
+        let _: () = timeout!(future).await.unwrap();
+
+        // verify that all introducers have transitioned to pending
+        assert!(manager
+            .pending_introducers
+            .get(&router_id)
+            .unwrap()
+            .pending_connections
+            .iter()
+            .all(|key| introducers.contains_key(key)));
+        assert!(manager.pending_introducers.get(&router_id).unwrap().pending_queries.is_empty());
+
+        // send dial success for each of the introducers
+        for _ in 0..3 {
+            let introducer = conn_rx.try_recv().unwrap();
+            event_tx.send(Event::Success(introducer)).await.unwrap();
+        }
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        assert!(introducers.keys().all(|key| manager.routers.contains(key)));
+        assert_eq!(manager.pending_connections.len(), 1);
+        assert!(manager.pending_connections.contains_key(&router_id));
+        assert!(manager.pending_introducers.is_empty());
+        assert!(manager.pending_queries.is_empty());
+
+        // verify the client router is dialed
+        assert_eq!(conn_rx.try_recv().unwrap(), router_id);
     }
 }
