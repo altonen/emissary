@@ -255,8 +255,12 @@ impl<R: Runtime> Stream for Ssu2Transport<R> {
 mod tests {
     use super::*;
     use crate::{
-        crypto::SigningPrivateKey, events::EventManager, profile::ProfileStorage,
-        runtime::mock::MockRuntime, transport::FirewallStatus,
+        crypto::{base64_encode, SigningPrivateKey},
+        events::EventManager,
+        primitives::Str,
+        profile::ProfileStorage,
+        runtime::mock::MockRuntime,
+        transport::FirewallStatus,
     };
     use bytes::Bytes;
     use std::time::Duration;
@@ -690,5 +694,230 @@ mod tests {
             Err(_) => panic!("timeout"),
             Ok(()) => {}
         }
+    }
+
+    #[tokio::test]
+    async fn dialing_with_introducer_works() {
+        crate::util::init_logger();
+
+        let (_event_mgr, _event_subscriber, event_handle) =
+            EventManager::new(None, MockRuntime::register_metrics(vec![], None));
+
+        // router that is behind firewall
+        let (ctx1, address1) = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+            port: 0u16,
+            host: Some("127.0.0.1".parse().unwrap()),
+            publish: false,
+            static_key: [0xaa; 32],
+            intro_key: [0xbb; 32],
+        }))
+        .await
+        .unwrap();
+
+        // set ssu2 as firewalled, causing router1 to request relay tag from router2
+        let mut ctx1 = ctx1.unwrap();
+        ctx1.firewalled = true;
+
+        // introducer for router1
+        let (ctx2, address2) = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+            port: 0u16,
+            host: Some("127.0.0.1".parse().unwrap()),
+            publish: true,
+            static_key: [0xcc; 32],
+            intro_key: [0xdd; 32],
+        }))
+        .await
+        .unwrap();
+
+        let (static1, signing1) = (
+            StaticPrivateKey::random(MockRuntime::rng()),
+            SigningPrivateKey::random(MockRuntime::rng()),
+        );
+        let (static2, signing2) = (
+            StaticPrivateKey::random(MockRuntime::rng()),
+            SigningPrivateKey::random(MockRuntime::rng()),
+        );
+        let mut router_info1 = RouterInfo::new::<MockRuntime>(
+            &Default::default(),
+            None,
+            address1,
+            &static1,
+            &signing1,
+            false,
+        );
+        let router_info2 = RouterInfo::new::<MockRuntime>(
+            &Default::default(),
+            None,
+            address2,
+            &static2,
+            &signing2,
+            false,
+        );
+        let charlie = router_info1.identity.id();
+        let bob = router_info2.identity.id();
+        let (event1_tx, _event1_rx) = channel(64);
+        let (event2_tx, _event2_rx) = channel(64);
+
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        storage.add_router(router_info2.clone());
+        let mut transport1 = Ssu2Transport::<MockRuntime>::new(
+            ctx1,
+            true,
+            RouterContext::new(
+                MockRuntime::register_metrics(Vec::new(), None),
+                storage,
+                router_info1.identity.id(),
+                Bytes::from(router_info1.serialize(&signing1)),
+                static1,
+                signing1.clone(),
+                2u8,
+                event_handle.clone(),
+            ),
+            event1_tx,
+        );
+        let mut transport2 = Ssu2Transport::<MockRuntime>::new(
+            ctx2.unwrap(),
+            true,
+            RouterContext::new(
+                MockRuntime::register_metrics(Vec::new(), None),
+                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                router_info2.identity.id(),
+                Bytes::from(router_info2.serialize(&signing2)),
+                static2,
+                signing2,
+                2u8,
+                event_handle.clone(),
+            ),
+            event2_tx,
+        );
+        tokio::spawn(async move {
+            loop {
+                match transport2.next().await.unwrap() {
+                    TransportEvent::ConnectionEstablished { router_id, .. } =>
+                        transport2.accept(&router_id),
+                    _ => {}
+                }
+            }
+        });
+
+        transport1.connect(router_info2.clone());
+
+        let (relay_tag, introducer, expires) = loop {
+            tokio::select! {
+                event = transport1.next() => match event {
+                    Some(TransportEvent::ConnectionEstablished { router_id, .. }) =>
+                        transport1.accept(&router_id),
+                    Some(TransportEvent::IntroducerAdded { relay_tag, router_id, expires }) =>
+                        break (relay_tag, router_id, expires),
+                    _ => {}
+                },
+                _ = tokio::time::sleep(Duration::from_secs(5)) => panic!("timeout"),
+            }
+        };
+
+        // spawn router1 in the background
+        tokio::spawn(async move {
+            loop {
+                match transport1.next().await.unwrap() {
+                    TransportEvent::ConnectionEstablished { router_id, .. } =>
+                        transport1.accept(&router_id),
+                    _ => {}
+                }
+            }
+        });
+
+        // modify router1's info to contain router2 as an introducer
+        let router_info1 = {
+            let Some(RouterAddress::Ssu2 {
+                introducers,
+                options,
+                ..
+            }) = router_info1.ssu2_ipv4_mut()
+            else {
+                panic!("ssu2 to exist");
+            };
+            introducers.push((introducer.clone(), relay_tag));
+            options.insert(Str::from("iexp0"), Str::from(expires.as_secs().to_string()));
+            options.insert(Str::from("itag0"), Str::from(relay_tag.to_string()));
+            options.insert(
+                Str::from("ih0"),
+                Str::from(base64_encode(introducer.to_vec())),
+            );
+            let router_info1 = router_info1.serialize(&signing1);
+
+            RouterInfo::parse::<MockRuntime>(&router_info1).unwrap()
+        };
+
+        // create third router which connects to router1 with the help of router2
+        let (ctx3, address3) = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+            port: 0u16,
+            host: Some("127.0.0.1".parse().unwrap()),
+            publish: true,
+            static_key: [0xee; 32],
+            intro_key: [0xff; 32],
+        }))
+        .await
+        .unwrap();
+
+        let (static3, signing3) = (
+            StaticPrivateKey::random(MockRuntime::rng()),
+            SigningPrivateKey::random(MockRuntime::rng()),
+        );
+        let router_info3 = RouterInfo::new::<MockRuntime>(
+            &Default::default(),
+            None,
+            address3,
+            &static3,
+            &signing3,
+            false,
+        );
+        let alice = router_info3.identity.id();
+        let (event3_tx, _event3_rx) = channel(64);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        storage.add_router(router_info2.clone());
+
+        let mut transport3 = Ssu2Transport::<MockRuntime>::new(
+            ctx3.unwrap(),
+            true,
+            RouterContext::new(
+                MockRuntime::register_metrics(Vec::new(), None),
+                storage,
+                router_info3.identity.id(),
+                Bytes::from(router_info3.serialize(&signing3)),
+                static3,
+                signing3,
+                2u8,
+                event_handle.clone(),
+            ),
+            event3_tx,
+        );
+
+        // connect router2 and router3 together
+        transport3.connect(router_info2);
+
+        loop {
+            tokio::select! {
+                event = transport3.next() => match event {
+                    Some(TransportEvent::ConnectionEstablished { router_id, .. }) => {
+                        transport3.accept(&router_id);
+                        break;
+                    }
+                    _ => {}
+                },
+                _ = tokio::time::sleep(Duration::from_secs(5)) => panic!("timeout"),
+            }
+        }
+
+        tracing::info!("\n\n");
+        tracing::error!("alice = {alice}");
+        tracing::error!("bob = {bob}");
+        tracing::error!("charlie = {charlie}");
+        tracing::info!("\n\n\n\n");
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        // connect to router1 with the help of router2
+        transport3.connect(router_info1);
+
+        while let Some(_) = transport3.next().await {}
     }
 }

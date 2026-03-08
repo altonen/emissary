@@ -315,7 +315,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
     ///
     /// The handshake directly proceeds to `InboundSsu2Session::on_session_request()` from which on
     /// it follows the same flow as if `TokenRequest` was received.
-    pub fn from_token_request(
+    pub fn from_session_request(
         context: InboundSsu2Context<R>,
         ephemeral_key: EphemeralPublicKey,
         token: u64,
@@ -715,10 +715,13 @@ impl<R: Runtime> InboundSsu2Session<R> {
             return Err(Ssu2Error::Malformed);
         };
 
-        let Some(RouterAddress::Ssu2 { intro_key, .. }) = router_info.ssu2_ipv4() else {
+        let Some(RouterAddress::Ssu2 { intro_key, .. }) = router_info
+            .addresses()
+            .find(|address| core::matches!(address, RouterAddress::Ssu2 { .. }))
+        else {
             tracing::warn!(
                 target: LOG_TARGET,
-                "router info doesn't contain ssu2 intro key",
+                "no ssu2 transport found",
             );
             debug_assert!(false);
             return Err(Ssu2Error::Malformed);

@@ -118,6 +118,18 @@ pub enum RelayEvent {
 /// Commands sent by `RelayManager` to active SSU2 sessions.
 #[derive(Clone, Default)]
 pub enum RelayCommand {
+    /// Send relay request to Bob.
+    RelayRequest {
+        /// Random nonce.
+        nonce: u32,
+
+        /// Message.
+        message: Vec<u8>,
+
+        /// Signature for `message`.
+        signature: Vec<u8>,
+    },
+
     /// Send relay response to Alice/Bob.
     RelayResponse {
         /// Random nonce.

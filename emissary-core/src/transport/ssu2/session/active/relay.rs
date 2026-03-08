@@ -32,6 +32,21 @@ impl<R: Runtime> Ssu2Session<R> {
     /// Handle command received from `RelayManager`.
     pub fn handle_relay_command(&mut self, command: RelayCommand) {
         match command {
+            RelayCommand::RelayRequest {
+                nonce,
+                message,
+                signature,
+            } => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    router_id = %self.router_id,
+                    ?nonce,
+                    "send relay request",
+                );
+
+                self.transmission.schedule(RelayBlock::Request { message, signature });
+            }
+
             RelayCommand::RelayResponse {
                 nonce,
                 rejection,
@@ -43,7 +58,7 @@ impl<R: Runtime> Ssu2Session<R> {
                     target: LOG_TARGET,
                     router_id = %self.router_id,
                     ?nonce,
-                    "send peer test request to bob",
+                    "send relay response",
                 );
 
                 self.transmission.schedule(RelayBlock::Response {
@@ -59,6 +74,12 @@ impl<R: Runtime> Ssu2Session<R> {
                 message,
                 signature,
             } => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    router_id = %self.router_id,
+                    "send relay intro",
+                );
+
                 self.transmission.schedule((
                     RelayBlock::Intro {
                         router_id,

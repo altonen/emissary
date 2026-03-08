@@ -205,6 +205,9 @@ pub struct Ssu2Socket<R: Runtime> {
     /// Pending outbound packets.
     pending_pkts: VecDeque<(BytesMut, SocketAddr)>,
 
+    /// Pending outbound relay connections.
+    pending_relays: HashSet<RouterId>,
+
     /// Pending SSU2 sessions.
     pending_sessions: R::JoinSet<PendingSsu2SessionStatus<R>>,
 
@@ -233,7 +236,6 @@ pub struct Ssu2Socket<R: Runtime> {
     tokens: HashSet<u64>,
 
     /// TX channel for sending events to `SubsystemManager`.
-    #[allow(unused)]
     transport_tx: Sender<SubsystemEvent>,
 
     /// Unvalidated sessions.
@@ -280,9 +282,10 @@ impl<R: Runtime> Ssu2Socket<R> {
             pending_events: VecDeque::new(),
             pending_outbound: HashMap::new(),
             pending_pkts: VecDeque::new(),
+            pending_relays: HashSet::new(),
             pending_sessions: R::join_set(),
             read_buffer: vec![0u8; DATAGRAM_MAX_SIZE],
-            relay_manager: RelayManager::new(router_ctx.clone(), socket.clone()),
+            relay_manager: RelayManager::new(intro_key, router_ctx.clone(), socket.clone()),
             router_ctx,
             sessions: HashMap::new(),
             socket,
@@ -417,6 +420,27 @@ impl<R: Runtime> Ssu2Socket<R> {
                             .map(|status| TransportEvent::FirewallStatus { status })),
                 }
             }
+            Ok(HeaderKind::HolePunch {
+                net_id,
+                pkt_num,
+                src_id,
+            }) => {
+                if net_id != self.router_ctx.net_id() {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        our_net_id = ?self.router_ctx.net_id(),
+                        their_net_id = ?net_id,
+                        "network id mismatch",
+                    );
+                    return Err(Ssu2Error::NetworkMismatch);
+                }
+
+                let (router_id, address, token) =
+                    self.relay_manager.handle_hole_punch(datagram, pkt_num, src_id)?;
+                self.send_session_request(router_id, address, token);
+
+                return Ok(None);
+            }
             Ok(HeaderKind::SessionRequest {
                 token,
                 pkt_num,
@@ -425,7 +449,7 @@ impl<R: Runtime> Ssu2Socket<R> {
             }) if self.tokens.remove(&token) => {
                 let (tx, rx) = channel(CHANNEL_SIZE);
                 let relay_tag = self.relay_manager.allocate_relay_tag();
-                let session = InboundSsu2Session::<R>::from_token_request(
+                let session = InboundSsu2Session::<R>::from_session_request(
                     InboundSsu2Context {
                         address,
                         chaining_key: self.chaining_key.clone(),
@@ -485,13 +509,40 @@ impl<R: Runtime> Ssu2Socket<R> {
     fn send_relay_request(&mut self, router_info: RouterInfo) {
         let router_id = router_info.identity.id();
 
-        tracing::error!(
-            target: LOG_TARGET,
-            %router_id,
-            "relay dialing not implemented",
-        );
+        match self.relay_manager.send_relay_request(router_info) {
+            Ok(()) => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    %router_id,
+                    "relay request sent",
+                );
+                self.pending_relays.insert(router_id);
+            }
+            Err(error) => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    %error,
+                    "failed to send relay request",
+                );
+                self.pending_events.push_back(TransportEvent::ConnectionFailure { router_id });
+            }
+        }
+    }
 
-        self.pending_events.push_back(TransportEvent::ConnectionFailure { router_id });
+    /// Send `SessionRequest` to router using `token`.
+    fn send_session_request(&mut self, router_id: RouterId, address: SocketAddr, token: u64) {
+        if !self.pending_relays.remove(&router_id) {
+            tracing::trace!(
+                target: LOG_TARGET,
+                ?router_id,
+                ?address,
+                ?token,
+                "pending relay does not exist",
+            );
+            return;
+        }
+
+        todo!()
     }
 
     /// Attempt to establish outbound connection remote router.
@@ -644,6 +695,23 @@ impl<R: Runtime> Ssu2Socket<R> {
         // register session to `PeerTestManager`
         self.peer_test_manager
             .add_session(&context.router_id, peer_test_handle.cmd_tx());
+
+        // register router to `RelayManager` if they support the relay protocol
+        {
+            let reader = self.router_ctx.profile_storage().reader();
+
+            match reader.router_info(&context.router_id) {
+                Some(router_info) =>
+                    if router_info.supports_relay() {
+                        self.relay_manager.add_session(&context.router_id, relay_handle.cmd_tx());
+                    },
+                None => tracing::warn!(
+                    target: LOG_TARGET,
+                    router_id = %context.router_id,
+                    "router doens't exist in profile storage",
+                ),
+            }
+        }
 
         self.active_sessions.push(
             Ssu2Session::<R>::new(
@@ -1108,10 +1176,17 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
                 }
                 Poll::Ready(Some(RelayManagerEvent::IntroducerExpired { router_id })) =>
                     return Poll::Ready(Some(TransportEvent::IntroducerRemoved { router_id })),
+                Poll::Ready(Some(RelayManagerEvent::RelayFailure { router_id })) =>
+                    return Poll::Ready(Some(TransportEvent::ConnectionFailure { router_id })),
+                Poll::Ready(Some(RelayManagerEvent::RelaySuccess {
+                    address,
+                    router_id,
+                    token,
+                })) => this.send_session_request(router_id, address, token),
             }
         }
 
-        self.waker = Some(cx.waker().clone());
+        this.waker = Some(cx.waker().clone());
         Poll::Pending
     }
 }

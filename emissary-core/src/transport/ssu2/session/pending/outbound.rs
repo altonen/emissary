@@ -297,6 +297,73 @@ impl<R: Runtime> OutboundSsu2Session<R> {
         }
     }
 
+    /// Create new [`OutboundSsu2Session`] from a token received from a successful relay process.
+    pub fn from_token(context: OutboundSsu2Context<R>, token: u64) -> Self {
+        let OutboundSsu2Context {
+            address,
+            chaining_key,
+            dst_id,
+            local_intro_key,
+            local_static_key,
+            net_id,
+            remote_intro_key,
+            router_id,
+            router_info,
+            rx,
+            socket,
+            src_id,
+            state,
+            static_key,
+            transport_tx,
+            verifying_key,
+            ..
+        } = context;
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            %router_id,
+            ?dst_id,
+            ?src_id,
+            "send SessionRequest",
+        );
+
+        let pkt = TokenRequestBuilder::default()
+            .with_dst_id(dst_id)
+            .with_src_id(src_id)
+            .with_intro_key(remote_intro_key)
+            .with_net_id(net_id)
+            .build::<R>()
+            .to_vec();
+
+        Self {
+            address,
+            dst_id,
+            external_address: None,
+            local_intro_key,
+            net_id,
+            noise_ctx: NoiseContext::new(
+                TryInto::<[u8; 32]>::try_into(chaining_key.to_vec()).expect("to succeed"),
+                TryInto::<[u8; 32]>::try_into(state.to_vec()).expect("to succeed"),
+            ),
+            pkt_retransmitter: PacketRetransmitter::token_request(pkt.clone()),
+            remote_intro_key,
+            request_tag: false, // don't request tag from a router that requires introduction
+            router_id,
+            rx: Some(rx),
+            verifying_key,
+            socket,
+            src_id,
+            started: R::now(),
+            state: PendingSessionState::AwaitingRetry {
+                local_static_key,
+                router_info,
+                static_key,
+            },
+            transport_tx,
+            write_buffer: VecDeque::from([pkt]),
+        }
+    }
+
     /// Handle `Retry`.
     ///
     /// Attempt to parse the header into `Retry` and if it succeeds, send a `SessionRequest` to

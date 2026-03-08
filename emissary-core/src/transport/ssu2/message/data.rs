@@ -224,6 +224,15 @@ impl PeerTestBlock {
 
 /// Relay block.
 pub enum RelayBlock {
+    /// Relay request from Alice to Bob.
+    Request {
+        /// Message.
+        message: Vec<u8>,
+
+        /// Signature for `message`.
+        signature: Vec<u8>,
+    },
+
     /// Relay response from Bob or Charlie.
     Response {
         /// Rejection reason.
@@ -261,10 +270,11 @@ pub enum RelayBlock {
 impl RelayBlock {
     /// Get serialized length of the block.
     pub fn serialized_len(&self) -> usize {
-        // block type + block length + flag;
+        // block type + block length + flag.
         let overhead = 1 + 2 + 1;
 
         match self {
+            Self::Request { message, signature } => overhead + message.len() + signature.len(),
             Self::Response {
                 message,
                 signature,
@@ -272,7 +282,7 @@ impl RelayBlock {
                 rejection: _,
             } =>
                 overhead
-                    + 1
+                    + 1 // code
                     + message.len()
                     + signature.as_ref().map_or(0, |s| s.len())
                     + token.map_or(0, |_| TOKEN_LEN),
@@ -288,6 +298,7 @@ impl RelayBlock {
 impl fmt::Debug for RelayBlock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Request { .. } => f.debug_struct("RelayBlock::Request").finish_non_exhaustive(),
             Self::Response { rejection, .. } => f
                 .debug_struct("RelayBlock::Response")
                 .field("rejection", &rejection)
@@ -531,6 +542,13 @@ impl<'a> DataMessageBuilder<'a> {
                     }
 
                     match relay_block {
+                        RelayBlock::Request { message, signature } => {
+                            out.put_u8(BlockType::RelayRequest.as_u8());
+                            out.put_u16((1 + message.len() + signature.len()) as u16);
+                            out.put_u8(0); // flag
+                            out.put_slice(&message);
+                            out.put_slice(&signature);
+                        }
                         RelayBlock::Response {
                             rejection,
                             message,

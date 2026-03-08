@@ -28,6 +28,49 @@ use core::fmt;
 
 pub mod parser;
 
+/// Relay error.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RelayError {
+    /// No connection to introducer
+    NoIntroducer,
+
+    /// No compatible address.
+    NoAddress,
+
+    /// Failed to send relay request.
+    RelayRequestSendFailure,
+
+    /// Invalid signature.
+    InvalidSignature,
+
+    /// Invalid `HolePunch` message.
+    InvalidHolePunch,
+
+    /// Unknown relay process.
+    UnknownRelayProcess,
+
+    /// `HolePunch` message doesn't contain `RelayResponse` block.
+    NoRelayResponse,
+
+    /// Relay request was rejected
+    Rejected,
+}
+
+impl fmt::Display for RelayError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoIntroducer => write!(f, "no connection to an introducer"),
+            Self::NoAddress => write!(f, "no compatible address"),
+            Self::RelayRequestSendFailure => write!(f, "failed to send relay request to bob"),
+            Self::InvalidSignature => write!(f, "invalid signature"),
+            Self::UnknownRelayProcess => write!(f, "unknown relay process"),
+            Self::InvalidHolePunch => write!(f, "invalid hole punch message"),
+            Self::NoRelayResponse => write!(f, "relay response block missing"),
+            Self::Rejected => write!(f, "relay request was rejected"),
+        }
+    }
+}
+
 /// Peer test error.
 #[derive(Debug, PartialEq, Eq)]
 pub enum PeerTestError {
@@ -89,6 +132,9 @@ pub enum Ssu2Error {
 
     /// Peer test error.
     PeerTest(PeerTestError),
+
+    /// Relay error.
+    Relay(RelayError),
 }
 
 impl fmt::Display for Ssu2Error {
@@ -104,6 +150,7 @@ impl fmt::Display for Ssu2Error {
             Self::TokenMismatch => write!(f, "token mismatch"),
             Self::NetworkMismatch => write!(f, "network mismatch"),
             Self::PeerTest(error) => write!(f, "{error}"),
+            Self::Relay(error) => write!(f, "{error}"),
         }
     }
 }

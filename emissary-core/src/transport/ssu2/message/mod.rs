@@ -1306,6 +1306,14 @@ impl Block {
         ))
     }
 
+    /// Parse [`MessageBlock::RelayResponse`].
+    fn parse_relay_tag(input: &[u8]) -> IResult<&[u8], Block, Ssu2ParseError> {
+        let (rest, _size) = be_u16(input)?;
+        let (rest, relay_tag) = be_u32(rest)?;
+
+        Ok((rest, Block::RelayTag { relay_tag }))
+    }
+
     /// Attempt to parse unsupported block from `input`
     fn parse_unsupported_block(input: &[u8]) -> IResult<&[u8], Block, Ssu2ParseError> {
         let (rest, size) = be_u16(input)?;
@@ -1340,6 +1348,7 @@ impl Block {
             Some(BlockType::RelayRequest) => Self::parse_relay_request(rest),
             Some(BlockType::RelayIntro) => Self::parse_relay_intro(rest),
             Some(BlockType::RelayResponse) => Self::parse_relay_response(rest),
+            Some(BlockType::RelayTag) => Self::parse_relay_tag(rest),
             Some(block_type) => {
                 tracing::warn!(
                     target: LOG_TARGET,

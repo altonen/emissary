@@ -17,11 +17,13 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    crypto::{chachapoly::ChaChaPoly, SigningPublicKey},
+    error::{RelayError, Ssu2Error},
     primitives::{RouterAddress, RouterId, RouterInfo},
     router::context::RouterContext,
     runtime::{Instant, Runtime, UdpSocket},
     transport::ssu2::{
-        message::HolePunchBuilder,
+        message::{Block, HolePunchBuilder},
         relay::types::{
             BobRejectionReason, CharlieRejectionReason, RejectionReason, RelayCommand, RelayEvent,
             RelayHandle,
@@ -51,6 +53,11 @@ const LOG_TARGET: &str = "emissary::ssu2::relay";
 /// Maintenance interval.
 const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(30);
 
+/// Timeout for a relay process.
+///
+/// Time after which an outbound relay process is considered failed
+const RELAY_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Introducer expiration.
 pub const INTRODUCER_EXPIRATION: Duration = Duration::from_secs(80 * 60);
 
@@ -71,6 +78,26 @@ pub enum RelayManagerEvent {
     /// Introducer has expired.
     IntroducerExpired {
         /// Router ID of the expired introducer.
+        router_id: RouterId,
+    },
+
+    /// Relay connection succeeded.
+    RelaySuccess {
+        /// Socket address of Charlie.
+        address: SocketAddr,
+
+        /// Router ID of Charlie.
+        router_id: RouterId,
+
+        /// Token that should be used in `SessionRequest`.
+        token: u64,
+    },
+
+    /// Relayed connection failed.
+    ///
+    /// Failed to connect to Charlie.
+    RelayFailure {
+        /// Router ID of Charlie.
         router_id: RouterId,
     },
 }
@@ -94,13 +121,36 @@ struct RelayServer<R: Runtime> {
     created: R::Instant,
 }
 
+/// Active outbound relay process.
+struct RelayProcess<R: Runtime> {
+    /// Router ID of Bob.
+    bob_router_id: RouterId,
+
+    /// Router ID of Charlie.
+    charlie_router_id: RouterId,
+
+    /// Verifying key of Charlie.
+    charlie_verifying_key: SigningPublicKey,
+
+    /// When was the relay request sent.
+    created: R::Instant,
+
+    /// Relay tag.
+    relay_tag: u32,
+}
+
 /// Relay manager.
 pub struct RelayManager<R: Runtime> {
-    /// Active relay processes.
+    /// Active inbound relay processes.
     ///
     /// Indexed by nonce, the senders are used to send relay responses
     /// received from Charlie to Alice.
-    active_relays: HashMap<u32, Sender<RelayCommand>>,
+    active_inbound: HashMap<u32, Sender<RelayCommand>>,
+
+    /// Active outbound relay processes.
+    ///
+    /// Indexed by source connection ID derived from random nonce.
+    active_outbound: HashMap<u64, RelayProcess<R>>,
 
     /// Active relay clients.
     ///
@@ -121,6 +171,9 @@ pub struct RelayManager<R: Runtime> {
     /// Mappings from router IDs to relay tags.
     id_mappings: HashMap<RouterId, u32>,
 
+    /// Our intro key.
+    intro_key: [u8; 32],
+
     /// Maintenance timer
     maintenance_timer: R::Timer,
 
@@ -138,6 +191,9 @@ pub struct RelayManager<R: Runtime> {
     /// IOW, context for all Bob's who've agreed to act as relay for us.
     servers: HashMap<u32, RelayServer<R>>,
 
+    /// Active sessions to routers which support the relay protocol.
+    sessions: HashMap<RouterId, Sender<RelayCommand>>,
+
     /// UDP socket.
     socket: R::UdpSocket,
 
@@ -147,21 +203,24 @@ pub struct RelayManager<R: Runtime> {
 
 impl<R: Runtime> RelayManager<R> {
     /// Create new `RelayManager`.
-    pub fn new(router_ctx: RouterContext<R>, socket: R::UdpSocket) -> Self {
+    pub fn new(intro_key: [u8; 32], router_ctx: RouterContext<R>, socket: R::UdpSocket) -> Self {
         let (event_tx, event_rx) = channel(128);
 
         Self {
-            active_relays: HashMap::new(),
+            active_inbound: HashMap::new(),
+            active_outbound: HashMap::new(),
             clients: HashMap::new(),
             event_rx,
             event_tx,
             external_address: None,
             id_mappings: HashMap::new(),
+            intro_key,
             maintenance_timer: R::timer(MAINTENANCE_INTERVAL),
             pending_events: VecDeque::new(),
             relay_tags: HashSet::new(),
             router_ctx,
             servers: HashMap::new(),
+            sessions: HashMap::new(),
             socket,
             write_buffer: VecDeque::new(),
         }
@@ -196,6 +255,18 @@ impl<R: Runtime> RelayManager<R> {
     /// Deallocate relay tag.
     pub fn deallocate_relay_tag(&mut self, tag: u32) {
         self.relay_tags.remove(&tag);
+    }
+
+    /// Register active session with a router that supports the relay protocol
+    /// and is capable of acting as an introducer.
+    pub fn add_session(&mut self, router_id: &RouterId, sender: Sender<RelayCommand>) {
+        tracing::trace!(
+            target: LOG_TARGET,
+            %router_id,
+            "register session to router that supports relay",
+        );
+
+        self.sessions.insert(router_id.clone(), sender);
     }
 
     /// Register relay client
@@ -252,6 +323,236 @@ impl<R: Runtime> RelayManager<R> {
         }
 
         false
+    }
+
+    /// Send relay request to one of the introducers listed in `router_info`.
+    pub fn send_relay_request(&mut self, router_info: RouterInfo) -> Result<(), RelayError> {
+        let charlie_router_id = router_info.identity.id();
+        let charlie_verifying_key = router_info.identity.signing_key();
+
+        let introducers = match router_info
+            .addresses()
+            .find(|address| core::matches!(address, RouterAddress::Ssu2 { .. }))
+        {
+            Some(RouterAddress::Ssu2 {
+                introducers,
+                cost: _,
+                static_key: _,
+                intro_key: _,
+                options: _,
+                socket_address: _,
+            }) => introducers,
+            _ => return Err(RelayError::NoAddress),
+        };
+
+        // find an introducer with have an active connection with
+        let (bob_router_id, relay_tag, sender) = introducers
+            .iter()
+            .find_map(|(router_id, relay_tag)| {
+                self.sessions.get(router_id).map(|sender| (router_id, relay_tag, sender))
+            })
+            .ok_or(RelayError::NoIntroducer)?;
+
+        // create relay request and signature
+        let (nonce, message, signature) = {
+            let nonce = R::rng().next_u32();
+            let mut message = BytesMut::with_capacity(128);
+            message.put_slice(b"RelayRequestData");
+            message.put_slice(&bob_router_id.to_vec());
+            message.put_slice(&charlie_router_id.to_vec());
+            message.put_u32(nonce);
+            message.put_u32(*relay_tag);
+            message.put_u32(R::time_since_epoch().as_secs() as u32);
+            message.put_u8(2); // version
+
+            match self.socket.local_address().expect("address to exist") {
+                SocketAddr::V4(address) => {
+                    message.put_u8(6); // address size
+                    message.put_u16(address.port());
+                    message.put_slice(&address.ip().octets());
+                }
+                SocketAddr::V6(address) => {
+                    message.put_u8(18); // address size
+
+                    message.put_u16(address.port());
+                    message.put_slice(&address.ip().octets());
+                }
+            }
+            let signature = self.router_ctx.signing_key().sign(&message);
+
+            (
+                nonce,
+                message.split_off(b"RelayRequestData".len() + 2 * ROUTER_HASH_LEN).to_vec(),
+                signature,
+            )
+        };
+
+        match sender.try_send(RelayCommand::RelayRequest {
+            nonce,
+            message,
+            signature,
+        }) {
+            Ok(()) => {
+                let dst_id = (((nonce as u64) << 32) | (nonce as u64)).to_be();
+                let src_id = (!(((nonce as u64) << 32) | (nonce as u64))).to_be();
+
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    %charlie_router_id,
+                    %bob_router_id,
+                    ?nonce,
+                    ?relay_tag,
+                    ?dst_id,
+                    ?src_id,
+                    "relay request sent to bob",
+                );
+
+                self.active_outbound.insert(
+                    src_id,
+                    RelayProcess {
+                        bob_router_id: bob_router_id.clone(),
+                        charlie_router_id,
+                        charlie_verifying_key: charlie_verifying_key.clone(),
+                        created: R::now(),
+                        relay_tag: *relay_tag,
+                    },
+                );
+
+                Ok(())
+            }
+            Err(error) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    %charlie_router_id,
+                    %bob_router_id,
+                    ?nonce,
+                    ?relay_tag,
+                    ?error,
+                    "failed to send relay request to bob",
+                );
+
+                Err(RelayError::RelayRequestSendFailure)
+            }
+        }
+    }
+
+    /// Handle `HolePunch` message.
+    ///
+    /// Decrypt and parse `HolePunch` message, locate `RelayResponse` block
+    /// and check if the request was accepted.
+    ///
+    /// If no, return an error.
+    /// If yes, return a (Charlie's router ID, Charlie's address, token) tuple.
+    pub fn handle_hole_punch(
+        &mut self,
+        datagram: Vec<u8>,
+        pkt_num: u32,
+        src_id: u64,
+    ) -> Result<(RouterId, SocketAddr, u64), Ssu2Error> {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?src_id,
+            ?pkt_num,
+            "handle out-of-session holepunch"
+        );
+
+        if datagram.len() <= 32 {
+            return Err(Ssu2Error::Relay(RelayError::InvalidHolePunch));
+        }
+
+        let Some(RelayProcess {
+            bob_router_id,
+            charlie_router_id,
+            created,
+            charlie_verifying_key,
+            relay_tag,
+        }) = self.active_outbound.remove(&src_id)
+        else {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?src_id,
+                "unrecognized relay process",
+            );
+            return Err(Ssu2Error::Relay(RelayError::UnknownRelayProcess));
+        };
+
+        let ad = datagram[..32].to_vec();
+        let mut datagram = datagram[32..].to_vec();
+
+        ChaChaPoly::with_nonce(&self.intro_key, pkt_num as u64)
+            .decrypt_with_ad(&ad, &mut datagram)?;
+
+        // locate `RelayResponse` block from `datagram`
+        let Some(Block::RelayResponse {
+            nonce,
+            address,
+            token,
+            rejection,
+            message,
+            signature,
+        }) = Block::parse::<R>(&datagram)
+            .map_err(|_| Ssu2Error::Malformed)?
+            .into_iter()
+            .find(|block| core::matches!(block, Block::RelayResponse { .. }))
+        else {
+            return Err(Ssu2Error::Relay(RelayError::NoRelayResponse));
+        };
+
+        let (token, address, signature) = match (rejection, token, address, &signature) {
+            (None, Some(token), Some(address), Some(signature)) => (token, address, signature),
+            (Some(rejection), ..) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?nonce,
+                    ?rejection,
+                    "relay request rejected",
+                );
+
+                return Err(Ssu2Error::Relay(RelayError::Rejected));
+            }
+            (_, None, _, _) | (_, _, None, _) | (_, _, _, None) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?nonce,
+                    token_exists = ?token.is_some(),
+                    address_exists = ?address.is_some(),
+                    signature_exists = ?signature.is_some(),
+                    "unable to handle relay response, token, address or signature missing",
+                );
+
+                return Err(Ssu2Error::Relay(RelayError::InvalidHolePunch));
+            }
+        };
+
+        // verify signature of `RelayResponse` included in `HolePunch`
+        {
+            let mut payload = BytesMut::with_capacity(message.len() + 64);
+            payload.put_slice(b"RelayAgreementOK");
+            payload.put_slice(&bob_router_id.to_vec());
+            payload.put_slice(&message);
+
+            if charlie_verifying_key.verify(&payload, signature).is_err() {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?nonce,
+                    "invalid signature for relay response",
+                );
+
+                return Err(Ssu2Error::Relay(RelayError::InvalidSignature));
+            }
+        }
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?nonce,
+            ?relay_tag,
+            %charlie_router_id,
+            %bob_router_id,
+            elapsed = ?created.elapsed(),
+            "relay request accepted",
+        );
+
+        Ok((charlie_router_id, address, token))
     }
 
     /// Send relay request/intro rejection.
@@ -410,7 +711,7 @@ impl<R: Runtime> RelayManager<R> {
                     "relay intro sent to charlie",
                 );
 
-                self.active_relays.insert(nonce, tx);
+                self.active_inbound.insert(nonce, tx);
             }
             Err(error) => {
                 tracing::debug!(
@@ -624,44 +925,117 @@ impl<R: Runtime> RelayManager<R> {
         message: Vec<u8>,
         signature: Option<Vec<u8>>,
     ) {
-        tracing::debug!(
+        let src_id = (!(((nonce as u64) << 32) | (nonce as u64))).to_be();
+
+        if let Some(tx) = self.active_inbound.remove(&nonce) {
+            tracing::trace!(
+                target: LOG_TARGET,
+                ?nonce,
+                ?address,
+                ?rejection,
+                ?token,
+                "send relay response to alice",
+            );
+
+            if let Err(error) = tx.try_send(RelayCommand::RelayResponse {
+                nonce,
+                rejection,
+                message,
+                signature,
+                token,
+            }) {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?nonce,
+                    ?error,
+                    "failed to send relay response to alice",
+                );
+            }
+
+            return;
+        }
+
+        let Some(RelayProcess {
+            bob_router_id,
+            charlie_router_id,
+            created,
+            charlie_verifying_key,
+            relay_tag,
+        }) = self.active_outbound.remove(&src_id)
+        else {
+            tracing::debug!(
+                target: LOG_TARGET,
+                ?nonce,
+                "unrecognized relay process",
+            );
+            return;
+        };
+
+        tracing::trace!(
             target: LOG_TARGET,
             ?nonce,
+            ?relay_tag,
+            ?rejection,
+            ?token,
+            elapsed = ?created.elapsed(),
             "handle relay response",
         );
 
-        match self.active_relays.remove(&nonce) {
-            Some(tx) => {
-                tracing::trace!(
+        let (token, address, signature) = match (rejection, token, address, &signature) {
+            (None, Some(token), Some(address), Some(signature)) => (token, address, signature),
+            (Some(rejection), ..) => {
+                tracing::debug!(
                     target: LOG_TARGET,
                     ?nonce,
-                    ?address,
                     ?rejection,
-                    ?token,
-                    "send relay response to alice",
+                    "relay request rejected",
                 );
 
-                if let Err(error) = tx.try_send(RelayCommand::RelayResponse {
-                    nonce,
-                    rejection,
-                    message,
-                    signature,
-                    token,
-                }) {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        ?nonce,
-                        ?error,
-                        "failed to send relay response to alice",
-                    );
-                }
+                return self.pending_events.push_back(RelayManagerEvent::RelayFailure {
+                    router_id: charlie_router_id,
+                });
             }
-            None => tracing::debug!(
-                target: LOG_TARGET,
-                ?nonce,
-                "active relay agreement does not exist, ignoring",
-            ),
+            (_, None, _, _) | (_, _, None, _) | (_, _, _, None) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?nonce,
+                    token_exists = ?token.is_some(),
+                    address_exists = ?address.is_some(),
+                    signature_exists = ?signature.is_some(),
+                    "unable to handle relay response, token, address or signature missing",
+                );
+
+                return self.pending_events.push_back(RelayManagerEvent::RelayFailure {
+                    router_id: charlie_router_id,
+                });
+            }
+        };
+
+        // verify signature
+        {
+            let mut payload = BytesMut::with_capacity(message.len() + 64);
+            payload.put_slice(b"RelayAgreementOK");
+            payload.put_slice(&bob_router_id.to_vec());
+            payload.put_slice(&message);
+
+            if charlie_verifying_key.verify(&payload, signature).is_err() {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?nonce,
+                    "invalid signature for relay response",
+                );
+
+                return self.pending_events.push_back(RelayManagerEvent::RelayFailure {
+                    router_id: charlie_router_id,
+                });
+            }
         }
+
+        self.pending_events.push_back(RelayManagerEvent::RelaySuccess {
+            address,
+            router_id: charlie_router_id,
+            token,
+        });
     }
 }
 
@@ -835,6 +1209,7 @@ mod tests {
 
         // we are bob
         let mut relay = RelayManager::<MockRuntime>::new(
+            [0xab; 32],
             RouterContextBuilder::default()
                 .with_router_info(
                     bob.router_info.clone(),
@@ -914,7 +1289,7 @@ mod tests {
             _ => panic!("invalid command"),
         }
         assert!(alice_rx.try_recv().is_err());
-        assert!(relay.active_relays.get(&nonce).is_some());
+        assert!(relay.active_inbound.get(&nonce).is_some());
     }
 
     #[tokio::test]
@@ -925,6 +1300,7 @@ mod tests {
 
         // we are bob
         let mut relay = RelayManager::<MockRuntime>::new(
+            [0xab; 32],
             RouterContextBuilder::default()
                 .with_router_info(
                     bob.router_info.clone(),
@@ -1017,7 +1393,7 @@ mod tests {
             }
             _ => panic!("invalid command"),
         }
-        assert!(relay.active_relays.get(&nonce).is_none());
+        assert!(relay.active_inbound.get(&nonce).is_none());
     }
 
     #[tokio::test]
@@ -1030,6 +1406,7 @@ mod tests {
         //
         // do not add alice to router storage
         let mut relay = RelayManager::<MockRuntime>::new(
+            [0xab; 32],
             RouterContextBuilder::default()
                 .with_router_info(
                     bob.router_info.clone(),
@@ -1118,7 +1495,7 @@ mod tests {
             _ => panic!("invalid command"),
         }
         assert!(charlie_rx.try_recv().is_err());
-        assert!(relay.active_relays.get(&nonce).is_none());
+        assert!(relay.active_inbound.get(&nonce).is_none());
     }
 
     #[tokio::test]
@@ -1129,6 +1506,7 @@ mod tests {
 
         // we are bob
         let mut relay = RelayManager::<MockRuntime>::new(
+            [0xab; 32],
             RouterContextBuilder::default()
                 .with_profile_storage({
                     let storage = ProfileStorage::new(&[], &[]);
@@ -1226,7 +1604,7 @@ mod tests {
             _ => panic!("invalid command"),
         }
         assert!(charlie_rx.try_recv().is_err());
-        assert!(relay.active_relays.get(&nonce).is_none());
+        assert!(relay.active_inbound.get(&nonce).is_none());
     }
 
     #[tokio::test]
@@ -1237,6 +1615,7 @@ mod tests {
 
         // we are charlie
         let mut relay = RelayManager::<MockRuntime>::new(
+            [0xab; 32],
             RouterContextBuilder::default()
                 .with_router_info(
                     charlie.router_info.clone(),
@@ -1376,6 +1755,7 @@ mod tests {
         // alice is not found in router storage but their router info
         // is provided in a router info block in-session
         let mut relay = RelayManager::<MockRuntime>::new(
+            [0xab; 32],
             RouterContextBuilder::default()
                 .with_router_info(
                     charlie.router_info.clone(),
@@ -1504,6 +1884,7 @@ mod tests {
 
         // we are charlie
         let mut relay = RelayManager::<MockRuntime>::new(
+            [0xab; 32],
             RouterContextBuilder::default()
                 .with_router_info(
                     charlie.router_info.clone(),
@@ -1598,6 +1979,7 @@ mod tests {
         //
         // alice is not found in router storage
         let mut relay = RelayManager::<MockRuntime>::new(
+            [0xab; 32],
             RouterContextBuilder::default()
                 .with_router_info(
                     charlie.router_info.clone(),
@@ -1694,6 +2076,7 @@ mod tests {
 
         // we are charlie
         let mut relay = RelayManager::<MockRuntime>::new(
+            [0xab; 32],
             RouterContextBuilder::default()
                 .with_router_info(
                     charlie.router_info.clone(),
@@ -1788,6 +2171,7 @@ mod tests {
 
         // we are charlie
         let mut relay = RelayManager::<MockRuntime>::new(
+            [0xab; 32],
             RouterContextBuilder::default()
                 .with_router_info(
                     charlie.router_info.clone(),
@@ -1878,6 +2262,7 @@ mod tests {
 
         // we are bob
         let mut relay = RelayManager::<MockRuntime>::new(
+            [0xab; 32],
             RouterContextBuilder::default()
                 .with_router_info(
                     bob.router_info.clone(),
@@ -1893,7 +2278,7 @@ mod tests {
         let (alice_tx, alice_rx) = channel(16);
 
         // create new active relay manually
-        relay.active_relays.insert(nonce, alice_tx);
+        relay.active_inbound.insert(nonce, alice_tx);
 
         // handle relay response for an active session
         relay.handle_relay_response(
@@ -1929,7 +2314,7 @@ mod tests {
             }
             _ => panic!("invalid command"),
         }
-        assert!(!relay.active_relays.contains_key(&nonce));
+        assert!(!relay.active_inbound.contains_key(&nonce));
     }
 
     #[tokio::test]
@@ -1938,6 +2323,7 @@ mod tests {
 
         // we are bob
         let mut relay = RelayManager::<MockRuntime>::new(
+            [0xab; 32],
             RouterContextBuilder::default()
                 .with_router_info(
                     bob.router_info.clone(),
@@ -1964,6 +2350,6 @@ mod tests {
             vec![],
             Some(vec![]),
         );
-        assert!(!relay.active_relays.contains_key(&nonce));
+        assert!(!relay.active_inbound.contains_key(&nonce));
     }
 }

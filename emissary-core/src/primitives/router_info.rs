@@ -315,6 +315,11 @@ impl RouterInfo {
         })
     }
 
+    /// Does the router support the relay protocol.
+    pub fn supports_relay(&self) -> bool {
+        self.addresses.iter().any(|address| address.supports_relay())
+    }
+
     /// Attempt to select best transport for an outbound connection.
     ///
     /// `supported` contains the transports the local router supports.
