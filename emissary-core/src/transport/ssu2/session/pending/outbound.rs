@@ -57,6 +57,7 @@ use core::{
     net::SocketAddr,
     pin::Pin,
     task::{Context, Poll},
+    time::Duration,
 };
 
 /// Logging target for the file.
@@ -118,6 +119,21 @@ pub struct OutboundSsu2Context<R: Runtime> {
 
 /// State for a pending outbound SSU2 session.
 enum PendingSessionState {
+    /// Send `SessionRequest` directly.
+    SendSessionRequest {
+        /// Local static key.
+        local_static_key: StaticPrivateKey,
+
+        /// Serialized local router info.
+        router_info: Bytes,
+
+        /// Remote router's static key.
+        static_key: StaticPublicKey,
+
+        /// Token received in `HolePunch`/`RelayResponse`.
+        token: u64,
+    },
+
     /// Awaiting `Retry` from remote router.
     AwaitingRetry {
         /// Local static key.
@@ -157,6 +173,10 @@ impl fmt::Debug for PendingSessionState {
         match self {
             PendingSessionState::AwaitingRetry { .. } =>
                 f.debug_struct("PendingSessionState::AwaitingRetry").finish_non_exhaustive(),
+            PendingSessionState::SendSessionRequest { token, .. } => f
+                .debug_struct("PendingSessionState::SendSessionRequest")
+                .field("token", &token)
+                .finish_non_exhaustive(),
             PendingSessionState::AwaitingSessionCreated { .. } => f
                 .debug_struct("PendingSessionState::AwaitingSessionCreated")
                 .finish_non_exhaustive(),
@@ -324,16 +344,10 @@ impl<R: Runtime> OutboundSsu2Session<R> {
             %router_id,
             ?dst_id,
             ?src_id,
+            ?token,
+            ?address,
             "send SessionRequest",
         );
-
-        let pkt = TokenRequestBuilder::default()
-            .with_dst_id(dst_id)
-            .with_src_id(src_id)
-            .with_intro_key(remote_intro_key)
-            .with_net_id(net_id)
-            .build::<R>()
-            .to_vec();
 
         Self {
             address,
@@ -345,7 +359,7 @@ impl<R: Runtime> OutboundSsu2Session<R> {
                 TryInto::<[u8; 32]>::try_into(chaining_key.to_vec()).expect("to succeed"),
                 TryInto::<[u8; 32]>::try_into(state.to_vec()).expect("to succeed"),
             ),
-            pkt_retransmitter: PacketRetransmitter::token_request(pkt.clone()),
+            pkt_retransmitter: PacketRetransmitter::inactive(Duration::from_secs(0)),
             remote_intro_key,
             request_tag: false, // don't request tag from a router that requires introduction
             router_id,
@@ -354,14 +368,57 @@ impl<R: Runtime> OutboundSsu2Session<R> {
             socket,
             src_id,
             started: R::now(),
-            state: PendingSessionState::AwaitingRetry {
+            state: PendingSessionState::SendSessionRequest {
+                token,
                 local_static_key,
                 router_info,
                 static_key,
             },
             transport_tx,
-            write_buffer: VecDeque::from([pkt]),
+            write_buffer: VecDeque::new(),
         }
+    }
+
+    /// Send `SessionRequest` with `token`.
+    fn send_session_request(
+        &mut self,
+        local_static_key: StaticPrivateKey,
+        router_info: Bytes,
+        static_key: StaticPublicKey,
+        token: u64,
+    ) {
+        // MixKey(DH())
+        let ephemeral_key = EphemeralPrivateKey::random(R::rng());
+        let cipher_key = self.noise_ctx.mix_key(&ephemeral_key, &static_key);
+
+        let mut message = SessionRequestBuilder::default()
+            .with_dst_id(self.dst_id)
+            .with_src_id(self.src_id)
+            .with_net_id(self.net_id)
+            .with_ephemeral_key(ephemeral_key.public())
+            .with_relay_tag_request(self.request_tag)
+            .with_token(token)
+            .build::<R>();
+
+        // MixHash(header), MixHash(aepk)
+        self.noise_ctx.mix_hash(message.header()).mix_hash(ephemeral_key.public());
+
+        message.encrypt_payload(&cipher_key, 0u64, self.noise_ctx.state());
+        message.encrypt_header(self.remote_intro_key, self.remote_intro_key);
+
+        // MixHash(ciphertext)
+        self.noise_ctx.mix_hash(message.payload());
+
+        // reset packet retransmitter to track `SessionRequest` and send the message to remote
+        let pkt = message.build().to_vec();
+        self.pkt_retransmitter = PacketRetransmitter::session_request(pkt.clone());
+        self.write_buffer.push_back(pkt);
+
+        self.state = PendingSessionState::AwaitingSessionCreated {
+            ephemeral_key,
+            local_static_key,
+            router_info,
+        };
     }
 
     /// Handle `Retry`.
@@ -474,38 +531,10 @@ impl<R: Runtime> OutboundSsu2Session<R> {
             ),
         }
 
-        // MixKey(DH())
-        let ephemeral_key = EphemeralPrivateKey::random(R::rng());
-        let cipher_key = self.noise_ctx.mix_key(&ephemeral_key, &static_key);
-
-        let mut message = SessionRequestBuilder::default()
-            .with_dst_id(self.dst_id)
-            .with_src_id(self.src_id)
-            .with_net_id(self.net_id)
-            .with_ephemeral_key(ephemeral_key.public())
-            .with_relay_tag_request(self.request_tag)
-            .with_token(token)
-            .build::<R>();
-
-        // MixHash(header), MixHash(aepk)
-        self.noise_ctx.mix_hash(message.header()).mix_hash(ephemeral_key.public());
-
-        message.encrypt_payload(&cipher_key, 0u64, self.noise_ctx.state());
-        message.encrypt_header(self.remote_intro_key, self.remote_intro_key);
-
-        // MixHash(ciphertext)
-        self.noise_ctx.mix_hash(message.payload());
-
-        // reset packet retransmitter to track `SessionRequest` and send the message to remote
-        let pkt = message.build().to_vec();
-        self.pkt_retransmitter = PacketRetransmitter::session_request(pkt.clone());
-        self.write_buffer.push_back(pkt);
-
-        self.state = PendingSessionState::AwaitingSessionCreated {
-            ephemeral_key,
-            local_static_key,
-            router_info,
-        };
+        // send session request
+        //
+        // state transitions to `AwaitingSessionCreated`
+        self.send_session_request(local_static_key, router_info, static_key, token);
 
         Ok(None)
     }
@@ -814,7 +843,7 @@ impl<R: Runtime> OutboundSsu2Session<R> {
                 router_info,
             } => self.on_session_created(pkt, ephemeral_key, local_static_key, router_info),
             PendingSessionState::AwaitingFirstAck { relay_tag } => self.on_data(pkt, relay_tag),
-            PendingSessionState::Poisoned => {
+            PendingSessionState::Poisoned | PendingSessionState::SendSessionRequest { .. } => {
                 tracing::warn!(
                     target: LOG_TARGET,
                     router_id = %self.router_id,
@@ -841,6 +870,18 @@ impl<R: Runtime> OutboundSsu2Session<R> {
     /// during negotiation, reports a connection failure to installed subsystems and returns the
     /// session status.
     pub async fn run(mut self) -> PendingSsu2SessionStatus<R> {
+        match core::mem::replace(&mut self.state, PendingSessionState::Poisoned) {
+            PendingSessionState::SendSessionRequest {
+                local_static_key,
+                router_info,
+                static_key,
+                token,
+            } => self.send_session_request(local_static_key, router_info, static_key, token),
+            state => {
+                self.state = state;
+            }
+        }
+
         let status = (&mut self).await;
 
         if core::matches!(

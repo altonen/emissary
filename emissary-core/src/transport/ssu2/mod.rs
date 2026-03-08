@@ -257,13 +257,16 @@ mod tests {
     use crate::{
         crypto::{base64_encode, SigningPrivateKey},
         events::EventManager,
+        i2np::{Message, MessageType, I2NP_MESSAGE_EXPIRATION},
         primitives::Str,
         profile::ProfileStorage,
         runtime::mock::MockRuntime,
+        subsystem::{OutboundMessage, OutboundMessageRecycle},
+        timeout,
         transport::FirewallStatus,
     };
     use bytes::Bytes;
-    use std::time::Duration;
+    use std::{collections::HashMap, time::Duration};
     use thingbuf::mpsc::channel;
 
     #[tokio::test]
@@ -697,9 +700,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dialing_with_introducer_works() {
-        crate::util::init_logger();
-
+    async fn relay_works() {
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
 
@@ -755,7 +756,7 @@ mod tests {
         );
         let charlie = router_info1.identity.id();
         let bob = router_info2.identity.id();
-        let (event1_tx, _event1_rx) = channel(64);
+        let (event1_tx, event1_rx) = channel(64);
         let (event2_tx, _event2_rx) = channel(64);
 
         let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
@@ -816,12 +817,33 @@ mod tests {
         };
 
         // spawn router1 in the background
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
+            let mut routers =
+                HashMap::<RouterId, Sender<OutboundMessage, OutboundMessageRecycle>>::new();
+
             loop {
-                match transport1.next().await.unwrap() {
-                    TransportEvent::ConnectionEstablished { router_id, .. } =>
-                        transport1.accept(&router_id),
-                    _ => {}
+                tokio::select! {
+                    event = transport1.next() => match event.unwrap() {
+                        TransportEvent::ConnectionEstablished { router_id, .. } => {
+                            transport1.accept(&router_id);
+                        }
+                        _ => {}
+                    },
+                    event = event1_rx.recv() => match event.unwrap() {
+                        SubsystemEvent::ConnectionEstablished { router_id: router, tx } => {
+                            routers.insert(router, tx);
+                        }
+                        SubsystemEvent::Message { messages } => {
+                            if messages.iter().any(|(_, message)| {
+                                message.message_type == MessageType::DatabaseStore
+                                && message.message_id == 1337
+                                && message.payload == vec![1,3,3,7]
+                            }) {
+                                break
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
         });
@@ -871,8 +893,7 @@ mod tests {
             &signing3,
             false,
         );
-        let alice = router_info3.identity.id();
-        let (event3_tx, _event3_rx) = channel(64);
+        let (event3_tx, event3_rx) = channel(64);
         let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
         storage.add_router(router_info2.clone());
 
@@ -907,17 +928,53 @@ mod tests {
                 _ = tokio::time::sleep(Duration::from_secs(5)) => panic!("timeout"),
             }
         }
-
-        tracing::info!("\n\n");
-        tracing::error!("alice = {alice}");
-        tracing::error!("bob = {bob}");
-        tracing::error!("charlie = {charlie}");
-        tracing::info!("\n\n\n\n");
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        // ignore first connct
+        let _tx = match timeout!(event3_rx.recv()).await.unwrap().unwrap() {
+            SubsystemEvent::ConnectionEstablished {
+                tx,
+                router_id: router,
+            } => {
+                assert_eq!(router, bob);
+                tx
+            }
+            _ => panic!("invalid event"),
+        };
 
         // connect to router1 with the help of router2
         transport3.connect(router_info1);
 
-        while let Some(_) = transport3.next().await {}
+        while let Some(event) = transport3.next().await {
+            match event {
+                TransportEvent::ConnectionEstablished { router_id, .. } => {
+                    transport3.accept(&router_id);
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        let tx = match timeout!(event3_rx.recv()).await.unwrap().unwrap() {
+            SubsystemEvent::ConnectionEstablished {
+                tx,
+                router_id: router,
+            } => {
+                assert_eq!(router, charlie);
+                tx
+            }
+            _ => panic!("invalid event"),
+        };
+
+        // send message from alice to charlie
+        tx.send(OutboundMessage::Message(Message {
+            message_type: MessageType::DatabaseStore,
+            message_id: 1337,
+            expiration: MockRuntime::time_since_epoch() + I2NP_MESSAGE_EXPIRATION,
+            payload: vec![1, 3, 3, 7],
+        }))
+        .await
+        .unwrap();
+
+        // verify charlie receives the message
+        let _ = timeout!(handle).await.unwrap().unwrap();
     }
 }

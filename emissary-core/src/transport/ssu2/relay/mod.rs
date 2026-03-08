@@ -17,7 +17,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    crypto::{chachapoly::ChaChaPoly, SigningPublicKey},
+    crypto::{chachapoly::ChaChaPoly, SigningPublicKey, StaticPublicKey},
     error::{RelayError, Ssu2Error},
     primitives::{RouterAddress, RouterId, RouterInfo},
     router::context::RouterContext,
@@ -100,6 +100,28 @@ pub enum RelayManagerEvent {
         /// Router ID of Charlie.
         router_id: RouterId,
     },
+}
+
+/// Context for a relayed connection.
+pub struct RelayConnection {
+    /// Destination connection ID.
+    ///
+    /// Derived from random nonce.
+    pub dst_id: u64,
+
+    /// Intro key if Charlie.
+    pub intro_key: [u8; 32],
+
+    /// Source connection ID.
+    ///
+    /// Derived from random nonce.
+    pub src_id: u64,
+
+    /// SSU2 static key of Charlie.
+    pub static_key: StaticPublicKey,
+
+    /// Verifying key of Charlie.
+    pub verifying_key: SigningPublicKey,
 }
 
 /// Relay client.
@@ -326,22 +348,25 @@ impl<R: Runtime> RelayManager<R> {
     }
 
     /// Send relay request to one of the introducers listed in `router_info`.
-    pub fn send_relay_request(&mut self, router_info: RouterInfo) -> Result<(), RelayError> {
+    pub fn send_relay_request(
+        &mut self,
+        router_info: RouterInfo,
+    ) -> Result<RelayConnection, RelayError> {
         let charlie_router_id = router_info.identity.id();
         let charlie_verifying_key = router_info.identity.signing_key();
 
-        let introducers = match router_info
+        let (introducers, intro_key, static_key) = match router_info
             .addresses()
             .find(|address| core::matches!(address, RouterAddress::Ssu2 { .. }))
         {
             Some(RouterAddress::Ssu2 {
                 introducers,
                 cost: _,
-                static_key: _,
-                intro_key: _,
+                static_key,
+                intro_key,
                 options: _,
                 socket_address: _,
-            }) => introducers,
+            }) => (introducers, intro_key, static_key),
             _ => return Err(RelayError::NoAddress),
         };
 
@@ -418,7 +443,13 @@ impl<R: Runtime> RelayManager<R> {
                     },
                 );
 
-                Ok(())
+                Ok(RelayConnection {
+                    dst_id,
+                    intro_key: *intro_key,
+                    src_id,
+                    static_key: static_key.clone(),
+                    verifying_key: charlie_verifying_key.clone(),
+                })
             }
             Err(error) => {
                 tracing::debug!(

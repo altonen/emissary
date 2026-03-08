@@ -30,7 +30,8 @@ use crate::{
             metrics::*,
             peer_test::{PeerTestManager, PeerTestManagerEvent},
             relay::{
-                types::RelayTagRequested, RelayManager, RelayManagerEvent, INTRODUCER_EXPIRATION,
+                types::RelayTagRequested, RelayConnection, RelayManager, RelayManagerEvent,
+                INTRODUCER_EXPIRATION,
             },
             session::{
                 active::{Ssu2Session, Ssu2SessionContext},
@@ -206,7 +207,7 @@ pub struct Ssu2Socket<R: Runtime> {
     pending_pkts: VecDeque<(BytesMut, SocketAddr)>,
 
     /// Pending outbound relay connections.
-    pending_relays: HashSet<RouterId>,
+    pending_relays: HashMap<RouterId, RelayConnection>,
 
     /// Pending SSU2 sessions.
     pending_sessions: R::JoinSet<PendingSsu2SessionStatus<R>>,
@@ -282,7 +283,7 @@ impl<R: Runtime> Ssu2Socket<R> {
             pending_events: VecDeque::new(),
             pending_outbound: HashMap::new(),
             pending_pkts: VecDeque::new(),
-            pending_relays: HashSet::new(),
+            pending_relays: HashMap::new(),
             pending_sessions: R::join_set(),
             read_buffer: vec![0u8; DATAGRAM_MAX_SIZE],
             relay_manager: RelayManager::new(intro_key, router_ctx.clone(), socket.clone()),
@@ -510,13 +511,13 @@ impl<R: Runtime> Ssu2Socket<R> {
         let router_id = router_info.identity.id();
 
         match self.relay_manager.send_relay_request(router_info) {
-            Ok(()) => {
+            Ok(connection) => {
                 tracing::trace!(
                     target: LOG_TARGET,
                     %router_id,
                     "relay request sent",
                 );
-                self.pending_relays.insert(router_id);
+                self.pending_relays.insert(router_id, connection);
             }
             Err(error) => {
                 tracing::warn!(
@@ -531,7 +532,14 @@ impl<R: Runtime> Ssu2Socket<R> {
 
     /// Send `SessionRequest` to router using `token`.
     fn send_session_request(&mut self, router_id: RouterId, address: SocketAddr, token: u64) {
-        if !self.pending_relays.remove(&router_id) {
+        let Some(RelayConnection {
+            intro_key,
+            static_key,
+            verifying_key,
+            dst_id,
+            src_id,
+        }) = self.pending_relays.remove(&router_id)
+        else {
             tracing::trace!(
                 target: LOG_TARGET,
                 ?router_id,
@@ -540,9 +548,55 @@ impl<R: Runtime> Ssu2Socket<R> {
                 "pending relay does not exist",
             );
             return;
-        }
+        };
 
-        todo!()
+        let our_router_info = self.router_ctx.router_info();
+        let state = Sha256::new().update(&self.outbound_state).update(&static_key).finalize();
+        let transport_tx = self.transport_tx.clone();
+
+        tracing::debug!(
+            target: LOG_TARGET,
+            %router_id,
+            ?src_id,
+            ?dst_id,
+            ?address,
+            "establish outbound session",
+        );
+
+        let (tx, rx) = channel(CHANNEL_SIZE);
+        self.sessions.insert(src_id, tx);
+        self.pending_outbound.insert(address, intro_key);
+        self.router_ctx.metrics_handle().counter(NUM_OUTBOUND_SSU2).increment(1);
+
+        self.pending_sessions.push(
+            OutboundSsu2Session::<R>::from_token(
+                OutboundSsu2Context {
+                    address,
+                    chaining_key: self.chaining_key.clone(),
+                    dst_id,
+                    local_intro_key: self.intro_key,
+                    local_static_key: self.static_key.clone(),
+                    net_id: self.router_ctx.net_id(),
+                    remote_intro_key: intro_key,
+                    request_tag: false,
+                    router_id,
+                    router_info: our_router_info,
+                    rx,
+                    socket: self.socket.clone(),
+                    src_id,
+                    state,
+                    static_key: static_key.clone(),
+                    transport_tx,
+                    verifying_key,
+                },
+                token,
+            )
+            .run(),
+        );
+
+        if let Some(waker) = self.waker.take() {
+            waker.wake_by_ref();
+        }
     }
 
     /// Attempt to establish outbound connection remote router.
