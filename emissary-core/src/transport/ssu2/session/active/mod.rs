@@ -220,7 +220,7 @@ pub struct Ssu2Session<R: Runtime> {
     recv_key_ctx: KeyContext,
 
     /// Relay handle.
-    relay_handle: RelayHandle,
+    relay_handle: RelayHandle<R>,
 
     /// Remote ACK manager.
     remote_ack: RemoteAckManager,
@@ -261,7 +261,7 @@ impl<R: Runtime> Ssu2Session<R> {
         transport_tx: Sender<SubsystemEvent>,
         router_ctx: RouterContext<R>,
         peer_test_handle: PeerTestHandle<R>,
-        relay_handle: RelayHandle,
+        relay_handle: RelayHandle<R>,
     ) -> Self {
         let (msg_tx, msg_rx) = with_recycle(CMD_CHANNEL_SIZE, OutboundMessageRecycle::default());
         let metrics = router_ctx.metrics_handle().clone();
@@ -495,14 +495,7 @@ impl<R: Runtime> Ssu2Session<R> {
                 } => {
                     self.remote_ack.register_pkt(pkt_num);
                     self.ack_timer.schedule_ack(self.transmission.round_trip_time());
-                    self.relay_handle.handle_relay_request(
-                        self.router_id.clone(),
-                        nonce,
-                        relay_tag,
-                        address,
-                        message,
-                        signature,
-                    );
+                    self.handle_relay_request(nonce, relay_tag, address, message, signature);
                 }
                 Block::RelayIntro {
                     router_id,
@@ -514,15 +507,8 @@ impl<R: Runtime> Ssu2Session<R> {
                 } => {
                     self.remote_ack.register_pkt(pkt_num);
                     self.ack_timer.schedule_ack(self.transmission.round_trip_time());
-                    self.relay_handle.handle_relay_intro(
-                        router_id,
-                        self.router_id.clone(),
-                        self.pending_router_info.take(),
-                        nonce,
-                        relay_tag,
-                        address,
-                        message,
-                        signature,
+                    self.handle_relay_intro(
+                        router_id, nonce, relay_tag, address, message, signature,
                     );
                 }
                 Block::RelayResponse {
@@ -535,7 +521,7 @@ impl<R: Runtime> Ssu2Session<R> {
                 } => {
                     self.remote_ack.register_pkt(pkt_num);
                     self.ack_timer.schedule_ack(self.transmission.round_trip_time());
-                    self.relay_handle.handle_relay_response(
+                    self.handle_relay_response(
                         nonce, address, token, rejection, message, signature,
                     );
                 }

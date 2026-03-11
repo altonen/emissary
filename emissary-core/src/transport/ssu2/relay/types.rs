@@ -16,9 +16,13 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::primitives::{RouterId, RouterInfo};
+use crate::{
+    primitives::{RouterId, RouterInfo},
+    runtime::Runtime,
+    transport::ssu2::duplicate::DuplicateFilter,
+};
 
-use futures::Stream;
+use futures::{FutureExt, Stream};
 use thingbuf::mpsc::{channel, Receiver, Sender};
 
 use alloc::{boxed::Box, vec::Vec};
@@ -175,26 +179,30 @@ pub enum RelayCommand {
 }
 
 /// Relay handle given to active SSU2 sessions, allowing them to interact with `RelayManager`.
-pub struct RelayHandle {
+pub struct RelayHandle<R: Runtime> {
     /// RX channel for receiving `PeerTestCommand`s from `RelayManager`.
     cmd_rx: Receiver<RelayCommand>,
 
     /// TX channel given to `RelayManager`.
     cmd_tx: Sender<RelayCommand>,
 
+    /// Duplicate filter.
+    duplicate_filter: DuplicateFilter<R>,
+
     /// TX channel for sending events to `RelayManager`.
     event_tx: Sender<RelayEvent>,
 }
 
-impl RelayHandle {
+impl<R: Runtime> RelayHandle<R> {
     /// Create new `RelayHandle`.
     pub fn new(event_tx: Sender<RelayEvent>) -> Self {
         let (cmd_tx, cmd_rx) = channel(32);
 
         Self {
-            event_tx,
             cmd_rx,
             cmd_tx,
+            duplicate_filter: DuplicateFilter::new(),
+            event_tx,
         }
     }
 
@@ -270,11 +278,17 @@ impl RelayHandle {
     }
 }
 
-impl Stream for RelayHandle {
+impl<R: Runtime> Stream for RelayHandle<R> {
     type Item = RelayCommand;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Poll::Ready(futures::ready!(self.cmd_rx.poll_recv(cx)))
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if let Poll::Ready(event) = self.cmd_rx.poll_recv(cx) {
+            return Poll::Ready(event);
+        }
+
+        let _ = self.duplicate_filter.poll_unpin(cx);
+
+        Poll::Pending
     }
 }
 

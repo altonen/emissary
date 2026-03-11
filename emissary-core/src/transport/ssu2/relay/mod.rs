@@ -254,7 +254,7 @@ impl<R: Runtime> RelayManager<R> {
     }
 
     /// Get `RelayHandle` for an active session.
-    pub fn handle(&self) -> RelayHandle {
+    pub fn handle(&self) -> RelayHandle<R> {
         RelayHandle::new(self.event_tx.clone())
     }
 
