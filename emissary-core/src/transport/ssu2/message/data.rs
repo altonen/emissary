@@ -244,9 +244,7 @@ pub enum RelayBlock {
         message: Vec<u8>,
 
         /// Signature for `message`.
-        ///
-        /// `None` if rejected by Bob.
-        signature: Option<Vec<u8>>,
+        signature: Vec<u8>,
 
         /// Token.
         ///
@@ -284,7 +282,7 @@ impl RelayBlock {
                 overhead
                     + 1 // code
                     + message.len()
-                    + signature.as_ref().map_or(0, |s| s.len())
+                    + signature.len()
                     + token.map_or(0, |_| TOKEN_LEN),
             Self::Intro {
                 message,
@@ -546,8 +544,8 @@ impl<'a> DataMessageBuilder<'a> {
                             out.put_u8(BlockType::RelayRequest.as_u8());
                             out.put_u16((1 + message.len() + signature.len()) as u16);
                             out.put_u8(0); // flag
-                            out.put_slice(&message);
-                            out.put_slice(&signature);
+                            out.put_slice(message);
+                            out.put_slice(signature);
                         }
                         RelayBlock::Response {
                             rejection,
@@ -558,17 +556,14 @@ impl<'a> DataMessageBuilder<'a> {
                             out.put_u8(BlockType::RelayResponse.as_u8());
                             out.put_u16(
                                 (2 + message.len()
-                                    + signature.as_ref().map_or(0, |s| s.len())
+                                    + signature.len()
                                     + token.map_or(0, |_| TOKEN_LEN))
                                     as u16,
                             );
                             out.put_u8(0);
                             out.put_u8(rejection.map_or(0, |reason| reason.as_u8()));
                             out.put_slice(message);
-
-                            if let Some(signature) = signature {
-                                out.put_slice(signature);
-                            }
+                            out.put_slice(signature);
 
                             if let Some(token) = token {
                                 out.put_u64_le(*token);

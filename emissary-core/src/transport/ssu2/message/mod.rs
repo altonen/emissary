@@ -409,9 +409,7 @@ pub enum Block {
         message: Vec<u8>,
 
         /// Signature for `message`.
-        ///
-        /// `None` if rejected by Bob.
-        signature: Option<Vec<u8>>,
+        signature: Vec<u8>,
     },
 
     /// Relay intro.
@@ -1257,19 +1255,7 @@ impl Block {
             }
             _ => return Err(Err::Error(Ssu2ParseError::InvalidBitstream)),
         };
-        // attempt to parse signature, bob rejection responses do not have it
-        //
-        // 128 is an ambiguous code since we don't know who sent the message
-        // and technically the signature could be conditionally parsed by comparing
-        // current offset with message size but doesn't seem worth it
-        let (rest, signature) = match code {
-            1..=63 => (rest, None),
-            _ => {
-                let (rest, signature) = take(ED25519_SIGNATURE_LEN)(rest)?;
-
-                (rest, Some(signature.to_vec()))
-            }
-        };
+        let (rest, signature) = take(ED25519_SIGNATURE_LEN)(rest)?;
 
         // if there are bytes left in the message, extract token
         let message_size = 4usize // nonce
@@ -1282,7 +1268,7 @@ impl Block {
             let left = (size as usize)
                 .saturating_sub(message_size)
                 .saturating_sub(2) // flag + code
-                .saturating_sub(signature.as_ref().map_or(0, |s| s.len()));
+                .saturating_sub(signature.len());
 
             if left == TOKEN_LEN {
                 let (rest, token) = le_u64(rest)?;
@@ -1301,7 +1287,7 @@ impl Block {
                 address,
                 nonce,
                 message: message_start[..message_size].to_vec(),
-                signature,
+                signature: signature.to_vec(),
             },
         ))
     }

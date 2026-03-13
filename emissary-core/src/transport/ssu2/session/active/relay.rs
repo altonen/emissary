@@ -29,6 +29,7 @@ use crate::{
     },
 };
 
+use alloc::vec::Vec;
 use core::net::SocketAddr;
 
 /// Logging target for the file.
@@ -49,7 +50,7 @@ impl<R: Runtime> Ssu2Session<R> {
         );
         self.router_ctx.metrics_handle().counter(DUPLICATE_PKT_COUNT).increment(1);
 
-        return false;
+        false
     }
 
     /// Handle relay request.
@@ -105,7 +106,7 @@ impl<R: Runtime> Ssu2Session<R> {
         token: Option<u64>,
         rejection: Option<RejectionReason>,
         message: Vec<u8>,
-        signature: Option<Vec<u8>>,
+        signature: Vec<u8>,
     ) {
         if self.insert_relay_message(nonce) {
             self.relay_handle
@@ -217,7 +218,7 @@ mod tests {
                 k_data: [0xdd; 32],
                 k_header_2: [0xee; 32],
             },
-            verifying_key: SigningPrivateKey::random(&mut rand::thread_rng()).public(),
+            verifying_key: SigningPrivateKey::random(&mut MockRuntime::rng()).public(),
         };
 
         let socket = <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
@@ -341,7 +342,7 @@ mod tests {
             None,
             Some(RejectionReason::Unspecified),
             vec![1, 3, 3, 7],
-            None,
+            vec![0xaa; 64],
         );
 
         // relay response sent to relay manager
@@ -366,7 +367,7 @@ mod tests {
             None,
             Some(RejectionReason::Unspecified),
             vec![1, 3, 3, 7],
-            None,
+            vec![0xaa; 64],
         );
 
         // verify that the duplicate message is not sent to relay manager

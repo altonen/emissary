@@ -109,9 +109,7 @@ pub enum RelayEvent {
         message: Vec<u8>,
 
         /// Signature for `message`.
-        ///
-        /// `None` if rejected by Bob.
-        signature: Option<Vec<u8>>,
+        signature: Vec<u8>,
     },
 
     /// Dummy event.
@@ -148,9 +146,7 @@ pub enum RelayCommand {
         message: Vec<u8>,
 
         /// Signature for `message`.
-        ///
-        /// `None` if rejected by Bob.
-        signature: Option<Vec<u8>>,
+        signature: Vec<u8>,
 
         /// Token for `SessionRequest`.
         ///
@@ -265,7 +261,7 @@ impl<R: Runtime> RelayHandle<R> {
         token: Option<u64>,
         rejection: Option<RejectionReason>,
         message: Vec<u8>,
-        signature: Option<Vec<u8>>,
+        signature: Vec<u8>,
     ) {
         let _ = self.event_tx.try_send(RelayEvent::RelayResponse {
             nonce,
