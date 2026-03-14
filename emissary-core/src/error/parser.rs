@@ -501,8 +501,8 @@ pub enum Ssu2ParseError {
     /// Empty router info block.
     EmptyRouterInfo,
 
-    /// Compressed router infos not supported.
-    CompressedRouterInfo,
+    /// Failed to compress router info.
+    CompressionFailure,
 
     /// Malformed router info.
     RouterInfo(RouterInfoParseError),

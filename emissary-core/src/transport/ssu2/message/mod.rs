@@ -671,14 +671,22 @@ impl Block {
             );
         }
 
-        // TODO: implement
-        if (flag >> 1) & 1 == 1 {
-            return Err(Err::Error(Ssu2ParseError::CompressedRouterInfo));
-        }
+        let (serialized, parsed) = if (flag >> 1) & 1 == 1 {
+            let router_info = R::gzip_decompress(router_info)
+                .ok_or(Err::Error(Ssu2ParseError::CompressionFailure))?;
 
-        let parsed = RouterInfo::parse::<R>(router_info)
-            .map_err(|error| Err::Error(Ssu2ParseError::RouterInfo(error)))?;
-        let serialized = Bytes::from(router_info.to_vec());
+            (
+                Bytes::from(router_info.to_vec()),
+                RouterInfo::parse::<R>(router_info)
+                    .map_err(|error| Err::Error(Ssu2ParseError::RouterInfo(error)))?,
+            )
+        } else {
+            (
+                Bytes::from(router_info.to_vec()),
+                RouterInfo::parse::<R>(router_info)
+                    .map_err(|error| Err::Error(Ssu2ParseError::RouterInfo(error)))?,
+            )
+        };
 
         Ok((
             rest,
@@ -2293,5 +2301,66 @@ impl<'a> HolePunchBuilder<'a> {
         out.put_slice(&payload);
 
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{primitives::RouterInfoBuilder, runtime::mock::MockRuntime};
+
+    #[tokio::test]
+    async fn compressed_router_info() {
+        let (router_info, _, signing_key) = RouterInfoBuilder::default().build();
+        let router_info = router_info.serialize(&signing_key);
+        let router_info = MockRuntime::gzip_compress(router_info).unwrap();
+
+        // try to parse router info without setting the flag
+        {
+            let payload = {
+                let mut out = BytesMut::with_capacity(2000);
+                out.put_u16((2 + router_info.len()) as u16);
+                out.put_u8(0u8);
+                out.put_u8(1u8);
+                out.put_slice(&router_info);
+
+                out
+            };
+
+            assert!(Block::parse_router_info::<MockRuntime>(&payload).is_err());
+        }
+
+        // set correct flag and parse the router info
+        {
+            let payload = {
+                let mut out = BytesMut::with_capacity(2000);
+                out.put_u16((2 + router_info.len()) as u16);
+                out.put_u8(1 << 1);
+                out.put_u8(1u8);
+                out.put_slice(&router_info);
+
+                out
+            };
+
+            assert!(Block::parse_router_info::<MockRuntime>(&payload).is_ok());
+        }
+
+        // compressed garbage should fail
+        {
+            let payload = {
+                let mut out = BytesMut::with_capacity(2000);
+                out.put_u16(130u16);
+                out.put_u8(1 << 1);
+                out.put_u8(1u8);
+                out.put_slice(&[0u8; 128]);
+
+                out
+            };
+
+            match Block::parse_router_info::<MockRuntime>(&payload).unwrap_err() {
+                Err::Error(Ssu2ParseError::CompressionFailure) => {}
+                error => panic!("unexpected failure: {error:?}"),
+            }
+        }
     }
 }
