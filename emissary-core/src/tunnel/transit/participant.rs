@@ -82,9 +82,6 @@ pub struct Participant<R: Runtime> {
     /// Subsystem handle.
     subsystem_handle: SubsystemHandle,
 
-    /// Total bandwidth.
-    total_bandwidth: usize,
-
     /// Tunnel ID.
     tunnel_id: TunnelId,
 
@@ -154,7 +151,6 @@ impl<R: Runtime> TransitTunnel<R> for Participant<R> {
             outbound_bandwidth: 0usize,
             started: Some(R::now()),
             subsystem_handle,
-            total_bandwidth: 0usize,
             tunnel_id,
             tunnel_keys,
         }
@@ -179,7 +175,6 @@ impl<R: Runtime> Future for Participant<R> {
                 }
                 Some(message) => {
                     self.inbound_bandwidth += message.serialized_len_short();
-                    self.total_bandwidth += message.serialized_len_short();
 
                     let MessageType::TunnelData = message.message_type else {
                         tracing::warn!(
@@ -205,7 +200,6 @@ impl<R: Runtime> Future for Participant<R> {
                     match self.handle_tunnel_data(&message) {
                         Ok((router, message)) => {
                             self.outbound_bandwidth += message.serialized_len_short();
-                            self.total_bandwidth += message.serialized_len_short();
 
                             match self.subsystem_handle.send(&router, message) {
                                 Ok(()) => {
@@ -241,7 +235,7 @@ impl<R: Runtime> Future for Participant<R> {
             if started.elapsed() > TERMINATION_TIMEOUT {
                 self.started = None;
 
-                if self.total_bandwidth == 0 {
+                if self.inbound_bandwidth == 0 && self.outbound_bandwidth == 0 {
                     tracing::debug!(
                         target: LOG_TARGET,
                         tunnel_id = %self.tunnel_id,
