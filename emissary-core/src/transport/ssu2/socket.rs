@@ -1074,12 +1074,17 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
                                 debug_assert!(false);
                             }
 
-                            // report external address to `PeerTestManager` so it can be used
-                            // for status detection and active peer tests
+                            // add new external address to `PeerTestManager` and `RelayManager` so
+                            // it can be used in peer tests and relay processes (if needed)
+                            //
+                            // also report the new address to `TransportManager`
                             if let Some(address) = external_address {
                                 if let Some(address) = this.detector.add_external_address(address) {
                                     this.peer_test_manager.add_external_address(address);
                                     this.relay_manager.add_external_address(address);
+
+                                    this.pending_events
+                                        .push_back(TransportEvent::ExternalAddress { address });
                                 }
                             }
 

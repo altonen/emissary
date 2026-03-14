@@ -325,6 +325,11 @@ impl<R: Runtime> Router<R> {
         // if they are, the router will always publish an RI with `G` flag
         transport_manager_builder.with_transit_tunnels_disabled(transit.is_none());
 
+        // if user specified caps override, add them to `TransportManager`
+        if let Some(caps) = config.caps {
+            transport_manager_builder.with_capabilities(caps.clone());
+        }
+
         // initialize and start tunnel manager
         //
         // acquire handle to exploratory tunnel pool which is given to `NetDb`

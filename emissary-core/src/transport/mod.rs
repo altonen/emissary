@@ -34,10 +34,16 @@ use futures::{FutureExt, Stream, StreamExt};
 use hashbrown::{HashMap, HashSet};
 use thingbuf::mpsc::{errors::TrySendError, Receiver, Sender};
 
-use alloc::{boxed::Box, format, string::ToString, vec, vec::Vec};
+use alloc::{
+    boxed::Box,
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 use core::{
     future::Future,
-    net::Ipv4Addr,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     pin::Pin,
     task::{Context, Poll},
     time::Duration,
@@ -289,6 +295,12 @@ pub enum TransportEvent {
         status: FirewallStatus,
     },
 
+    /// External address discovered.
+    ExternalAddress {
+        /// Our external address.
+        address: SocketAddr,
+    },
+
     /// New introducer
     IntroducerAdded {
         /// Relay tag.
@@ -324,6 +336,9 @@ pub trait Transport: Stream + Unpin + Send {
 pub struct TransportManagerBuilder<R: Runtime> {
     /// Allow local addresses.
     allow_local: bool,
+
+    /// Router capability override.
+    caps: Option<Str>,
 
     /// RX channel for receiving dial requests.
     dial_rx: Receiver<RouterId>,
@@ -368,6 +383,7 @@ impl<R: Runtime> TransportManagerBuilder<R> {
     ) -> Self {
         Self {
             allow_local,
+            caps: None,
             dial_rx,
             local_router_info,
             netdb_handle: None,
@@ -416,31 +432,39 @@ impl<R: Runtime> TransportManagerBuilder<R> {
         self
     }
 
+    /// Specify router capability override.
+    pub fn with_capabilities(&mut self, caps: String) -> &mut Self {
+        self.caps = Some(Str::from(caps));
+        self
+    }
+
     /// Build into [`TransportManager`].
     pub fn build(self) -> TransportManager<R> {
         TransportManager {
+            caps: self.caps,
             dial_rx: self.dial_rx,
             event_handle: self.router_ctx.event_handle().clone(),
             external_address: None,
+            firewall_status: FirewallStatus::Unknown,
             introducers: Vec::new(),
             local_router_info: self.local_router_info,
             netdb_handle: self.netdb_handle.expect("to exist"),
-            supported_transports: self.supported_transports,
             ntcp2_config: self.ntcp2_config,
             pending_connections: HashMap::new(),
             pending_introducers: HashMap::new(),
             pending_queries: HashSet::new(),
             pending_query_futures: R::join_set(),
-            transport_tx: self.transport_tx.clone(),
             poll_index: 0usize,
             router_ctx: self.router_ctx,
             // publish the router info 10 seconds after booting, otherwise republish it periodically
-            // in intervals of [`ROUTER_INFO_REPUBLISH_INTERVAL`]
+            // in intervals of `ROUTER_INFO_REPUBLISH_INTERVAL`
             router_info_republish_timer: R::timer(Duration::from_secs(10)),
             routers: HashSet::new(),
             ssu2_config: self.ssu2_config,
+            supported_transports: self.supported_transports,
             transit_tunnels_disabled: self.transit_tunnels_disabled,
             transports: self.transports,
+            transport_tx: self.transport_tx.clone(),
         }
     }
 }
@@ -481,6 +505,9 @@ struct IntroducerConnection {
 /// together with enabled, lower-level transports and polling for polling those
 /// transports so that they can make progress.
 pub struct TransportManager<R: Runtime> {
+    /// Router capability override.
+    caps: Option<Str>,
+
     /// RX channel for receiving dial requests.
     dial_rx: Receiver<RouterId>,
 
@@ -489,6 +516,9 @@ pub struct TransportManager<R: Runtime> {
 
     /// External address, if any.
     external_address: Option<Ipv4Addr>,
+
+    /// Firewall status.
+    firewall_status: FirewallStatus,
 
     /// Introducers.
     ///
@@ -957,6 +987,21 @@ impl<R: Runtime> TransportManager<R> {
             ?status,
             "firewall status update",
         );
+
+        self.firewall_status = status;
+    }
+
+    /// Handle discovered external address.
+    fn on_external_address(&mut self, address: SocketAddr) {
+        match address.ip() {
+            IpAddr::V4(address) if Some(address) != self.external_address =>
+                self.add_external_address(address),
+            _ => tracing::trace!(
+                target: LOG_TARGET,
+                ?address,
+                "ignoring discovered external address",
+            ),
+        }
     }
 
     /// Handle new introducer.
@@ -981,6 +1026,101 @@ impl<R: Runtime> TransportManager<R> {
         );
 
         self.introducers.retain(|(r, _, _)| r != router_id);
+    }
+
+    /// Attempt to publish our router info.
+    fn publish_router_info(&mut self) {
+        // current router capabilties
+        let mut caps = Str::from("L");
+
+        // reset publish time and serialize our new router info
+        self.local_router_info.published = Date::new(R::time_since_epoch().as_millis() as u64);
+
+        // publish `G`, i.e., rejecting all tunnels, if transit tunnels have been disabled
+        if self.transit_tunnels_disabled {
+            tracing::info!(
+                target: LOG_TARGET,
+                "transit tunnels disabled, publishing G",
+            );
+
+            caps += "G";
+        }
+
+        // update ssu2's address if we have any active introducers
+        if let Some(RouterAddress::Ssu2 { options, .. }) = self.local_router_info.ssu2_ipv4_mut() {
+            // remove old introducers
+            for i in 0..3 {
+                options.remove(&Str::from(format!("iexp{i}")));
+                options.remove(&Str::from(format!("ih{i}")));
+                options.remove(&Str::from(format!("itag{i}")));
+            }
+
+            // add introducers to our router info, skipping any expired introducers
+            let now = R::time_since_epoch();
+
+            for (i, (router_id, relay_tag, expires)) in self.introducers.iter().enumerate() {
+                if expires > &(now + INTRODUCER_EXPIRATION) {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        %router_id,
+                        ?relay_tag,
+                        expired = ?(*expires - now - INTRODUCER_EXPIRATION),
+                        "skip expired introducer"
+                    );
+                    continue;
+                }
+
+                options.insert(
+                    Str::from(format!("iexp{i}")),
+                    Str::from(expires.as_secs().to_string()),
+                );
+                options.insert(
+                    Str::from(format!("ih{i}")),
+                    Str::from(base64_encode(router_id.to_vec())),
+                );
+                options.insert(
+                    Str::from(format!("itag{i}")),
+                    Str::from(relay_tag.to_string()),
+                );
+            }
+        }
+
+        match self.firewall_status {
+            FirewallStatus::Unknown => tracing::info!(
+                target: LOG_TARGET,
+                "firewall status unknown, not publishing reachability caps",
+            ),
+            FirewallStatus::Ok => {
+                tracing::info!(
+                    target: LOG_TARGET,
+                    "router is not firewalled, publishing R",
+                );
+                caps += "R";
+            }
+            status => {
+                tracing::info!(
+                    target: LOG_TARGET,
+                    ?status,
+                    "router is firewalled, publishing U",
+                );
+                caps += "U";
+            }
+        }
+
+        // use user-provided caps if they exist, otherwise use the derived acps
+        self.local_router_info.options.insert(
+            Str::from("caps"),
+            self.caps.as_ref().map_or(caps, |caps| caps.clone()),
+        );
+
+        let serialized =
+            Bytes::from(self.local_router_info.serialize(self.router_ctx.signing_key()));
+
+        // reset router info in router context so all subsystems are using the latest version of
+        // it and publish it to netdb
+        self.router_ctx.set_router_info(serialized.clone());
+        self.netdb_handle
+            .publish_router_info(self.router_ctx.router_id().clone(), serialized);
     }
 }
 
@@ -1185,6 +1325,8 @@ impl<R: Runtime> Future for TransportManager<R> {
                     }
                     Poll::Ready(Some(TransportEvent::FirewallStatus { status })) =>
                         this.on_firewall_status(status),
+                    Poll::Ready(Some(TransportEvent::ExternalAddress { address })) =>
+                        this.on_external_address(address),
                     Poll::Ready(Some(TransportEvent::IntroducerAdded {
                         relay_tag,
                         router_id,
@@ -1319,73 +1461,11 @@ impl<R: Runtime> Future for TransportManager<R> {
         }
 
         if this.router_info_republish_timer.poll_unpin(cx).is_ready() {
-            // reset publish time and serialize our new router info
-            this.local_router_info.published = Date::new(R::time_since_epoch().as_millis() as u64);
-
-            // publish `G`, i.e., rejecting all tunnels, if transit tunnels have been disabled
-            if this.transit_tunnels_disabled {
-                tracing::trace!(
-                    target: LOG_TARGET,
-                    transit_tunnels_disabled = ?this.transit_tunnels_disabled,
-                    "publishing router info with `G`",
-                );
-
-                this.local_router_info.options.insert(Str::from("caps"), Str::from("GR"));
-            }
-
-            // update ssu2's address if we have any active introducers
-            if let Some(RouterAddress::Ssu2 { options, .. }) =
-                this.local_router_info.ssu2_ipv4_mut()
-            {
-                // remove old introducers
-                for i in 0..3 {
-                    options.remove(&Str::from(format!("iexp{i}")));
-                    options.remove(&Str::from(format!("ih{i}")));
-                    options.remove(&Str::from(format!("itag{i}")));
-                }
-
-                // add introducers to our router info, skipping any expired introducers
-                let now = R::time_since_epoch();
-
-                for (i, (router_id, relay_tag, expires)) in this.introducers.iter().enumerate() {
-                    if expires > &(now + INTRODUCER_EXPIRATION) {
-                        tracing::debug!(
-                            target: LOG_TARGET,
-                            %router_id,
-                            ?relay_tag,
-                            expired = ?(*expires - now - INTRODUCER_EXPIRATION),
-                            "skip expired introducer"
-                        );
-                        continue;
-                    }
-
-                    options.insert(
-                        Str::from(format!("iexp{i}")),
-                        Str::from(expires.as_secs().to_string()),
-                    );
-                    options.insert(
-                        Str::from(format!("ih{i}")),
-                        Str::from(base64_encode(router_id.to_vec())),
-                    );
-                    options.insert(
-                        Str::from(format!("itag{i}")),
-                        Str::from(relay_tag.to_string()),
-                    );
-                }
-            }
-
-            let serialized =
-                Bytes::from(this.local_router_info.serialize(this.router_ctx.signing_key()));
-
-            // reset router info in router context so all subsystems are using the latest version of
-            // it and publish it to netdb
-            this.router_ctx.set_router_info(serialized.clone());
-            this.netdb_handle
-                .publish_router_info(this.router_ctx.router_id().clone(), serialized);
-
             // reset timer and register it into the executor
             this.router_info_republish_timer = R::timer(ROUTER_INFO_REPUBLISH_INTERVAL);
             let _ = this.router_info_republish_timer.poll_unpin(cx);
+
+            this.publish_router_info();
         }
 
         if this.event_handle.poll_unpin(cx).is_ready() {
@@ -3000,6 +3080,8 @@ mod tests {
         ssu2: Option<Box<dyn Transport<Item = TransportEvent>>>,
         ntcp2: Option<Box<dyn Transport<Item = TransportEvent>>>,
         routers: Vec<RouterInfo>,
+        transit_tunnels_disabled: bool,
+        caps: Option<String>,
     }
 
     impl TestContextBuilder {
@@ -3015,6 +3097,16 @@ mod tests {
 
         fn with_router(mut self, router_info: RouterInfo) -> Self {
             self.routers.push(router_info);
+            self
+        }
+
+        fn with_transit_tunnels_disabled(mut self) -> Self {
+            self.transit_tunnels_disabled = true;
+            self
+        }
+
+        fn with_caps(mut self, caps: String) -> Self {
+            self.caps = Some(caps);
             self
         }
 
@@ -3077,6 +3169,14 @@ mod tests {
                 transport_tx,
             );
             builder.register_netdb_handle(handle);
+
+            if self.transit_tunnels_disabled {
+                builder.with_transit_tunnels_disabled(true);
+            }
+
+            if let Some(ref caps) = self.caps {
+                builder.with_capabilities(caps.clone());
+            }
 
             let mut manager = builder.build();
 
@@ -5505,5 +5605,210 @@ mod tests {
 
         // verify the client router is dialed
         assert_eq!(conn_rx.try_recv().unwrap(), router_id);
+    }
+
+    struct NoopTransport {}
+
+    impl Transport for NoopTransport {
+        fn connect(&mut self, _: RouterInfo) {}
+        fn accept(&mut self, _: &RouterId) {}
+        fn reject(&mut self, _: &RouterId) {}
+    }
+
+    impl Stream for NoopTransport {
+        type Item = TransportEvent;
+
+        fn poll_next(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            Poll::Pending
+        }
+    }
+
+    #[tokio::test]
+    async fn publish_router_info_transit_tunnels_disabled_reachable() {
+        let (router_info, ..) = RouterInfoBuilder::default().build();
+        let (mut manager, netdb_rx, _dial_tx, _subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ntcp2(Box::new(NoopTransport {}))
+            .with_transit_tunnels_disabled()
+            .build();
+
+        manager.on_firewall_status(FirewallStatus::Ok);
+        manager.publish_router_info();
+
+        match netdb_rx.try_recv().unwrap() {
+            NetDbAction::PublishRouterInfo { router_info, .. } => {
+                let router_info = RouterInfo::parse::<MockRuntime>(&router_info).unwrap();
+                assert_eq!(
+                    router_info.options.get(&Str::from("caps")),
+                    Some(&Str::from("LGR"))
+                );
+            }
+            _ => panic!("unexpected action"),
+        }
+    }
+
+    #[tokio::test]
+    async fn publish_router_info_transit_tunnels_disabled_unreachable() {
+        let (router_info, ..) = RouterInfoBuilder::default().build();
+        let (mut manager, netdb_rx, _dial_tx, _subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ntcp2(Box::new(NoopTransport {}))
+            .with_transit_tunnels_disabled()
+            .build();
+
+        manager.on_firewall_status(FirewallStatus::SymmetricNat);
+        manager.publish_router_info();
+
+        match netdb_rx.try_recv().unwrap() {
+            NetDbAction::PublishRouterInfo { router_info, .. } => {
+                let router_info = RouterInfo::parse::<MockRuntime>(&router_info).unwrap();
+                assert_eq!(
+                    router_info.options.get(&Str::from("caps")),
+                    Some(&Str::from("LGU"))
+                );
+            }
+            _ => panic!("unexpected action"),
+        }
+    }
+
+    #[tokio::test]
+    async fn publish_router_info_transit_tunnels_disabled_unknown_status() {
+        let (router_info, ..) = RouterInfoBuilder::default().build();
+        let (mut manager, netdb_rx, _dial_tx, _subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ntcp2(Box::new(NoopTransport {}))
+            .with_transit_tunnels_disabled()
+            .build();
+
+        manager.publish_router_info();
+
+        match netdb_rx.try_recv().unwrap() {
+            NetDbAction::PublishRouterInfo { router_info, .. } => {
+                let router_info = RouterInfo::parse::<MockRuntime>(&router_info).unwrap();
+                assert_eq!(
+                    router_info.options.get(&Str::from("caps")),
+                    Some(&Str::from("LG"))
+                );
+            }
+            _ => panic!("unexpected action"),
+        }
+    }
+
+    #[tokio::test]
+    async fn publish_router_info_unknown_firewall_status() {
+        let (router_info, ..) = RouterInfoBuilder::default().build();
+        let (mut manager, netdb_rx, _dial_tx, _subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ntcp2(Box::new(NoopTransport {}))
+            .build();
+
+        manager.publish_router_info();
+
+        match netdb_rx.try_recv().unwrap() {
+            NetDbAction::PublishRouterInfo { router_info, .. } => {
+                let router_info = RouterInfo::parse::<MockRuntime>(&router_info).unwrap();
+                assert_eq!(
+                    router_info.options.get(&Str::from("caps")),
+                    Some(&Str::from("L"))
+                );
+            }
+            _ => panic!("unexpected action"),
+        }
+    }
+
+    #[tokio::test]
+    async fn publish_router_info_symnat() {
+        let (router_info, ..) = RouterInfoBuilder::default().build();
+        let (mut manager, netdb_rx, _dial_tx, _subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ntcp2(Box::new(NoopTransport {}))
+            .build();
+
+        manager.on_firewall_status(FirewallStatus::SymmetricNat);
+        manager.publish_router_info();
+
+        match netdb_rx.try_recv().unwrap() {
+            NetDbAction::PublishRouterInfo { router_info, .. } => {
+                let router_info = RouterInfo::parse::<MockRuntime>(&router_info).unwrap();
+                assert_eq!(
+                    router_info.options.get(&Str::from("caps")),
+                    Some(&Str::from("LU"))
+                );
+            }
+            _ => panic!("unexpected action"),
+        }
+    }
+
+    #[tokio::test]
+    async fn publish_router_info_firewalled() {
+        let (router_info, ..) = RouterInfoBuilder::default().build();
+        let (mut manager, netdb_rx, _dial_tx, _subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ntcp2(Box::new(NoopTransport {}))
+            .build();
+
+        manager.on_firewall_status(FirewallStatus::Firewalled);
+        manager.publish_router_info();
+
+        match netdb_rx.try_recv().unwrap() {
+            NetDbAction::PublishRouterInfo { router_info, .. } => {
+                let router_info = RouterInfo::parse::<MockRuntime>(&router_info).unwrap();
+                assert_eq!(
+                    router_info.options.get(&Str::from("caps")),
+                    Some(&Str::from("LU"))
+                );
+            }
+            _ => panic!("unexpected action"),
+        }
+    }
+
+    #[tokio::test]
+    async fn publish_router_info_not_firewalled() {
+        let (router_info, ..) = RouterInfoBuilder::default().build();
+        let (mut manager, netdb_rx, _dial_tx, _subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ntcp2(Box::new(NoopTransport {}))
+            .build();
+
+        manager.on_firewall_status(FirewallStatus::Ok);
+        manager.publish_router_info();
+
+        match netdb_rx.try_recv().unwrap() {
+            NetDbAction::PublishRouterInfo { router_info, .. } => {
+                let router_info = RouterInfo::parse::<MockRuntime>(&router_info).unwrap();
+                assert_eq!(
+                    router_info.options.get(&Str::from("caps")),
+                    Some(&Str::from("LR"))
+                );
+            }
+            _ => panic!("unexpected action"),
+        }
+    }
+
+    #[tokio::test]
+    async fn publish_router_info_overriden_capabilities() {
+        let (router_info, ..) = RouterInfoBuilder::default().build();
+        let (mut manager, netdb_rx, _dial_tx, _subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ntcp2(Box::new(NoopTransport {}))
+            .with_transit_tunnels_disabled()
+            .with_caps("XfR".to_string())
+            .build();
+
+        manager.on_firewall_status(FirewallStatus::SymmetricNat);
+        manager.publish_router_info();
+
+        match netdb_rx.try_recv().unwrap() {
+            NetDbAction::PublishRouterInfo { router_info, .. } => {
+                let router_info = RouterInfo::parse::<MockRuntime>(&router_info).unwrap();
+
+                // caps should be `LGU` but they were overriden by user
+                assert_eq!(
+                    router_info.options.get(&Str::from("caps")),
+                    Some(&Str::from("XfR"))
+                );
+            }
+            _ => panic!("unexpected action"),
+        }
     }
 }

@@ -119,6 +119,23 @@ impl PartialEq for Str {
 
 impl Eq for Str {}
 
+impl ops::AddAssign<&str> for Str {
+    fn add_assign(&mut self, rhs: &str) {
+        match self {
+            Str::Static(lhs) => {
+                let mut s = String::from(*lhs);
+                s.push_str(rhs);
+                *self = Str::Allocated(Arc::from(s));
+            }
+            Str::Allocated(lhs) => {
+                let mut s = String::from(&**lhs);
+                s.push_str(rhs);
+                *lhs = Arc::from(s);
+            }
+        }
+    }
+}
+
 impl Str {
     /// Serialize [`Str`] into a byte vector.
     pub fn serialize(&self) -> Vec<u8> {
@@ -263,5 +280,28 @@ mod tests {
     #[test]
     fn try_parse_too_long_str() {
         assert!(Str::from_str(&"a".repeat(256)).is_err());
+    }
+
+    #[test]
+    fn extend_allocated() {
+        let mut value = Str::from("hello".to_string());
+        value += ", world!";
+
+        match value {
+            Str::Allocated(value) => assert_eq!(&*value, "hello, world!"),
+            _ => panic!("expected allocated"),
+        }
+    }
+
+    #[test]
+    fn extend_static() {
+        let mut value = Str::from("hello");
+        assert!(std::matches!(value, Str::Static(_)));
+        value += ", world!";
+
+        match value {
+            Str::Allocated(value) => assert_eq!(&*value, "hello, world!"),
+            _ => panic!("expected allocated"),
+        }
     }
 }
