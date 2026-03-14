@@ -31,6 +31,15 @@ use rand::Rng;
 use alloc::{vec, vec::Vec};
 use core::net::SocketAddr;
 
+/// IPv4 MTU size.
+const IPV4_MTU_SHORT: usize = 1500 - 20 - 8 - 16;
+
+/// Static key size.
+const STATIC_KEY_SIZE: usize = 32usize;
+
+/// Minimum size for a packet.
+const PKT_MIN_SIZE: usize = 24usize;
+
 /// Builder for `TokenRequest`.
 pub struct TokenRequestBuilder {
     /// Destination connection ID.
@@ -346,6 +355,9 @@ pub struct SessionConfirmed {
 
     /// Serialized, unecrypted payload.
     payload: Vec<u8>,
+
+    /// Destination connection ID.
+    dst_id: u64,
 }
 
 impl SessionConfirmed {
@@ -375,14 +387,18 @@ impl SessionConfirmed {
             .expect("to succeed");
     }
 
-    /// Encrypt header.
-    pub fn encrypt_header(&mut self, k_header_1: [u8; 32], k_header_2: [u8; 32]) {
-        // encrypt first 16 bytes of the long header
-        //
-        // https://geti2p.net/spec/ssu2#header-encryption-kdf
-        self.payload[self.payload.len() - 2 * IV_SIZE..]
+    // Encrypt 16-byte short header
+    //
+    // https://geti2p.net/spec/ssu2#header-encryption-kdf
+    fn encrypt_header(
+        k_header_1: [u8; 32],
+        k_header_2: [u8; 32],
+        header: &mut [u8],
+        payload: &[u8],
+    ) {
+        payload[payload.len() - 2 * IV_SIZE..]
             .chunks(IV_SIZE)
-            .zip(self.header.chunks_mut(8usize))
+            .zip(header.chunks_mut(8usize))
             .zip([k_header_1, k_header_2])
             .for_each(|((chunk, header_chunk), key)| {
                 ChaCha::with_iv(
@@ -399,14 +415,63 @@ impl SessionConfirmed {
     }
 
     /// Serialize [`SessionConfirmed`] into a byte vector.
-    pub fn build(self) -> BytesMut {
-        let mut out =
-            BytesMut::with_capacity(self.header.len() + self.static_key.len() + self.payload.len());
-        out.put_slice(&self.header);
+    ///
+    /// If `SessionConfirmed` is too large to fit into a single UDP datagram, the
+    /// packet is fragmented into multiple packets.
+    ///
+    /// <https://i2p.net/en/docs/specs/ssu2/#session-confirmed-fragmentation>
+    pub fn build(mut self, k_header_1: [u8; 32], k_header_2: [u8; 32]) -> Vec<Vec<u8>> {
+        // SessionConfirmed fits inside a single datagram
+        if self.payload.len() + self.static_key.len() <= IPV4_MTU_SHORT {
+            Self::encrypt_header(k_header_1, k_header_2, &mut self.header, &self.payload);
+
+            let mut out = BytesMut::with_capacity(
+                self.header.len() + self.static_key.len() + self.payload.len(),
+            );
+
+            out.put_slice(&self.header);
+            out.put_slice(&self.static_key);
+            out.put_slice(&self.payload);
+
+            return vec![out.to_vec()];
+        }
+
+        // create jumbo packet
+        let mut out = BytesMut::with_capacity(self.static_key.len() + self.payload.len());
         out.put_slice(&self.static_key);
         out.put_slice(&self.payload);
 
-        out
+        // calculate total number of fragments
+        let num_fragments = {
+            let num_fragments = out.len() / IPV4_MTU_SHORT;
+
+            if num_fragments.is_multiple_of(IPV4_MTU_SHORT) {
+                num_fragments as u8
+            } else {
+                num_fragments as u8 + 1
+            }
+        };
+        debug_assert!(num_fragments <= 15);
+
+        out.chunks(IPV4_MTU_SHORT)
+            .enumerate()
+            .map(|(i, fragment)| {
+                debug_assert!(fragment.len() >= 24);
+
+                let mut pkt = BytesMut::with_capacity(SHORT_HEADER_LEN + fragment.len());
+
+                pkt.put_u64_le(self.dst_id);
+                pkt.put_u32(0u32); // packet number, always 0
+                pkt.put_u8(*MessageType::SessionConfirmed);
+                pkt.put_u8(((i as u8) << 4) | num_fragments);
+                pkt.put_u16(0u16); // flags
+                pkt.put_slice(fragment);
+
+                Self::encrypt_header(k_header_1, k_header_2, &mut pkt[..16], fragment);
+
+                pkt.to_vec()
+            })
+            .collect()
     }
 }
 
@@ -452,21 +517,12 @@ impl SessionConfirmedBuilder {
     }
 
     /// Build [`SessionConfirmedBuilder`] into a byte vector.
-    pub fn build(mut self) -> SessionConfirmed {
-        let header = {
-            let mut out = BytesMut::with_capacity(SHORT_HEADER_LEN);
+    pub fn build<R: Runtime>(mut self) -> SessionConfirmed {
+        let router_info = self.router_info.expect("to exist");
+        let dst_id = self.dst_id.take().expect("to exist");
 
-            out.put_u64_le(self.dst_id.take().expect("to exist"));
-            out.put_u32(0u32);
-            out.put_u8(*MessageType::SessionConfirmed);
-            out.put_u8(1u8); // 1 fragment
-            out.put_u16(0u16); // flags
-
-            out
-        };
         let static_key = self.static_key.expect("to exist").to_vec();
-        let payload = {
-            let router_info = self.router_info.take().expect("to exist");
+        let mut payload = {
             let mut out = BytesMut::with_capacity(5 + router_info.len());
 
             out.put_u8(BlockType::RouterInfo.as_u8());
@@ -475,13 +531,60 @@ impl SessionConfirmedBuilder {
             out.put_u8(1u8);
             out.put_slice(&router_info);
 
-            out.to_vec()
+            out
+        };
+
+        // check if `SessionConfirmed` needs to be fragmented
+        //
+        // if so, calculate how many fragments are needed and if the last fragment
+        // is less than 24 bytes, add a padding block to make the fragment large eough
+        //
+        // https://i2p.net/en/docs/specs/ssu2/#session-confirmed-fragmentation
+        let pkt_size = router_info.len() + STATIC_KEY_SIZE + 2 * POLY13055_MAC_LEN;
+
+        let num_fragments = if pkt_size > IPV4_MTU_SHORT {
+            let mut num_fragments = pkt_size / IPV4_MTU_SHORT;
+
+            if !num_fragments.is_multiple_of(IPV4_MTU_SHORT) {
+                num_fragments += 1;
+            }
+
+            // add padding if necessary
+            if pkt_size % IPV4_MTU_SHORT < PKT_MIN_SIZE {
+                let padding = {
+                    let mut padding =
+                        vec![0u8; (R::rng().next_u32() % 64 + PKT_MIN_SIZE as u32) as usize];
+                    R::rng().fill_bytes(&mut padding);
+
+                    padding
+                };
+                payload.put_u8(BlockType::Padding.as_u8());
+                payload.put_u16(padding.len() as u16);
+                payload.put_slice(&padding);
+            }
+
+            num_fragments
+        } else {
+            1
+        };
+
+        let header = {
+            let mut out = BytesMut::with_capacity(SHORT_HEADER_LEN);
+
+            out.put_u64_le(dst_id);
+            out.put_u32(0u32);
+            out.put_u8(*MessageType::SessionConfirmed);
+            out.put_u8(num_fragments as u8); // fragment count + number
+            out.put_u16(0u16); // flags
+
+            out
         };
 
         SessionConfirmed {
             header,
             static_key,
-            payload,
+            payload: payload.to_vec(),
+            dst_id,
         }
     }
 }
@@ -875,7 +978,11 @@ impl SessionCreatedBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{crypto::EphemeralPrivateKey, runtime::mock::MockRuntime};
+    use crate::{
+        crypto::{base64_encode, noise::NoiseContext, EphemeralPrivateKey, StaticPrivateKey},
+        primitives::{RouterInfoBuilder, Str},
+        runtime::mock::MockRuntime,
+    };
 
     #[test]
     fn token_request_custom_net_id() {
@@ -1051,5 +1158,277 @@ mod tests {
                 _ => panic!("invalid message"),
             }
         }
+    }
+
+    #[test]
+    fn fragmented_session_confirmed() {
+        let local_static_key = StaticPrivateKey::random(&mut MockRuntime::rng());
+        let remote_ephemeral_key = EphemeralPrivateKey::random(&mut MockRuntime::rng());
+        let mut noise_ctx = NoiseContext::new([0xaa; 32], [0xbb; 32]);
+        let cipher_key = [0xcc; 32];
+        let remote_intro_key = [0xdd; 32];
+        let k_header_2 = [0xdd; 32];
+        let (mut router_info, _, signing_key) = RouterInfoBuilder::default().build();
+        for i in 0..10 {
+            router_info.options.insert(
+                Str::from(format!("garbage{i}")),
+                Str::from(base64_encode(vec![0xaa; 128])),
+            );
+        }
+        assert!(router_info.serialize(&signing_key).len() > 1500);
+
+        let (encrypted, pubkey_state, payload_state, payload_cipher_key) = {
+            let mut message = SessionConfirmedBuilder::default()
+                .with_dst_id(1337)
+                .with_src_id(1338)
+                .with_static_key(local_static_key.public())
+                .with_router_info(Bytes::from(router_info.serialize(&signing_key)))
+                .build::<MockRuntime>();
+
+            // MixHash(header) & encrypt public key
+            noise_ctx.mix_hash(message.header());
+            message.encrypt_public_key(&cipher_key, 1u64, noise_ctx.state());
+            let pubkey_state = noise_ctx.state().to_vec();
+
+            // MixHash(apk)
+            noise_ctx.mix_hash(message.public_key());
+
+            let payload_cipher_key =
+                noise_ctx.mix_key(&local_static_key, &remote_ephemeral_key.public());
+
+            message.encrypt_payload(&payload_cipher_key, 0u64, noise_ctx.state());
+            let payload_state = noise_ctx.state().to_vec();
+
+            (
+                message.build(remote_intro_key, k_header_2).to_vec(),
+                pubkey_state,
+                payload_state,
+                payload_cipher_key,
+            )
+        };
+        assert_eq!(encrypted.len(), 2);
+        assert!(encrypted.iter().all(|pkt| pkt.len() <= IPV4_MTU_SHORT + 16));
+
+        let mut reassembled = Vec::<u8>::new();
+
+        for (i, mut fragment) in encrypted.into_iter().enumerate() {
+            let mut reader = HeaderReader::new(remote_intro_key, &mut fragment).unwrap();
+            let _dst_id = reader.dst_id();
+
+            match reader.parse(k_header_2).unwrap() {
+                HeaderKind::SessionConfirmed {
+                    fragment,
+                    num_fragments,
+                    ..
+                } => {
+                    assert_eq!(fragment, i);
+                    assert_eq!(num_fragments, 2);
+                }
+                _ => panic!("unexpected message"),
+            }
+
+            if i == 0 {
+                reassembled.extend(fragment)
+            } else {
+                reassembled.extend(&fragment[16..]);
+            }
+        }
+
+        let mut static_key = reassembled[16..64].to_vec();
+        ChaChaPoly::with_nonce(&cipher_key, 1u64)
+            .decrypt_with_ad(&pubkey_state, &mut static_key)
+            .unwrap();
+
+        // decrypt payload
+        let mut payload = reassembled[64..].to_vec();
+        ChaChaPoly::with_nonce(&payload_cipher_key, 0u64)
+            .decrypt_with_ad(&payload_state, &mut payload)
+            .unwrap();
+
+        assert!(Block::parse::<MockRuntime>(&payload).is_ok());
+    }
+
+    #[test]
+    fn fragmented_session_confirmed_multiple_fragments() {
+        let local_static_key = StaticPrivateKey::random(&mut MockRuntime::rng());
+        let remote_ephemeral_key = EphemeralPrivateKey::random(&mut MockRuntime::rng());
+        let mut noise_ctx = NoiseContext::new([0xaa; 32], [0xbb; 32]);
+        let cipher_key = [0xcc; 32];
+        let remote_intro_key = [0xdd; 32];
+        let k_header_2 = [0xdd; 32];
+        let (mut router_info, _, signing_key) = RouterInfoBuilder::default().build();
+        for i in 0..20 {
+            router_info.options.insert(
+                Str::from(format!("garbage{i}")),
+                Str::from(base64_encode(vec![0xaa; 128])),
+            );
+        }
+        assert!(router_info.serialize(&signing_key).len() > 1500);
+
+        let (encrypted, pubkey_state, payload_state, payload_cipher_key) = {
+            let mut message = SessionConfirmedBuilder::default()
+                .with_dst_id(1337)
+                .with_src_id(1338)
+                .with_static_key(local_static_key.public())
+                .with_router_info(Bytes::from(router_info.serialize(&signing_key)))
+                .build::<MockRuntime>();
+
+            // MixHash(header) & encrypt public key
+            noise_ctx.mix_hash(message.header());
+            message.encrypt_public_key(&cipher_key, 1u64, noise_ctx.state());
+            let pubkey_state = noise_ctx.state().to_vec();
+
+            // MixHash(apk)
+            noise_ctx.mix_hash(message.public_key());
+
+            let payload_cipher_key =
+                noise_ctx.mix_key(&local_static_key, &remote_ephemeral_key.public());
+
+            message.encrypt_payload(&payload_cipher_key, 0u64, noise_ctx.state());
+            let payload_state = noise_ctx.state().to_vec();
+
+            (
+                message.build(remote_intro_key, k_header_2).to_vec(),
+                pubkey_state,
+                payload_state,
+                payload_cipher_key,
+            )
+        };
+        assert_eq!(encrypted.len(), 4);
+        assert!(encrypted.iter().all(|pkt| pkt.len() <= IPV4_MTU_SHORT + 16));
+
+        let mut reassembled = Vec::<u8>::new();
+
+        for (i, mut fragment) in encrypted.into_iter().enumerate() {
+            let mut reader = HeaderReader::new(remote_intro_key, &mut fragment).unwrap();
+            let _dst_id = reader.dst_id();
+
+            match reader.parse(k_header_2).unwrap() {
+                HeaderKind::SessionConfirmed {
+                    fragment,
+                    num_fragments,
+                    ..
+                } => {
+                    assert_eq!(fragment, i);
+                    assert_eq!(num_fragments, 4);
+                }
+                _ => panic!("unexpected message"),
+            }
+
+            if i == 0 {
+                reassembled.extend(fragment)
+            } else {
+                reassembled.extend(&fragment[16..]);
+            }
+        }
+
+        let mut static_key = reassembled[16..64].to_vec();
+        ChaChaPoly::with_nonce(&cipher_key, 1u64)
+            .decrypt_with_ad(&pubkey_state, &mut static_key)
+            .unwrap();
+
+        // decrypt payload
+        let mut payload = reassembled[64..].to_vec();
+        ChaChaPoly::with_nonce(&payload_cipher_key, 0u64)
+            .decrypt_with_ad(&payload_state, &mut payload)
+            .unwrap();
+
+        assert!(Block::parse::<MockRuntime>(&payload).is_ok());
+    }
+
+    #[test]
+    fn fragmented_session_confirmed_with_padding() {
+        let local_static_key = StaticPrivateKey::random(&mut MockRuntime::rng());
+        let remote_ephemeral_key = EphemeralPrivateKey::random(&mut MockRuntime::rng());
+        let mut noise_ctx = NoiseContext::new([0xaa; 32], [0xbb; 32]);
+        let cipher_key = [0xcc; 32];
+        let remote_intro_key = [0xdd; 32];
+        let k_header_2 = [0xdd; 32];
+        let (mut router_info, _, signing_key) = RouterInfoBuilder::default().build();
+        for i in 0..=25 {
+            router_info.options.insert(
+                Str::from(format!("garbage{i}")),
+                Str::from(base64_encode(vec![0xaa; 10])),
+            );
+        }
+        router_info.options.insert(Str::from("test"), Str::from("test"));
+
+        // verify that the last fragment is too short
+        assert!(
+            (STATIC_KEY_SIZE + 2 * POLY13055_MAC_LEN + router_info.serialize(&signing_key).len())
+                % IPV4_MTU_SHORT
+                < PKT_MIN_SIZE
+        );
+
+        let (encrypted, pubkey_state, payload_state, payload_cipher_key) = {
+            let mut message = SessionConfirmedBuilder::default()
+                .with_dst_id(1337)
+                .with_src_id(1338)
+                .with_static_key(local_static_key.public())
+                .with_router_info(Bytes::from(router_info.serialize(&signing_key)))
+                .build::<MockRuntime>();
+
+            // MixHash(header) & encrypt public key
+            noise_ctx.mix_hash(message.header());
+            message.encrypt_public_key(&cipher_key, 1u64, noise_ctx.state());
+            let pubkey_state = noise_ctx.state().to_vec();
+
+            // MixHash(apk)
+            noise_ctx.mix_hash(message.public_key());
+
+            let payload_cipher_key =
+                noise_ctx.mix_key(&local_static_key, &remote_ephemeral_key.public());
+
+            message.encrypt_payload(&payload_cipher_key, 0u64, noise_ctx.state());
+            let payload_state = noise_ctx.state().to_vec();
+
+            (
+                message.build(remote_intro_key, k_header_2).to_vec(),
+                pubkey_state,
+                payload_state,
+                payload_cipher_key,
+            )
+        };
+        assert_eq!(encrypted.len(), 2);
+        assert!(encrypted.iter().all(|pkt| pkt.len() <= IPV4_MTU_SHORT + 16));
+
+        let mut reassembled = Vec::<u8>::new();
+
+        for (i, mut fragment) in encrypted.into_iter().enumerate() {
+            let mut reader = HeaderReader::new(remote_intro_key, &mut fragment).unwrap();
+            let _dst_id = reader.dst_id();
+
+            match reader.parse(k_header_2).unwrap() {
+                HeaderKind::SessionConfirmed {
+                    fragment,
+                    num_fragments,
+                    ..
+                } => {
+                    assert_eq!(fragment, i);
+                    assert_eq!(num_fragments, 2);
+                }
+                _ => panic!("unexpected message"),
+            }
+
+            if i == 0 {
+                reassembled.extend(fragment)
+            } else {
+                reassembled.extend(&fragment[16..]);
+            }
+        }
+
+        let mut static_key = reassembled[16..64].to_vec();
+        ChaChaPoly::with_nonce(&cipher_key, 1u64)
+            .decrypt_with_ad(&pubkey_state, &mut static_key)
+            .unwrap();
+
+        // decrypt payload
+        let mut payload = reassembled[64..].to_vec();
+        ChaChaPoly::with_nonce(&payload_cipher_key, 0u64)
+            .decrypt_with_ad(&payload_state, &mut payload)
+            .unwrap();
+
+        let blocks = Block::parse::<MockRuntime>(&payload).unwrap();
+        assert!(blocks.iter().any(|block| core::matches!(block, Block::Padding { .. })));
     }
 }

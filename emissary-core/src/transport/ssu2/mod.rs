@@ -977,4 +977,123 @@ mod tests {
         // verify charlie receives the message
         let _ = timeout!(handle).await.unwrap().unwrap();
     }
+
+    #[tokio::test]
+    async fn fragmented_router_info() {
+        let (_event_mgr, _event_subscriber, event_handle) =
+            EventManager::new(None, MockRuntime::register_metrics(vec![], None));
+        let (ctx1, address1) = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+            port: 0u16,
+            host: Some("127.0.0.1".parse().unwrap()),
+            publish: true,
+            static_key: [0xaa; 32],
+            intro_key: [0xbb; 32],
+        }))
+        .await
+        .unwrap();
+        let (ctx2, address2) = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+            port: 0u16,
+            host: Some("127.0.0.1".parse().unwrap()),
+            publish: true,
+            static_key: [0xcc; 32],
+            intro_key: [0xdd; 32],
+        }))
+        .await
+        .unwrap();
+
+        let (static1, signing1) = (
+            StaticPrivateKey::random(MockRuntime::rng()),
+            SigningPrivateKey::random(MockRuntime::rng()),
+        );
+        let (static2, signing2) = (
+            StaticPrivateKey::random(MockRuntime::rng()),
+            SigningPrivateKey::random(MockRuntime::rng()),
+        );
+        let mut router_info1 = RouterInfo::new::<MockRuntime>(
+            &Default::default(),
+            None,
+            address1,
+            &static1,
+            &signing1,
+            false,
+        );
+
+        // add random garbage to router info options so it gets fragmented
+        for i in 0..10 {
+            router_info1.options.insert(
+                Str::from(format!("garbage{i}")),
+                Str::from(base64_encode(vec![0xaa; 128])),
+            );
+        }
+        assert!(router_info1.serialize(&signing1).len() > 1500);
+
+        let router_info2 = RouterInfo::new::<MockRuntime>(
+            &Default::default(),
+            None,
+            address2,
+            &static2,
+            &signing2,
+            false,
+        );
+        let (event1_tx, _event1_rx) = channel(64);
+        let (event2_tx, _event2_rx) = channel(64);
+
+        let mut transport1 = Ssu2Transport::<MockRuntime>::new(
+            ctx1.unwrap(),
+            true,
+            RouterContext::new(
+                MockRuntime::register_metrics(Vec::new(), None),
+                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                router_info1.identity.id(),
+                Bytes::from(router_info1.serialize(&signing1)),
+                static1,
+                signing1,
+                2u8,
+                event_handle.clone(),
+            ),
+            event1_tx,
+        );
+        let mut transport2 = Ssu2Transport::<MockRuntime>::new(
+            ctx2.unwrap(),
+            true,
+            RouterContext::new(
+                MockRuntime::register_metrics(Vec::new(), None),
+                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                router_info2.identity.id(),
+                Bytes::from(router_info2.serialize(&signing2)),
+                static2,
+                signing2,
+                2u8,
+                event_handle.clone(),
+            ),
+            event2_tx,
+        );
+        tokio::spawn(async move {
+            loop {
+                match transport2.next().await.unwrap() {
+                    TransportEvent::ConnectionEstablished { router_id, .. } =>
+                        transport2.accept(&router_id),
+                    _ => {}
+                }
+            }
+        });
+
+        transport1.connect(router_info2);
+        let future = async move {
+            loop {
+                match transport1.next().await.unwrap() {
+                    TransportEvent::ConnectionEstablished { router_id, .. } => {
+                        transport1.accept(&router_id);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        };
+
+        match tokio::time::timeout(Duration::from_secs(15), future).await {
+            Err(_) => panic!("timeout"),
+            Ok(()) => {}
+        }
+    }
 }

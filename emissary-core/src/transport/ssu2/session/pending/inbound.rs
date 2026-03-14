@@ -35,8 +35,8 @@ use crate::{
             session::{
                 active::Ssu2SessionContext,
                 pending::{
-                    PacketRetransmitter, PacketRetransmitterEvent, PendingSsu2SessionStatus,
-                    MAX_CLOCK_SKEW,
+                    PacketKind, PacketRetransmitter, PacketRetransmitterEvent,
+                    PendingSsu2SessionStatus, MAX_CLOCK_SKEW,
                 },
                 KeyContext,
             },
@@ -52,7 +52,10 @@ use rand::Rng;
 use thingbuf::mpsc::Receiver;
 use zeroize::Zeroize;
 
-use alloc::{collections::VecDeque, vec::Vec};
+use alloc::{
+    collections::{BTreeMap, VecDeque},
+    vec::Vec,
+};
 use core::{
     fmt,
     future::Future,
@@ -163,6 +166,11 @@ enum PendingSessionState {
     AwaitingSessionConfirmed {
         /// Our ephemeral private key.
         ephemeral_key: EphemeralPrivateKey,
+
+        /// `SessionConfirmed` fragments.
+        ///
+        /// Empty if `SessionConfirmed` is unfragmented.
+        fragments: BTreeMap<usize, Vec<u8>>,
 
         /// Cipher key for decrypting the second part of the header
         k_header_2: [u8; 32],
@@ -618,6 +626,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
 
         self.state = PendingSessionState::AwaitingSessionConfirmed {
             ephemeral_key: sk,
+            fragments: BTreeMap::new(),
             k_header_2,
             k_session_created: cipher_key,
         };
@@ -639,28 +648,79 @@ impl<R: Runtime> InboundSsu2Session<R> {
     fn on_session_confirmed(
         &mut self,
         mut pkt: Vec<u8>,
+        mut fragments: BTreeMap<usize, Vec<u8>>,
         ephemeral_key: EphemeralPrivateKey,
         k_header_2: [u8; 32],
         k_session_created: [u8; 32],
     ) -> Result<Option<PendingSsu2SessionStatus<R>>, Ssu2Error> {
-        match HeaderReader::new(self.intro_key, &mut pkt)?.parse(k_header_2) {
-            Ok(HeaderKind::SessionConfirmed { .. }) => {}
-            kind => {
-                tracing::debug!(
+        let (num_fragments, fragment) =
+            match HeaderReader::new(self.intro_key, &mut pkt)?.parse(k_header_2) {
+                Ok(HeaderKind::SessionConfirmed {
+                    fragment,
+                    num_fragments,
+                    ..
+                }) => (num_fragments, fragment),
+                kind => {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        dst_id = ?self.dst_id,
+                        src_id = ?self.src_id,
+                        ?kind,
+                        "unexpected message, expected SessionConfirmed",
+                    );
+
+                    self.state = PendingSessionState::AwaitingSessionConfirmed {
+                        ephemeral_key,
+                        fragments,
+                        k_header_2,
+                        k_session_created,
+                    };
+                    return Ok(None);
+                }
+            };
+
+        // handle fragmented `SessionConfirmed`
+        //
+        // if all fragments have not been received, store the current fragment
+        // in pending state and return early
+        //
+        // if all fragments have been received, reassemble `SessionConfirmed`
+        // and proceed normally
+        if num_fragments > 1 {
+            fragments.insert(fragment, pkt);
+
+            if fragments.len() != num_fragments {
+                tracing::trace!(
                     target: LOG_TARGET,
                     dst_id = ?self.dst_id,
                     src_id = ?self.src_id,
-                    ?kind,
-                    "unexpected message, expected SessionConfirmed",
+                    ?num_fragments,
+                    num_received = ?fragments.len(),
+                    "awaiting remaining fragments for SessionConfirmed",
                 );
 
                 self.state = PendingSessionState::AwaitingSessionConfirmed {
                     ephemeral_key,
+                    fragments,
                     k_header_2,
                     k_session_created,
                 };
                 return Ok(None);
             }
+
+            // header of the first fragment is used as the header for the jumbo packet
+            //
+            // https://i2p.net/en/docs/specs/ssu2/#session-confirmed-fragmentation
+            pkt = fragments.into_iter().fold(Vec::with_capacity(2048), |mut out, (i, pkt)| {
+                if i == 0 {
+                    out.extend(&pkt);
+                } else {
+                    // call to `HeaderReader` above has ensured `pkt` is at least 24 bytes long
+                    out.extend(&pkt[16..]);
+                }
+
+                out
+            });
         }
 
         tracing::trace!(
@@ -798,9 +858,16 @@ impl<R: Runtime> InboundSsu2Session<R> {
                 self.on_session_request(SessionRequestPayload::Packet { pkt, token }),
             PendingSessionState::AwaitingSessionConfirmed {
                 ephemeral_key,
+                fragments,
                 k_header_2,
                 k_session_created,
-            } => self.on_session_confirmed(pkt, ephemeral_key, k_header_2, k_session_created),
+            } => self.on_session_confirmed(
+                pkt,
+                fragments,
+                ephemeral_key,
+                k_header_2,
+                k_session_created,
+            ),
             PendingSessionState::Poisoned
             | PendingSessionState::HandleTokenRequest { .. }
             | PendingSessionState::HandleSessionRequest { .. } => {
@@ -979,7 +1046,11 @@ impl<R: Runtime> Future for InboundSsu2Session<R> {
                     state = ?self.state,
                     "retransmitting packet",
                 );
-                self.write_buffer.push_back(pkt);
+
+                match pkt {
+                    PacketKind::Single(pkt) => self.write_buffer.push_back(pkt),
+                    PacketKind::Multi(pkts) => self.write_buffer.extend(pkts),
+                }
             }
             Poll::Ready(PacketRetransmitterEvent::Timeout) =>
                 return Poll::Ready(PendingSsu2SessionStatus::Timeout {
@@ -1014,10 +1085,11 @@ impl<R: Runtime> Future for InboundSsu2Session<R> {
 mod tests {
     use super::*;
     use crate::{
-        crypto::sha256::Sha256,
-        primitives::RouterInfoBuilder,
+        crypto::{base64_encode, sha256::Sha256},
+        primitives::{RouterInfoBuilder, Str},
         runtime::mock::MockRuntime,
         subsystem::SubsystemEvent,
+        timeout,
         transport::ssu2::session::pending::outbound::{OutboundSsu2Context, OutboundSsu2Session},
     };
     use std::net::Ipv4Addr;
@@ -1037,7 +1109,7 @@ mod tests {
         transport_rx: Receiver<SubsystemEvent>,
     }
 
-    async fn create_session() -> (InboundContext, OutboundContext) {
+    async fn create_session(iters: Option<usize>) -> (InboundContext, OutboundContext) {
         let src_id = MockRuntime::rng().next_u64();
         let dst_id = MockRuntime::rng().next_u64();
 
@@ -1089,7 +1161,7 @@ mod tests {
         let (outbound_session_tx, outbound_session_rx) = channel(128);
         let (transport_tx, transport_rx) = channel(128);
 
-        let (router_info, _, signing_key) = RouterInfoBuilder::default()
+        let (mut router_info, _, signing_key) = RouterInfoBuilder::default()
             .with_ssu2(crate::Ssu2Config {
                 port: outbound_address.port(),
                 host: Some(Ipv4Addr::new(127, 0, 0, 1)),
@@ -1099,6 +1171,16 @@ mod tests {
                 intro_key: outbound_intro_key,
             })
             .build();
+
+        if let Some(iters) = iters {
+            for i in 0..iters {
+                router_info.options.insert(
+                    Str::from(format!("garbage{i}")),
+                    Str::from(base64_encode(vec![0xaa; 128])),
+                );
+            }
+            assert!(router_info.serialize(&signing_key).len() > 1500);
+        }
 
         let mut outbound = OutboundSsu2Session::new(OutboundSsu2Context {
             address: inbound_address,
@@ -1228,7 +1310,7 @@ mod tests {
                 outbound_session_tx: _ob_session_tx,
                 ..
             },
-        ) = create_session().await;
+        ) = create_session(None).await;
 
         let intro_key = inbound_session.intro_key;
         let inbound_session = tokio::spawn(inbound_session.run());
@@ -1269,7 +1351,7 @@ mod tests {
                 outbound_socket_rx,
                 ..
             },
-        ) = create_session().await;
+        ) = create_session(None).await;
         let intro_key = inbound_session.intro_key;
 
         tokio::spawn(inbound_session.run());
@@ -1325,7 +1407,7 @@ mod tests {
                 outbound_socket_rx,
                 ..
             },
-        ) = create_session().await;
+        ) = create_session(None).await;
 
         let intro_key = inbound_session.intro_key;
         let mut inbound_session = tokio::spawn(inbound_session.run());
@@ -1395,7 +1477,7 @@ mod tests {
                 outbound_socket_rx,
                 ..
             },
-        ) = create_session().await;
+        ) = create_session(None).await;
         let intro_key = inbound_session.intro_key;
         tokio::spawn(inbound_session.run());
 
@@ -1456,7 +1538,7 @@ mod tests {
                 outbound_socket_rx,
                 transport_rx: _transport_rx,
             },
-        ) = create_session().await;
+        ) = create_session(None).await;
 
         let intro_key = inbound_session.intro_key;
         let outbound_session = tokio::spawn(outbound_session);
@@ -1562,7 +1644,7 @@ mod tests {
                 outbound_socket_rx,
                 ..
             },
-        ) = create_session().await;
+        ) = create_session(None).await;
 
         let intro_key = inbound_session.intro_key;
         let _outbound_session = tokio::spawn(outbound_session);
@@ -1621,7 +1703,7 @@ mod tests {
                 outbound_socket_rx,
                 ..
             },
-        ) = create_session().await;
+        ) = create_session(None).await;
         let intro_key = inbound_session.intro_key;
 
         // spawn outbound session in a separate thread and modify its
@@ -1697,7 +1779,7 @@ mod tests {
                 outbound_socket_rx,
                 ..
             },
-        ) = create_session().await;
+        ) = create_session(None).await;
         let intro_key = inbound_session.intro_key;
 
         // reset time back to normal
@@ -1741,6 +1823,313 @@ mod tests {
         match tokio::time::timeout(Duration::from_secs(5), future).await.unwrap().unwrap() {
             PendingSsu2SessionStatus::SessionTerminated { .. } => {}
             status => panic!("unexpected status: {status:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn fragmented_session_confirmed() {
+        let (
+            InboundContext {
+                inbound_session,
+                inbound_socket_rx,
+                inbound_session_tx: ib_sess_tx,
+            },
+            OutboundContext {
+                outbound_session,
+                outbound_session_tx: ob_sess_tx,
+                outbound_socket_rx,
+                ..
+            },
+        ) = create_session(Some(10)).await;
+
+        let intro_key = inbound_session.intro_key;
+        let _outbound_session = tokio::spawn(outbound_session);
+        let inbound_session = tokio::spawn(inbound_session.run());
+
+        // send retry message to outbound session
+        {
+            let Packet { mut pkt, address } = tokio::select! {
+                pkt = outbound_socket_rx.recv() => pkt.unwrap(),
+                _ = tokio::time::sleep(Duration::from_secs(10)) => panic!("timeout"),
+            };
+            let mut reader = HeaderReader::new(intro_key, &mut pkt).unwrap();
+            let _connection_id = reader.dst_id();
+
+            ob_sess_tx.send(Packet { pkt, address }).await.unwrap();
+        }
+
+        // read session request from outbound session, send it to inbound session
+        // and read session created
+        let pkt = {
+            let Packet { mut pkt, address } = inbound_socket_rx.recv().await.unwrap();
+            let mut reader = HeaderReader::new(intro_key, &mut pkt).unwrap();
+            let _connection_id = reader.dst_id();
+            ib_sess_tx.send(Packet { pkt, address }).await.unwrap();
+
+            outbound_socket_rx.recv().await.unwrap()
+        };
+
+        // send `SessionCreated` to outbound session
+        {
+            let Packet { mut pkt, address } = pkt;
+            let mut reader = HeaderReader::new(intro_key, &mut pkt).unwrap();
+            let _connection_id = reader.dst_id();
+
+            ob_sess_tx.send(Packet { pkt, address }).await.unwrap();
+        }
+
+        // read `SessionConfirmed` from outbound session
+        {
+            // two fragments are expected
+            for _ in 0..2 {
+                let Packet { mut pkt, address } = inbound_socket_rx.recv().await.unwrap();
+                let mut reader = HeaderReader::new(intro_key, &mut pkt).unwrap();
+                let _connection_id = reader.dst_id();
+                ib_sess_tx.send(Packet { pkt, address }).await.unwrap();
+            }
+        }
+
+        match timeout!(inbound_session).await.unwrap().unwrap() {
+            PendingSsu2SessionStatus::NewInboundSession { .. } => {}
+            res => panic!("unexpected result: {res:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn multi_fragment_session_confirmed() {
+        let (
+            InboundContext {
+                inbound_session,
+                inbound_socket_rx,
+                inbound_session_tx: ib_sess_tx,
+            },
+            OutboundContext {
+                outbound_session,
+                outbound_session_tx: ob_sess_tx,
+                outbound_socket_rx,
+                ..
+            },
+        ) = create_session(Some(20)).await;
+
+        let intro_key = inbound_session.intro_key;
+        let _outbound_session = tokio::spawn(outbound_session);
+        let inbound_session = tokio::spawn(inbound_session.run());
+
+        // send retry message to outbound session
+        {
+            let Packet { mut pkt, address } = tokio::select! {
+                pkt = outbound_socket_rx.recv() => pkt.unwrap(),
+                _ = tokio::time::sleep(Duration::from_secs(10)) => panic!("timeout"),
+            };
+            let mut reader = HeaderReader::new(intro_key, &mut pkt).unwrap();
+            let _connection_id = reader.dst_id();
+
+            ob_sess_tx.send(Packet { pkt, address }).await.unwrap();
+        }
+
+        // read session request from outbound session, send it to inbound session
+        // and read session created
+        let pkt = {
+            let Packet { mut pkt, address } = inbound_socket_rx.recv().await.unwrap();
+            let mut reader = HeaderReader::new(intro_key, &mut pkt).unwrap();
+            let _connection_id = reader.dst_id();
+            ib_sess_tx.send(Packet { pkt, address }).await.unwrap();
+
+            outbound_socket_rx.recv().await.unwrap()
+        };
+
+        // send `SessionCreated` to outbound session
+        {
+            let Packet { mut pkt, address } = pkt;
+            let mut reader = HeaderReader::new(intro_key, &mut pkt).unwrap();
+            let _connection_id = reader.dst_id();
+
+            ob_sess_tx.send(Packet { pkt, address }).await.unwrap();
+        }
+
+        // read `SessionConfirmed` from outbound session
+        {
+            // four fragments are expected
+            for _ in 0..4 {
+                let Packet { mut pkt, address } = inbound_socket_rx.recv().await.unwrap();
+                let mut reader = HeaderReader::new(intro_key, &mut pkt).unwrap();
+                let _connection_id = reader.dst_id();
+                ib_sess_tx.send(Packet { pkt, address }).await.unwrap();
+            }
+        }
+
+        match timeout!(inbound_session).await.unwrap().unwrap() {
+            PendingSsu2SessionStatus::NewInboundSession { .. } => {}
+            res => panic!("unexpected result: {res:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn fragmented_session_confirmed_out_of_order() {
+        let (
+            InboundContext {
+                inbound_session,
+                inbound_socket_rx,
+                inbound_session_tx: ib_sess_tx,
+            },
+            OutboundContext {
+                outbound_session,
+                outbound_session_tx: ob_sess_tx,
+                outbound_socket_rx,
+                ..
+            },
+        ) = create_session(Some(20)).await;
+
+        let intro_key = inbound_session.intro_key;
+        let _outbound_session = tokio::spawn(outbound_session);
+        let inbound_session = tokio::spawn(inbound_session.run());
+
+        // send retry message to outbound session
+        {
+            let Packet { mut pkt, address } = tokio::select! {
+                pkt = outbound_socket_rx.recv() => pkt.unwrap(),
+                _ = tokio::time::sleep(Duration::from_secs(10)) => panic!("timeout"),
+            };
+            let mut reader = HeaderReader::new(intro_key, &mut pkt).unwrap();
+            let _connection_id = reader.dst_id();
+
+            ob_sess_tx.send(Packet { pkt, address }).await.unwrap();
+        }
+
+        // read session request from outbound session, send it to inbound session
+        // and read session created
+        let pkt = {
+            let Packet { mut pkt, address } = inbound_socket_rx.recv().await.unwrap();
+            let mut reader = HeaderReader::new(intro_key, &mut pkt).unwrap();
+            let _connection_id = reader.dst_id();
+            ib_sess_tx.send(Packet { pkt, address }).await.unwrap();
+
+            outbound_socket_rx.recv().await.unwrap()
+        };
+
+        // send `SessionCreated` to outbound session
+        {
+            let Packet { mut pkt, address } = pkt;
+            let mut reader = HeaderReader::new(intro_key, &mut pkt).unwrap();
+            let _connection_id = reader.dst_id();
+
+            ob_sess_tx.send(Packet { pkt, address }).await.unwrap();
+        }
+
+        // read `SessionConfirmed` from outbound session
+        {
+            // four fragments are expected
+            let mut pkts = vec![];
+
+            for _ in 0..4 {
+                let Packet { mut pkt, address } = inbound_socket_rx.recv().await.unwrap();
+                let mut reader = HeaderReader::new(intro_key, &mut pkt).unwrap();
+                let _connection_id = reader.dst_id();
+
+                pkts.push((pkt, address));
+            }
+
+            // send the packets in reverse order
+            for (pkt, address) in pkts.into_iter().rev() {
+                ib_sess_tx.send(Packet { pkt, address }).await.unwrap();
+            }
+        }
+
+        match timeout!(inbound_session).await.unwrap().unwrap() {
+            PendingSsu2SessionStatus::NewInboundSession { .. } => {}
+            res => panic!("unexpected result: {res:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn fragmented_session_confirmed_retransmitted() {
+        let (
+            InboundContext {
+                inbound_session,
+                inbound_socket_rx,
+                inbound_session_tx: ib_sess_tx,
+            },
+            OutboundContext {
+                outbound_session,
+                outbound_session_tx: ob_sess_tx,
+                outbound_socket_rx,
+                ..
+            },
+        ) = create_session(Some(20)).await;
+
+        let intro_key = inbound_session.intro_key;
+        let _outbound_session = tokio::spawn(outbound_session);
+        let inbound_session = tokio::spawn(inbound_session.run());
+
+        // send retry message to outbound session
+        {
+            let Packet { mut pkt, address } = tokio::select! {
+                pkt = outbound_socket_rx.recv() => pkt.unwrap(),
+                _ = tokio::time::sleep(Duration::from_secs(10)) => panic!("timeout"),
+            };
+            let mut reader = HeaderReader::new(intro_key, &mut pkt).unwrap();
+            let _connection_id = reader.dst_id();
+
+            ob_sess_tx.send(Packet { pkt, address }).await.unwrap();
+        }
+
+        // read session request from outbound session, send it to inbound session
+        // and read session created
+        let pkt = {
+            let Packet { mut pkt, address } = inbound_socket_rx.recv().await.unwrap();
+            let mut reader = HeaderReader::new(intro_key, &mut pkt).unwrap();
+            let _connection_id = reader.dst_id();
+            ib_sess_tx.send(Packet { pkt, address }).await.unwrap();
+
+            outbound_socket_rx.recv().await.unwrap()
+        };
+
+        // send `SessionCreated` to outbound session
+        {
+            let Packet { mut pkt, address } = pkt;
+            let mut reader = HeaderReader::new(intro_key, &mut pkt).unwrap();
+            let _connection_id = reader.dst_id();
+
+            ob_sess_tx.send(Packet { pkt, address }).await.unwrap();
+        }
+
+        // read `SessionConfirmed` from outbound session
+        {
+            // four fragments are expected
+            let mut pkts = vec![];
+
+            for _ in 0..4 {
+                let Packet { mut pkt, address } = inbound_socket_rx.recv().await.unwrap();
+                let mut reader = HeaderReader::new(intro_key, &mut pkt).unwrap();
+                let _connection_id = reader.dst_id();
+
+                pkts.push((pkt, address));
+            }
+
+            // drop one fragmet
+            for (pkt, address) in pkts.into_iter().skip(1) {
+                ib_sess_tx.send(Packet { pkt, address }).await.unwrap();
+            }
+
+            // all four fragments are retransmitted
+            let mut pkts = vec![];
+
+            for _ in 0..4 {
+                let Packet { mut pkt, address } = inbound_socket_rx.recv().await.unwrap();
+                let mut reader = HeaderReader::new(intro_key, &mut pkt).unwrap();
+                let _connection_id = reader.dst_id();
+
+                pkts.push((pkt, address));
+            }
+
+            for (pkt, address) in pkts.into_iter() {
+                ib_sess_tx.send(Packet { pkt, address }).await.unwrap();
+            }
+        }
+
+        match timeout!(inbound_session).await.unwrap().unwrap() {
+            PendingSsu2SessionStatus::NewInboundSession { .. } => {}
+            res => panic!("unexpected result: {res:?}"),
         }
     }
 }

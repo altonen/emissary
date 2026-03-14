@@ -213,12 +213,26 @@ impl<R: Runtime> PendingSsu2SessionStatus<R> {
     }
 }
 
+/// Retransmitted packet kind.
+//
+// TODO: use Bytes
+#[derive(Clone)]
+pub enum PacketKind {
+    /// Single packet.
+    Single(Vec<u8>),
+
+    /// More than one packet.
+    ///
+    /// Only used for fragmented `SessionConfirmed` messages.
+    Multi(Vec<Vec<u8>>),
+}
+
 /// Events emitted by [`PacketRetransmitter`].
 pub enum PacketRetransmitterEvent {
     /// Retransmit packet to remote router.
     Retransmit {
-        /// Packet that needs to be retransmitted.
-        pkt: Vec<u8>,
+        /// Packet(s) that needs to be retransmitted.
+        pkt: PacketKind,
     },
 
     /// Operation has timed out.
@@ -227,8 +241,8 @@ pub enum PacketRetransmitterEvent {
 
 /// Packet retransmitter.
 pub struct PacketRetransmitter<R: Runtime> {
-    /// Packet that should be retransmitted if a timeout occurs.
-    pkt: Vec<u8>,
+    /// Packets that should be retransmitted if a timeout occurs.
+    pkt: Option<PacketKind>,
 
     /// Timeouts for packet retransmission.
     timeouts: VecDeque<Duration>,
@@ -247,7 +261,7 @@ impl<R: Runtime> PacketRetransmitter<R> {
     /// inbound session is destroyed.
     pub fn inactive(timeout: Duration) -> Self {
         Self {
-            pkt: Vec::new(),
+            pkt: None,
             timeouts: VecDeque::new(),
             timer: R::timer(timeout),
         }
@@ -262,7 +276,7 @@ impl<R: Runtime> PacketRetransmitter<R> {
     /// <https://geti2p.net/spec/ssu2#token-request>
     pub fn token_request(pkt: Vec<u8>) -> Self {
         Self {
-            pkt,
+            pkt: Some(PacketKind::Single(pkt)),
             timeouts: VecDeque::from_iter([Duration::from_secs(6), Duration::from_secs(6)]),
             timer: R::timer(Duration::from_secs(3)),
         }
@@ -278,7 +292,7 @@ impl<R: Runtime> PacketRetransmitter<R> {
     /// <https://geti2p.net/spec/ssu2#session-request>
     pub fn session_request(pkt: Vec<u8>) -> Self {
         Self {
-            pkt,
+            pkt: Some(PacketKind::Single(pkt)),
             timeouts: VecDeque::from_iter([
                 Duration::from_millis(2500),
                 Duration::from_millis(5000),
@@ -298,7 +312,7 @@ impl<R: Runtime> PacketRetransmitter<R> {
     /// <https://geti2p.net/spec/ssu2#session-created>
     pub fn session_created(pkt: Vec<u8>) -> Self {
         Self {
-            pkt,
+            pkt: Some(PacketKind::Single(pkt)),
             timeouts: VecDeque::from_iter([
                 Duration::from_secs(2),
                 Duration::from_secs(4),
@@ -319,9 +333,9 @@ impl<R: Runtime> PacketRetransmitter<R> {
     /// reported to [`Ssu2Socket`] until a `Data` packet is received from responder (Bob).
     ///
     /// <https://geti2p.net/spec/ssu2#session-confirmed>
-    pub fn session_confirmed(pkt: Vec<u8>) -> Self {
+    pub fn session_confirmed(pkts: Vec<Vec<u8>>) -> Self {
         Self {
-            pkt,
+            pkt: Some(PacketKind::Multi(pkts)),
             timeouts: VecDeque::from_iter([
                 Duration::from_millis(2500),
                 Duration::from_millis(5000),
@@ -343,9 +357,11 @@ impl<R: Runtime> Future for PacketRetransmitter<R> {
                 self.timer = R::timer(timeout);
                 let _ = self.timer.poll_unpin(cx);
 
-                Poll::Ready(PacketRetransmitterEvent::Retransmit {
-                    pkt: self.pkt.clone(),
-                })
+                match self.pkt {
+                    None => Poll::Pending,
+                    Some(ref pkt) =>
+                        Poll::Ready(PacketRetransmitterEvent::Retransmit { pkt: pkt.clone() }),
+                }
             }
             None => Poll::Ready(PacketRetransmitterEvent::Timeout),
         }

@@ -34,7 +34,8 @@ use crate::{
             session::{
                 active::Ssu2SessionContext,
                 pending::{
-                    PacketRetransmitter, PacketRetransmitterEvent, PendingSsu2SessionStatus,
+                    PacketKind, PacketRetransmitter, PacketRetransmitterEvent,
+                    PendingSsu2SessionStatus,
                 },
                 KeyContext,
             },
@@ -629,7 +630,7 @@ impl<R: Runtime> OutboundSsu2Session<R> {
             .with_src_id(self.src_id)
             .with_static_key(local_static_key.public())
             .with_router_info(router_info)
-            .build();
+            .build::<R>();
 
         // MixHash(header) & encrypt public key
         self.noise_ctx.mix_hash(message.header());
@@ -642,13 +643,12 @@ impl<R: Runtime> OutboundSsu2Session<R> {
         let mut cipher_key = self.noise_ctx.mix_key(&local_static_key, &remote_ephemeral_key);
 
         message.encrypt_payload(&cipher_key, 0u64, self.noise_ctx.state());
-        message.encrypt_header(self.remote_intro_key, k_header_2);
         cipher_key.zeroize();
 
         // reset packet retransmitter to track `SessionConfirmed` and send the message to remote
-        let pkt = message.build().to_vec();
-        self.pkt_retransmitter = PacketRetransmitter::session_confirmed(pkt.clone());
-        self.write_buffer.push_back(pkt);
+        let pkts = message.build(self.remote_intro_key, k_header_2);
+        self.pkt_retransmitter = PacketRetransmitter::session_confirmed(pkts.clone());
+        self.write_buffer.extend(pkts);
 
         self.state = PendingSessionState::AwaitingFirstAck { relay_tag };
         Ok(None)
@@ -964,7 +964,11 @@ impl<R: Runtime> Future for OutboundSsu2Session<R> {
                     state = ?self.state,
                     "retransmitting packet",
                 );
-                self.write_buffer.push_back(pkt);
+
+                match pkt {
+                    PacketKind::Single(pkt) => self.write_buffer.push_back(pkt),
+                    PacketKind::Multi(pkts) => self.write_buffer.extend(pkts),
+                }
             }
             Poll::Ready(PacketRetransmitterEvent::Timeout) =>
                 return Poll::Ready(PendingSsu2SessionStatus::Timeout {

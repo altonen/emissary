@@ -1551,9 +1551,13 @@ pub enum HeaderKind {
     },
 
     /// Session confirmed.
-    //
-    // TODO: router info fragmentation
     SessionConfirmed {
+        /// Fragment number.
+        fragment: usize,
+
+        /// Total fragments.
+        num_fragments: usize,
+
         /// Packet number.
         pkt_num: u32,
     },
@@ -1644,9 +1648,15 @@ impl fmt::Debug for HeaderKind {
                 .field("pkt_num", &pkt_num)
                 .field("token", &token)
                 .finish(),
-            Self::SessionConfirmed { pkt_num } => f
+            Self::SessionConfirmed {
+                fragment,
+                num_fragments,
+                pkt_num,
+            } => f
                 .debug_struct("HeaderKind::SessionConfirmed")
                 .field("pkt_num", &pkt_num)
+                .field("num_fragments", &num_fragments)
+                .field("fragment", &fragment)
                 .finish(),
             Self::SessionCreated {
                 net_id, pkt_num, ..
@@ -1833,6 +1843,9 @@ impl<'a> HeaderReader<'a> {
             }
             MessageType::SessionConfirmed => {
                 let pkt_num = u32::from_be(header as u32);
+                let fragment_info = header >> 40;
+                let num_fragments = (fragment_info & 0xf) as usize;
+                let fragment = ((fragment_info >> 4) & 0xf) as usize;
 
                 // the packet number of `SessionConfirmed` must be zero
                 //
@@ -1846,7 +1859,11 @@ impl<'a> HeaderReader<'a> {
                     return Err(Ssu2Error::Malformed);
                 }
 
-                Ok(HeaderKind::SessionConfirmed { pkt_num })
+                Ok(HeaderKind::SessionConfirmed {
+                    fragment,
+                    num_fragments,
+                    pkt_num,
+                })
             }
             MessageType::Data => Ok(HeaderKind::Data {
                 immediate_ack: ((header >> 40) & 0x01) == 0x01,
