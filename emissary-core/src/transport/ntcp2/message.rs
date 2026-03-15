@@ -20,8 +20,9 @@
 //!
 //! https://geti2p.net/spec/ntcp2#unencrypted-data
 
-use crate::{error::parser::Ntcp2ParseError, i2np::Message};
+use crate::{error::parser::Ntcp2ParseError, i2np::Message, transport::TerminationReason};
 
+use bytes::{BufMut, BytesMut};
 use nom::{
     bytes::complete::take,
     number::complete::{be_u16, be_u32, be_u64, be_u8},
@@ -365,6 +366,18 @@ impl<'a> MessageBlock<'a> {
         out[4..].copy_from_slice(router_info);
 
         out
+    }
+
+    /// Create new NTCP2 `Termination` message block.
+    pub fn new_termination(reason: TerminationReason) -> Vec<u8> {
+        let mut out = BytesMut::with_capacity(128);
+
+        out.put_u8(BlockType::Termination.as_u8());
+        out.put_u16(9);
+        out.put_u64(0);
+        out.put_u8(reason.from_ntcp2());
+
+        out.to_vec()
     }
 
     // TODO: unnecessary copy

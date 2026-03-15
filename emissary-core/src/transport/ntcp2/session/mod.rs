@@ -480,7 +480,11 @@ mod tests {
             Runtime, TcpListener as _,
         },
         subsystem::OutboundMessage,
-        transport::ntcp2::{listener::Ntcp2Listener, session::SessionManager},
+        timeout,
+        transport::{
+            ntcp2::{listener::Ntcp2Listener, session::SessionManager},
+            TerminationReason,
+        },
     };
     use bytes::Bytes;
     use futures::StreamExt;
@@ -977,7 +981,7 @@ mod tests {
             .unwrap();
 
         // operation times out because the message was expired
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(Duration::from_secs(1), async {
             match local_rx.recv().await {
                 _ => panic!("didn't expect to receive anything"),
             }
@@ -1155,5 +1159,99 @@ mod tests {
         let (res1, _res2) = tokio::join!(remote_manager.accept_session(stream), future);
 
         assert!(res1.is_err());
+    }
+
+    #[tokio::test]
+    async fn idle_timeout() {
+        let (_event_mgr, _event_subscriber, event_handle) =
+            EventManager::new(None, MockRuntime::register_metrics(vec![], None));
+        let (transport_tx1, transport_rx1) = channel(16);
+        let local = Ntcp2Builder::<MockRuntime>::new().build();
+        let local_manager = SessionManager::new(
+            local.ntcp2_key,
+            local.ntcp2_iv,
+            RouterContext::new(
+                MockRuntime::register_metrics(Vec::new(), None),
+                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                local.router_info.identity.id(),
+                Bytes::from(local.router_info.serialize(&local.signing_key)),
+                local.static_key,
+                local.signing_key,
+                2u8,
+                event_handle.clone(),
+            ),
+            true,
+            transport_tx1,
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let remote = Ntcp2Builder::<MockRuntime>::new()
+            .with_router_address(listener.local_addr().unwrap().port())
+            .build();
+        let (transport_tx2, transport_rx2) = channel(16);
+        let remote_manager = SessionManager::new(
+            remote.ntcp2_key,
+            remote.ntcp2_iv,
+            RouterContext::new(
+                MockRuntime::register_metrics(Vec::new(), None),
+                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                remote.router_info.identity.id(),
+                Bytes::from(remote.router_info.serialize(&remote.signing_key)),
+                remote.static_key,
+                remote.signing_key,
+                2u8,
+                event_handle.clone(),
+            ),
+            true,
+            transport_tx2,
+        );
+
+        let handle =
+            tokio::spawn(
+                async move { local_manager.create_session(remote.router_info.clone()).await },
+            );
+
+        let stream = MockTcpStream::new(
+            tokio::time::timeout(Duration::from_secs(5), listener.accept())
+                .await
+                .unwrap()
+                .unwrap()
+                .0,
+        );
+        let (res1, res2) = tokio::join!(remote_manager.accept_session(stream), handle);
+
+        let handle1 = tokio::spawn(res1.unwrap().run());
+        let handle2 = tokio::spawn(res2.unwrap().unwrap().run());
+
+        let tx1 = match timeout!(transport_rx1.recv()).await.unwrap().unwrap() {
+            SubsystemEvent::ConnectionEstablished { tx, .. } => tx,
+            _ => panic!("unexpected event"),
+        };
+        let _tx2 = match timeout!(transport_rx2.recv()).await.unwrap().unwrap() {
+            SubsystemEvent::ConnectionEstablished { tx, .. } => tx,
+            _ => panic!("unexpected event"),
+        };
+
+        tx1.send(OutboundMessage::Message(Message {
+            message_type: MessageType::DatabaseStore,
+            message_id: 1337,
+            expiration: MockRuntime::time_since_epoch() + I2NP_MESSAGE_EXPIRATION,
+            payload: vec![1, 3, 3, 7],
+        }))
+        .await
+        .unwrap();
+
+        let _tx2 = match transport_rx2.recv().await.unwrap() {
+            SubsystemEvent::Message { messages } => {
+                assert_eq!(messages.len(), 1);
+                assert_eq!(messages[0].1.message_type, MessageType::DatabaseStore);
+                assert_eq!(messages[0].1.message_id, 1337);
+                assert_eq!(&messages[0].1.payload, &[1, 3, 3, 7]);
+            }
+            _ => panic!("unexpected event"),
+        };
+
+        assert_eq!(handle1.await.unwrap().1, TerminationReason::IdleTimeout);
+        assert_eq!(handle2.await.unwrap().1, TerminationReason::IdleTimeout);
     }
 }
