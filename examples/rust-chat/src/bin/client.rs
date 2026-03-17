@@ -18,13 +18,13 @@
 
 use anyhow::anyhow;
 use clap::Parser;
-use emissary_core::{Config, Ntcp2Config, SamConfig, router::Router};
+use emissary_core::{router::Router, Config, Ntcp2Config, SamConfig};
 use emissary_util::{reseeder::Reseeder, runtime::tokio::Runtime, su3::ReseedRouterInfo};
 use rand::prelude::*;
 use rust_chat::DEVNET_ID;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tracing_subscriber::prelude::*;
-use yosemite::{Session, SessionOptions, style::Stream};
+use yosemite::{style::Stream, Session, SessionOptions};
 
 /// Logging target for chat client
 const LOG_TARGET: &str = "chat-client";
@@ -73,9 +73,13 @@ impl Client {
             //  * allow NTCP2 to bind itself to a random, OS-assigned port
             //  * don't publish the router info to NetDb
             //  * generate random NTCP2 key and IV
+            //  * enable both IPv4 and IPv6
             ntcp2: Some(Ntcp2Config {
                 port: 0,
-                host: None,
+                ipv4_host: None,
+                ipv6_host: None,
+                ipv4: true,
+                ipv6: true,
                 publish: false,
                 iv: {
                     let mut iv = [0u8; 16];

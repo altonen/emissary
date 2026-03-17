@@ -1161,7 +1161,7 @@ mod tests {
     #[tokio::test]
     async fn host_alias_for_ipv4_host_works() {
         let dir = tempdir().unwrap();
-        let storage = Storage::new(Some(dir.path().to_owned())).await.unwrap();
+        let storage = Storage::new::<TokioRuntime>(Some(dir.path().to_owned())).await.unwrap();
 
         // `host` is an alias for `ipv4_host` for backwards-compatibility
         {
@@ -1181,7 +1181,7 @@ mod tests {
             file.write_all(config_with_host.as_bytes()).await.unwrap();
             file.flush().await.unwrap();
 
-            let config = Config::parse(&make_arguments(), &storage).await.unwrap();
+            let config = Config::parse::<TokioRuntime>(&make_arguments(), &storage).await.unwrap();
 
             assert_eq!(
                 config.ntcp2_config.as_ref().unwrap().ipv4_host,
@@ -1211,7 +1211,7 @@ mod tests {
             file.write_all(config_with_ipv4_host.as_bytes()).await.unwrap();
             file.flush().await.unwrap();
 
-            let config = Config::parse(&make_arguments(), &storage).await.unwrap();
+            let config = Config::parse::<TokioRuntime>(&make_arguments(), &storage).await.unwrap();
 
             assert_eq!(
                 config.ntcp2_config.as_ref().unwrap().ipv4_host,

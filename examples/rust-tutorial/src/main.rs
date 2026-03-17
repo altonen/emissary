@@ -113,7 +113,12 @@ async fn main() -> anyhow::Result<()> {
             publish: true,
 
             // set host to `None` and use NAT-PMP/UPnP to resolve external address of the router
-            host: None,
+            ipv4_host: None,
+            ipv6_host: None,
+
+            // enable both IPv4 and IPv6
+            ipv4: true,
+            ipv6: true,
         }),
 
         // enable SAMv3 and bind TCP and UDP to random, OS-assigned ports
