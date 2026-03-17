@@ -64,7 +64,8 @@ impl RouterInfo {
     /// `ntcp2` is `Some` if NTCP has been enabled.
     pub fn new<R: Runtime>(
         config: &Config,
-        ntcp2: Option<RouterAddress>,
+        ntcp2_ipv4: Option<RouterAddress>,
+        ntcp2_ipv6: Option<RouterAddress>,
         ssu2: Option<RouterAddress>,
         static_key: &StaticPrivateKey,
         signing_key: &SigningPrivateKey,
@@ -112,7 +113,11 @@ impl RouterInfo {
             addresses: {
                 let mut addresses = Vec::new();
 
-                if let Some(ntcp2) = ntcp2 {
+                if let Some(ntcp2) = ntcp2_ipv4 {
+                    addresses.push(ntcp2);
+                }
+
+                if let Some(ntcp2) = ntcp2_ipv6 {
                     addresses.push(ntcp2);
                 }
 
@@ -134,7 +139,7 @@ impl RouterInfo {
         let (rest, identity) = RouterIdentity::parse_frame(input).map_err(Err::convert)?;
         let (rest, published) = Date::parse_frame(rest).map_err(Err::convert)?;
         let (rest, num_addresses) = be_u8(rest)?;
-        let (rest, addresses) = (0..num_addresses)
+        let (rest, mut addresses) = (0..num_addresses)
             .try_fold(
                 (rest, Vec::<RouterAddress>::new()),
                 |(rest, mut addresses), _| {
@@ -145,6 +150,10 @@ impl RouterInfo {
                 },
             )
             .ok_or(Err::Error(RouterInfoParseError::InvalidBitstream))?;
+
+        // sort addresses by their costs so the most preferred address will be
+        // the first item when iterating over addresses
+        addresses.sort_by_key(|router_info| router_info.cost());
 
         // ignore `peer_size`
         let (rest, _) = be_u8(rest)?;
@@ -297,6 +306,15 @@ impl RouterInfo {
         })
     }
 
+    /// Try to locate NTCP2 over IPv4 and return mutable reference to it.
+    pub fn ntcp2_ipv4_mut(&mut self) -> Option<&mut RouterAddress> {
+        self.addresses.iter_mut().find(|address| match address {
+            RouterAddress::Ntcp2 { socket_address, .. } =>
+                socket_address.is_some_and(|address| address.is_ipv4()),
+            _ => false,
+        })
+    }
+
     /// Try to locate SSU2 over IPv4.
     pub fn ssu2_ipv4(&self) -> Option<&RouterAddress> {
         self.addresses.iter().find(|address| match address {
@@ -344,167 +362,249 @@ impl RouterInfo {
 }
 
 #[cfg(test)]
-#[derive(Default)]
-pub struct RouterInfoBuilder {
-    floodfill: bool,
-    static_key: Option<Vec<u8>>,
-    signing_key: Option<Vec<u8>>,
-    ntcp2: Option<crate::Ntcp2Config>,
-    ssu2: Option<crate::Ssu2Config>,
-}
+#[allow(unused)]
+pub(crate) mod builder {
+    use super::*;
+    use crate::{runtime::mock::MockRuntime, Ntcp2Config, Ssu2Config};
+    use rand::{Rng, RngExt};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
-#[cfg(test)]
-impl RouterInfoBuilder {
-    /// Mark the router as floodfill
-    pub fn as_floodfill(mut self) -> Self {
-        self.floodfill = true;
-        self
+    #[allow(unused)]
+    #[derive(Default)]
+    pub struct RouterInfoBuilder {
+        floodfill: bool,
+        static_key: Option<Vec<u8>>,
+        signing_key: Option<Vec<u8>>,
+        ntcp2: Option<crate::Ntcp2Config>,
+        ssu2: Option<crate::Ssu2Config>,
+        ipv6: bool,
+        mixed: bool,
     }
 
-    /// Specify static key.
-    pub fn with_static_key(mut self, static_key: Vec<u8>) -> Self {
-        self.static_key = Some(static_key);
-        self
-    }
+    #[allow(unused)]
+    impl RouterInfoBuilder {
+        /// Mark the router as floodfill
+        pub fn as_floodfill(mut self) -> Self {
+            self.floodfill = true;
+            self
+        }
 
-    /// Specify signing key.
-    pub fn with_signing_key(mut self, signing_key: Vec<u8>) -> Self {
-        self.signing_key = Some(signing_key);
-        self
-    }
+        /// Make the router IPv6-only.
+        pub fn with_ipv6(mut self) -> Self {
+            self.ipv6 = true;
+            self
+        }
 
-    /// Specify NTCP configuration.
-    pub fn with_ntcp2(mut self, ntcp2: crate::Ntcp2Config) -> Self {
-        self.ntcp2 = Some(ntcp2);
-        self
-    }
+        /// Make the router suppport both IPv4 and IPv6.
+        pub fn with_mixed(mut self) -> Self {
+            self.mixed = true;
+            self
+        }
 
-    /// Specify SSU2 configuration.
-    pub fn with_ssu2(mut self, ssu2: crate::Ssu2Config) -> Self {
-        self.ssu2 = Some(ssu2);
-        self
-    }
+        /// Specify static key.
+        pub fn with_static_key(mut self, static_key: Vec<u8>) -> Self {
+            self.static_key = Some(static_key);
+            self
+        }
 
-    /// Build [`RouterInfoBuilder`] into a [`RouterInfo].
-    pub fn build(&mut self) -> (RouterInfo, StaticPrivateKey, SigningPrivateKey) {
-        use crate::{runtime::mock::MockRuntime, Ntcp2Config, Ssu2Config};
-        use rand::Rng;
+        /// Specify signing key.
+        pub fn with_signing_key(mut self, signing_key: Vec<u8>) -> Self {
+            self.signing_key = Some(signing_key);
+            self
+        }
 
-        let static_key = match self.static_key.take() {
-            Some(key) => StaticPrivateKey::from_bytes(&key).unwrap(),
-            None => StaticPrivateKey::random(MockRuntime::rng()),
-        };
-        let signing_key = match self.signing_key.take() {
-            Some(key) => SigningPrivateKey::from_bytes(&key).unwrap(),
-            None => SigningPrivateKey::random(MockRuntime::rng()),
-        };
-        let identity = RouterIdentity::from_keys::<MockRuntime>(&static_key, &signing_key)
-            .expect("to succeed");
+        /// Specify NTCP configuration.
+        pub fn with_ntcp2(mut self, ntcp2: crate::Ntcp2Config) -> Self {
+            self.ntcp2 = Some(ntcp2);
+            self
+        }
 
-        let mut ntcp2 = match self.ntcp2.take() {
-            None => None,
-            Some(Ntcp2Config {
-                port,
-                host,
-                publish,
-                key,
+        /// Specify SSU2 configuration.
+        pub fn with_ssu2(mut self, ssu2: crate::Ssu2Config) -> Self {
+            self.ssu2 = Some(ssu2);
+            self
+        }
+
+        /// Build [`RouterInfoBuilder`] into a [`RouterInfo].
+        pub fn build(&mut self) -> (RouterInfo, StaticPrivateKey, SigningPrivateKey) {
+            let static_key = match self.static_key.take() {
+                Some(key) => StaticPrivateKey::from_bytes(&key).unwrap(),
+                None => StaticPrivateKey::random(MockRuntime::rng()),
+            };
+            let signing_key = match self.signing_key.take() {
+                Some(key) => SigningPrivateKey::from_bytes(&key).unwrap(),
+                None => SigningPrivateKey::random(MockRuntime::rng()),
+            };
+            let identity = RouterIdentity::from_keys::<MockRuntime>(&static_key, &signing_key)
+                .expect("to succeed");
+            let mut addresses = Vec::<RouterAddress>::new();
+
+            if let Some(Ntcp2Config {
+                ipv4,
+                ipv4_host,
+                ipv6,
+                ipv6_host,
                 iv,
-            }) => match (publish, host) {
-                (true, Some(host)) => Some(RouterAddress::new_published_ntcp2(key, iv, port, host)),
-                (_, _) => Some(RouterAddress::new_unpublished_ntcp2(key, port)),
-            },
-        };
-        let mut ssu2 = match self.ssu2.take() {
-            None => None,
-            Some(Ssu2Config {
+                key,
+                port,
+                publish,
+            }) = self.ntcp2.take()
+            {
+                match (publish, ipv4_host) {
+                    (true, Some(host)) => addresses.push(RouterAddress::new_published_ntcp2(
+                        key,
+                        iv,
+                        IpAddr::V4(host),
+                        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+                    )),
+                    (_, _) => addresses.push(RouterAddress::new_unpublished_ntcp2(
+                        key,
+                        SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port),
+                    )),
+                }
+
+                match (publish, ipv6_host) {
+                    (true, Some(host)) => addresses.push(RouterAddress::new_published_ntcp2(
+                        key,
+                        iv,
+                        IpAddr::V6(host),
+                        SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port),
+                    )),
+                    (_, _) => addresses.push(RouterAddress::new_unpublished_ntcp2(
+                        key,
+                        SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port),
+                    )),
+                }
+            };
+
+            if let Some(Ssu2Config {
                 port,
                 host,
                 publish,
                 static_key,
                 intro_key,
-            }) => match (publish, host) {
-                (true, Some(host)) => Some(RouterAddress::new_published_ssu2(
-                    static_key, intro_key, port, host,
-                )),
-                (_, _) => Some(RouterAddress::new_unpublished_ssu2(
-                    static_key, intro_key, port,
-                )),
-            },
-        };
+            }) = self.ssu2.take()
+            {
+                match (publish, host) {
+                    (true, Some(host)) => addresses.push(RouterAddress::new_published_ssu2(
+                        static_key, intro_key, port, host,
+                    )),
+                    (_, _) => addresses.push(RouterAddress::new_unpublished_ssu2(
+                        static_key, intro_key, port,
+                    )),
+                }
+            }
 
-        // create default ntcp2 transport if neither transport was explicitly enabled
-        if ntcp2.is_none() && ssu2.is_none() {
-            let ntcp2_port = MockRuntime::rng().next_u32() as u16;
-            let ntcp2_host = format!(
-                "{}.{}.{}.{}",
-                {
-                    loop {
-                        let address = MockRuntime::rng().next_u32() % 256;
+            // create default ntcp2 transport if neither transport was explicitly enabled
+            if addresses.is_empty() {
+                let ntcp2_port = MockRuntime::rng().next_u32() as u16;
+                let ntcp2_key = {
+                    let mut key_bytes = [0u8; 32];
+                    MockRuntime::rng().fill_bytes(&mut key_bytes);
 
-                        if address != 0 {
-                            break address;
-                        }
-                    }
+                    key_bytes
+                };
+                let ntcp2_iv = {
+                    let mut iv_bytes = [0u8; 16];
+                    MockRuntime::rng().fill_bytes(&mut iv_bytes);
+
+                    iv_bytes
+                };
+
+                if self.mixed {
+                    let ntcp2_host = format!(
+                        "{}.{}.{}.{}",
+                        {
+                            loop {
+                                let address = MockRuntime::rng().next_u32() % 256;
+
+                                if address != 0 {
+                                    break address;
+                                }
+                            }
+                        },
+                        MockRuntime::rng().next_u32() % 256,
+                        MockRuntime::rng().next_u32() % 256,
+                        MockRuntime::rng().next_u32() % 256,
+                    );
+
+                    addresses.push(RouterAddress::new_published_ntcp2(
+                        ntcp2_key,
+                        ntcp2_iv,
+                        ntcp2_host.parse().unwrap(),
+                        SocketAddr::new(IpAddr::V4(ntcp2_host.parse().unwrap()), ntcp2_port),
+                    ));
+
+                    let ntcp2_host =
+                        Ipv6Addr::from(MockRuntime::rng().random::<u128>()).to_string();
+
+                    addresses.push(RouterAddress::new_published_ntcp2(
+                        ntcp2_key,
+                        ntcp2_iv,
+                        ntcp2_host.parse().unwrap(),
+                        SocketAddr::new(IpAddr::V6(ntcp2_host.parse().unwrap()), ntcp2_port),
+                    ));
+                } else if self.ipv6 {
+                    let ntcp2_host =
+                        Ipv6Addr::from(MockRuntime::rng().random::<u128>()).to_string();
+
+                    addresses.push(RouterAddress::new_published_ntcp2(
+                        ntcp2_key,
+                        ntcp2_iv,
+                        ntcp2_host.parse().unwrap(),
+                        SocketAddr::new(IpAddr::V6(ntcp2_host.parse().unwrap()), ntcp2_port),
+                    ));
+                } else {
+                    let ntcp2_host = format!(
+                        "{}.{}.{}.{}",
+                        {
+                            loop {
+                                let address = MockRuntime::rng().next_u32() % 256;
+
+                                if address != 0 {
+                                    break address;
+                                }
+                            }
+                        },
+                        MockRuntime::rng().next_u32() % 256,
+                        MockRuntime::rng().next_u32() % 256,
+                        MockRuntime::rng().next_u32() % 256,
+                    );
+
+                    addresses.push(RouterAddress::new_published_ntcp2(
+                        ntcp2_key,
+                        ntcp2_iv,
+                        ntcp2_host.parse().unwrap(),
+                        SocketAddr::new(IpAddr::V4(ntcp2_host.parse().unwrap()), ntcp2_port),
+                    ));
+                }
+            }
+
+            let mut options = Mapping::default();
+            options.insert("netId".into(), "2".into());
+            options.insert("router.version".into(), "0.9.62".into());
+
+            let capabilities = if self.floodfill {
+                options.insert(Str::from("caps"), Str::from("XfR"));
+                Capabilities::parse(&Str::from("XfR")).expect("to succeed")
+            } else {
+                options.insert(Str::from("caps"), Str::from("L"));
+                Capabilities::parse(&Str::from("L")).expect("to succeed")
+            };
+
+            (
+                RouterInfo {
+                    addresses,
+                    capabilities,
+                    identity,
+                    net_id: 2,
+                    options,
+                    published: Date::new(MockRuntime::rng().next_u64()),
                 },
-                MockRuntime::rng().next_u32() % 256,
-                MockRuntime::rng().next_u32() % 256,
-                MockRuntime::rng().next_u32() % 256,
-            );
-            let ntcp2_key = {
-                let mut key_bytes = [0u8; 32];
-                MockRuntime::rng().fill_bytes(&mut key_bytes);
-
-                key_bytes
-            };
-            let ntcp2_iv = {
-                let mut iv_bytes = [0u8; 16];
-                MockRuntime::rng().fill_bytes(&mut iv_bytes);
-
-                iv_bytes
-            };
-
-            ntcp2 = Some(RouterAddress::new_published_ntcp2(
-                ntcp2_key,
-                ntcp2_iv,
-                ntcp2_port,
-                ntcp2_host.parse().unwrap(),
-            ));
+                static_key,
+                signing_key,
+            )
         }
-
-        let mut options = Mapping::default();
-        options.insert("netId".into(), "2".into());
-        options.insert("router.version".into(), "0.9.62".into());
-
-        let capabilities = if self.floodfill {
-            options.insert(Str::from("caps"), Str::from("XfR"));
-            Capabilities::parse(&Str::from("XfR")).expect("to succeed")
-        } else {
-            options.insert(Str::from("caps"), Str::from("L"));
-            Capabilities::parse(&Str::from("L")).expect("to succeed")
-        };
-
-        let mut addresses = Vec::<RouterAddress>::new();
-
-        if let Some(ntcp2) = ntcp2.take() {
-            addresses.push(ntcp2);
-        }
-
-        if let Some(ssu2) = ssu2.take() {
-            addresses.push(ssu2);
-        }
-
-        (
-            RouterInfo {
-                addresses,
-                capabilities,
-                identity,
-                net_id: 2,
-                options,
-                published: Date::new(MockRuntime::rng().next_u64()),
-            },
-            static_key,
-            signing_key,
-        )
     }
 }
 
@@ -516,7 +616,11 @@ mod tests {
         primitives::RouterId,
         runtime::{mock::MockRuntime, Runtime},
     };
-    use std::{str::FromStr, time::Duration};
+    use std::{
+        net::{IpAddr, Ipv4Addr, SocketAddr},
+        str::FromStr,
+        time::Duration,
+    };
 
     // make router info with addresses
     fn make_router_info(addresses: Vec<RouterAddress>, caps: Option<Capabilities>) -> RouterInfo {
@@ -663,8 +767,8 @@ mod tests {
             addresses: Vec::from_iter([RouterAddress::new_published_ntcp2(
                 [1u8; 32],
                 [2u8; 16],
-                8888,
                 "127.0.0.1".parse().unwrap(),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
             )]),
             options: Mapping::from_iter([(Str::from("caps"), Str::from("L"))]),
             net_id: 2,
@@ -690,8 +794,8 @@ mod tests {
             addresses: Vec::from_iter([RouterAddress::new_published_ntcp2(
                 [1u8; 32],
                 [2u8; 16],
-                8888,
                 "127.0.0.1".parse().unwrap(),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
             )]),
             options: Mapping::from_iter([(Str::from("netId"), Str::from("2"))]),
             net_id: 2,
@@ -717,8 +821,8 @@ mod tests {
             addresses: Vec::from_iter([RouterAddress::new_published_ntcp2(
                 [1u8; 32],
                 [2u8; 16],
-                8888,
                 "127.0.0.1".parse().unwrap(),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
             )]),
             options: Mapping::from_iter([
                 (Str::from("netId"), Str::from("2")),
@@ -741,7 +845,10 @@ mod tests {
             published: Date::new(
                 (MockRuntime::time_since_epoch() - Duration::from_secs(60)).as_millis() as u64,
             ),
-            addresses: Vec::from_iter([RouterAddress::new_unpublished_ntcp2([1u8; 32], 8888)]),
+            addresses: Vec::from_iter([RouterAddress::new_unpublished_ntcp2(
+                [1u8; 32],
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+            )]),
             options: Mapping::from_iter([
                 (Str::from("netId"), Str::from("2")),
                 (Str::from("caps"), Str::from("UL")),
@@ -763,7 +870,10 @@ mod tests {
             published: Date::new(
                 (MockRuntime::time_since_epoch() - Duration::from_secs(60)).as_millis() as u64,
             ),
-            addresses: Vec::from_iter([RouterAddress::new_unpublished_ntcp2([1u8; 32], 8888)]),
+            addresses: Vec::from_iter([RouterAddress::new_unpublished_ntcp2(
+                [1u8; 32],
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+            )]),
             options: Mapping::from_iter([
                 (Str::from("netId"), Str::from("2")),
                 (Str::from("caps"), Str::from("LR")),
@@ -788,8 +898,8 @@ mod tests {
             addresses: Vec::from_iter([RouterAddress::new_published_ntcp2(
                 [1u8; 32],
                 [2u8; 16],
-                8888,
                 "127.0.0.1".parse().unwrap(),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
             )]),
             options: Mapping::from_iter([
                 (Str::from("netId"), Str::from("2")),
@@ -816,8 +926,8 @@ mod tests {
             addresses: Vec::from_iter([RouterAddress::new_published_ntcp2(
                 [1u8; 32],
                 [2u8; 16],
-                8888,
                 "127.0.0.1".parse().unwrap(),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
             )]),
             options: Mapping::from_iter([
                 (Str::from("netId"), Str::from("2")),
@@ -841,7 +951,10 @@ mod tests {
                 (MockRuntime::time_since_epoch() - Duration::from_secs(60)).as_millis() as u64,
             ),
             addresses: Vec::from_iter([
-                RouterAddress::new_unpublished_ntcp2([1u8; 32], 8888),
+                RouterAddress::new_unpublished_ntcp2(
+                    [1u8; 32],
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+                ),
                 RouterAddress::new_published_ssu2(
                     [1u8; 32],
                     [2u8; 32],
@@ -874,8 +987,8 @@ mod tests {
                 RouterAddress::new_published_ntcp2(
                     [1u8; 32],
                     [2u8; 16],
-                    8888,
                     "127.0.0.1".parse().unwrap(),
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
                 ),
                 RouterAddress::new_published_ssu2(
                     [1u8; 32],
@@ -906,7 +1019,10 @@ mod tests {
                 (MockRuntime::time_since_epoch() - Duration::from_secs(60)).as_millis() as u64,
             ),
             addresses: Vec::from_iter([
-                RouterAddress::new_unpublished_ntcp2([1u8; 32], 8888),
+                RouterAddress::new_unpublished_ntcp2(
+                    [1u8; 32],
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+                ),
                 RouterAddress::new_unpublished_ssu2([1u8; 32], [2u8; 32], 8888),
             ]),
             options: Mapping::from_iter([

@@ -27,6 +27,8 @@ pub const NUM_ACCEPTED: &str = "transport_accepted_connections_count";
 pub const NUM_INITIATED: &str = "transport_initiated_count";
 pub const NUM_DIAL_FAILURES: &str = "transport_dial_failure_count";
 pub const NUM_INTRODUCER_DIAL_FAILURES: &str = "transport_introducer_dial_failure_count";
+pub const NUM_IPV4: &str = "transport_ipv4_router_count";
+pub const NUM_IPV6: &str = "transport_ipv6_router_count";
 
 // netdb-related metrics
 pub const NUM_NETDB_QUERIES: &str = "transport_ri_query_count";
@@ -69,6 +71,14 @@ pub fn register_metrics(mut metrics: Vec<MetricType>) -> Vec<MetricType> {
     metrics.push(MetricType::Gauge {
         name: NUM_CONNECTIONS,
         description: "number of active connections",
+    });
+    metrics.push(MetricType::Gauge {
+        name: NUM_IPV4,
+        description: "number of active ipv4 connections",
+    });
+    metrics.push(MetricType::Gauge {
+        name: NUM_IPV6,
+        description: "number of active ipv6 connections",
     });
 
     metrics

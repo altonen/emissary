@@ -47,6 +47,7 @@ use alloc::{vec, vec::Vec};
 use core::{
     future::Future,
     mem,
+    net::SocketAddr,
     pin::Pin,
     task::{Context, Poll},
     time::Duration,
@@ -131,6 +132,9 @@ enum WriteState {
 
 /// Active NTCP2 session.
 pub struct Ntcp2Session<R: Runtime> {
+    /// Socket address of remote router.
+    address: SocketAddr,
+
     /// Direction of the session.
     direction: Direction,
 
@@ -202,6 +206,7 @@ impl<R: Runtime> Ntcp2Session<R> {
     /// Create new active NTCP2 [`Session`].
     pub fn new(
         role: Role,
+        address: SocketAddr,
         router_info: RouterInfo,
         stream: R::TcpStream,
         key_context: KeyContext,
@@ -220,6 +225,7 @@ impl<R: Runtime> Ntcp2Session<R> {
         let (msg_tx, msg_rx) = with_recycle(512, OutboundMessageRecycle::default());
 
         Self {
+            address,
             direction,
             event_handle,
             idle_timeout_timer: R::timer(IDLE_TIMEOUT_CHECK_INTERVAL),
@@ -253,6 +259,11 @@ impl<R: Runtime> Ntcp2Session<R> {
     /// Get role of the session.
     pub fn role(&self) -> Role {
         self.role
+    }
+
+    /// Get the address of remote router.
+    pub fn address(&self) -> SocketAddr {
+        self.address
     }
 
     /// When was the handshake started.

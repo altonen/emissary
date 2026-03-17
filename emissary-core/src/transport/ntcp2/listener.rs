@@ -30,8 +30,6 @@ use core::{
     task::{Context, Poll},
 };
 
-// TODO: support both ipv4 and ipv6
-
 /// NTCP2 listener.
 pub struct Ntcp2Listener<R: Runtime> {
     /// Allow local addresses.
@@ -58,7 +56,7 @@ impl<R: Runtime> Ntcp2Listener<R> {
 }
 
 impl<R: Runtime> Stream for Ntcp2Listener<R> {
-    type Item = R::TcpStream;
+    type Item = (R::TcpStream, SocketAddr);
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
@@ -74,7 +72,7 @@ impl<R: Runtime> Stream for Ntcp2Listener<R> {
                         );
                         continue;
                     }
-                    _ => return Poll::Ready(Some(stream)),
+                    _ => return Poll::Ready(Some((stream, address))),
                 },
             }
         }

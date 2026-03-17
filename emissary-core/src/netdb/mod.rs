@@ -1982,7 +1982,10 @@ mod tests {
         },
         tunnel::{NoiseContext, TunnelMessage},
     };
-    use std::collections::VecDeque;
+    use std::{
+        collections::VecDeque,
+        net::{IpAddr, Ipv4Addr, SocketAddr},
+    };
     use thingbuf::mpsc::{channel, with_recycle};
 
     #[tokio::test]
@@ -2680,7 +2683,8 @@ mod tests {
                                 .as_millis() as u64,
                             ),
                             addresses: Vec::from_iter([RouterAddress::new_unpublished_ntcp2(
-                                [1u8; 32], 8888,
+                                [1u8; 32],
+                                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
                             )]),
                             options: Mapping::from_iter([
                                 (Str::from("netId"), Str::from("2")),
@@ -2787,7 +2791,8 @@ mod tests {
                                 .as_millis() as u64,
                             ),
                             addresses: Vec::from_iter([RouterAddress::new_unpublished_ntcp2(
-                                [1u8; 32], 8888,
+                                [1u8; 32],
+                                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
                             )]),
                             options: Mapping::from_iter([
                                 (Str::from("netId"), Str::from("2")),
@@ -3110,7 +3115,8 @@ mod tests {
                                 .as_millis() as u64,
                             ),
                             addresses: Vec::from_iter([RouterAddress::new_unpublished_ntcp2(
-                                [1u8; 32], 8888,
+                                [1u8; 32],
+                                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
                             )]),
                             options: Mapping::from_iter([
                                 (Str::from("netId"), Str::from("2")),
@@ -3421,7 +3427,8 @@ mod tests {
                                     .as_millis() as u64,
                             ),
                             addresses: Vec::from_iter([RouterAddress::new_unpublished_ntcp2(
-                                [1u8; 32], 8888,
+                                [1u8; 32],
+                                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
                             )]),
                             options: Mapping::from_iter([
                                 (Str::from("netId"), Str::from("99")),
@@ -3601,7 +3608,8 @@ mod tests {
                                 .as_millis() as u64,
                             ),
                             addresses: Vec::from_iter([RouterAddress::new_unpublished_ntcp2(
-                                [1u8; 32], 8888,
+                                [1u8; 32],
+                                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
                             )]),
                             options: Mapping::from_iter([
                                 (Str::from("netId"), Str::from("2")),

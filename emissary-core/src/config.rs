@@ -16,7 +16,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use core::net::Ipv4Addr;
+use core::net::{Ipv4Addr, Ipv6Addr};
 
 use crate::{primitives::Str, profile::Profile, tunnel::TunnelPoolConfig};
 
@@ -58,20 +58,29 @@ impl From<Option<ExploratoryConfig>> for TunnelPoolConfig {
 /// NTCP2 configuration.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Ntcp2Config {
-    /// NTCP2 port.
-    pub port: u16,
+    /// Is IPV4 enabled.
+    pub ipv4: bool,
 
-    /// NTCP2 listen address.
-    pub host: Option<Ipv4Addr>,
+    /// NTCP2 listen address for IPv4.
+    pub ipv4_host: Option<Ipv4Addr>,
 
-    /// Should NTCP2 be published in router info.
-    pub publish: bool,
+    /// Is IPV6 enabled.
+    pub ipv6: bool,
+
+    /// NTCP2 listen address for IPv6.
+    pub ipv6_host: Option<Ipv6Addr>,
+
+    /// NTCP2 IV.
+    pub iv: [u8; 16],
 
     /// NTCP2 key.
     pub key: [u8; 32],
 
-    /// NTCP2 IV.
-    pub iv: [u8; 16],
+    /// NTCP2 port.
+    pub port: u16,
+
+    /// Should NTCP2 be published in router info.
+    pub publish: bool,
 }
 
 /// SSU2 configuration.

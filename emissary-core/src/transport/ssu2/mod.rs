@@ -303,6 +303,7 @@ mod tests {
         let router_info1 = RouterInfo::new::<MockRuntime>(
             &Default::default(),
             None,
+            None,
             address1,
             &static1,
             &signing1,
@@ -310,6 +311,7 @@ mod tests {
         );
         let router_info2 = RouterInfo::new::<MockRuntime>(
             &Default::default(),
+            None,
             None,
             address2,
             &static2,
@@ -412,6 +414,7 @@ mod tests {
         let router_info1 = RouterInfo::new::<MockRuntime>(
             &Default::default(),
             None,
+            None,
             address1,
             &static1,
             &signing1,
@@ -419,6 +422,7 @@ mod tests {
         );
         let router_info2 = RouterInfo::new::<MockRuntime>(
             &Default::default(),
+            None,
             None,
             address2,
             &static2,
@@ -523,6 +527,7 @@ mod tests {
         let router_info1 = RouterInfo::new::<MockRuntime>(
             &Default::default(),
             None,
+            None,
             address1.clone(),
             &static1,
             &signing1,
@@ -531,6 +536,7 @@ mod tests {
         let router_info2 = RouterInfo::new::<MockRuntime>(
             &Default::default(),
             None,
+            None,
             address2.clone(),
             &static2,
             &signing2,
@@ -538,6 +544,7 @@ mod tests {
         );
         let router_info3 = RouterInfo::new::<MockRuntime>(
             &Default::default(),
+            None,
             None,
             address3.clone(),
             &static3,
@@ -741,6 +748,7 @@ mod tests {
         let mut router_info1 = RouterInfo::new::<MockRuntime>(
             &Default::default(),
             None,
+            None,
             address1,
             &static1,
             &signing1,
@@ -748,6 +756,7 @@ mod tests {
         );
         let router_info2 = RouterInfo::new::<MockRuntime>(
             &Default::default(),
+            None,
             None,
             address2,
             &static2,
@@ -888,6 +897,7 @@ mod tests {
         let router_info3 = RouterInfo::new::<MockRuntime>(
             &Default::default(),
             None,
+            None,
             address3,
             &static3,
             &signing3,
@@ -1012,6 +1022,7 @@ mod tests {
         let mut router_info1 = RouterInfo::new::<MockRuntime>(
             &Default::default(),
             None,
+            None,
             address1,
             &static1,
             &signing1,
@@ -1029,6 +1040,7 @@ mod tests {
 
         let router_info2 = RouterInfo::new::<MockRuntime>(
             &Default::default(),
+            None,
             None,
             address2,
             &static2,

@@ -31,7 +31,7 @@ pub use router_info::RouterInfo;
 pub use string::Str;
 
 #[cfg(test)]
-pub use router_info::RouterInfoBuilder;
+pub use router_info::builder::RouterInfoBuilder;
 
 #[cfg(test)]
 use crate::runtime::Runtime;

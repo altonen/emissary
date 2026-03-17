@@ -32,6 +32,7 @@ use futures::Stream;
 use futures_io::{AsyncRead as _, AsyncWrite as _};
 use parking_lot::RwLock;
 use rand::{CryptoRng, RngExt};
+use socket2::{Domain, Protocol, Socket, Type};
 use tokio::{
     io::ReadBuf,
     net, task,
@@ -126,7 +127,24 @@ pub struct MockTcpListener(net::TcpListener);
 
 impl TcpListener<MockTcpStream> for MockTcpListener {
     async fn bind(address: SocketAddr) -> Option<Self> {
-        net::TcpListener::bind(&address).await.ok().map(MockTcpListener)
+        let socket = match address {
+            SocketAddr::V4(_) =>
+                Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP)).ok()?,
+            SocketAddr::V6(_) => {
+                let socket = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP)).ok()?;
+                socket.set_only_v6(true).ok()?;
+                socket
+            }
+        };
+
+        socket.set_reuse_address(true).ok()?;
+        socket.set_nonblocking(true).ok()?;
+        socket.bind(&address.into()).ok()?;
+        socket.listen(128).ok()?;
+
+        net::TcpListener::from_std(std::net::TcpListener::from(socket))
+            .ok()
+            .map(MockTcpListener)
     }
 
     fn poll_accept(&mut self, cx: &mut Context<'_>) -> Poll<Option<(MockTcpStream, SocketAddr)>> {

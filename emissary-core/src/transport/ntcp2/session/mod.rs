@@ -47,10 +47,14 @@ use crate::{
 };
 
 use bytes::Bytes;
+use thingbuf::mpsc::Sender;
 
 use alloc::{vec, vec::Vec};
-use core::{future::Future, net::IpAddr, time::Duration};
-use thingbuf::mpsc::Sender;
+use core::{
+    future::Future,
+    net::{IpAddr, SocketAddr},
+    time::Duration,
+};
 
 mod active;
 mod initiator;
@@ -177,6 +181,8 @@ impl<R: Runtime> SessionManager<R> {
         transport_tx: Sender<SubsystemEvent>,
         started: R::Instant,
         metrics_handle: R::MetricsHandle,
+        ipv4: bool,
+        ipv6: bool,
     ) -> crate::Result<Ntcp2Session<R>> {
         let router_id = router_info.identity.id();
 
@@ -186,7 +192,52 @@ impl<R: Runtime> SessionManager<R> {
                 static_key,
                 iv: Some(iv),
                 ..
-            }) = router_info.ntcp2_ipv4()
+            }) = router_info.addresses().find(|address| match address {
+                RouterAddress::Ntcp2 {
+                    socket_address: Some(socket_address),
+                    iv: Some(_),
+                    ..
+                } => match socket_address.ip() {
+                    IpAddr::V4(address) if !is_global(address) && !allow_local => {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            %router_id,
+                            ?address,
+                            "tried to dial local ipv4 address but local addresses were disabled",
+                        );
+                        false
+                    }
+                    IpAddr::V4(address) if !ipv4 => {
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            %router_id,
+                            ?address,
+                            "ignoring ipv4 address, not supported locally",
+                        );
+                        false
+                    }
+                    IpAddr::V6(address) if address.is_loopback() && !allow_local => {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            ?address,
+                            "tried to dial local ipv6 address but local addresses were disabled",
+                        );
+                        false
+                    }
+                    IpAddr::V6(address) if !ipv6 => {
+                        tracing::trace!(
+                            target: LOG_TARGET,
+                            %router_id,
+                            ?address,
+                            "ignoring ipv6 address, not supported locally",
+                        );
+                        false
+                    }
+                    _ => true,
+                },
+                RouterAddress::Ssu2 { .. } => false,
+                RouterAddress::Ntcp2 { .. } => false,
+            })
             else {
                 tracing::debug!(
                     target: LOG_TARGET,
@@ -194,18 +245,6 @@ impl<R: Runtime> SessionManager<R> {
                 );
                 return Err(Error::InvalidData);
             };
-
-            match socket_address.ip() {
-                IpAddr::V4(address) if !is_global(address) && !allow_local => {
-                    tracing::warn!(
-                        target: LOG_TARGET,
-                        ?address,
-                        "tried to dial local address but local addresses were disabled",
-                    );
-                    return Err(Error::InvalidData);
-                }
-                _ => {}
-            }
 
             (static_key, iv, socket_address)
         };
@@ -266,6 +305,7 @@ impl<R: Runtime> SessionManager<R> {
 
         Ok(Ntcp2Session::<R>::new(
             Role::Initiator,
+            *socket_address,
             router_info,
             stream,
             key_context,
@@ -284,9 +324,14 @@ impl<R: Runtime> SessionManager<R> {
     /// on the opening connection.
     ///
     /// [1]: https://geti2p.net/spec/ntcp2#key-derivation-function-kdf-for-handshake-message-1
+    ///
+    /// `ipv4` and `ipv6` parameters indicate whether `NtcpSession` is able to dial remote routers
+    /// over those protocols.
     pub fn create_session(
         &self,
         router: RouterInfo,
+        ipv4: bool,
+        ipv6: bool,
     ) -> impl Future<Output = Result<Ntcp2Session<R>, (Option<RouterId>, Error)>> {
         let net_id = self.router_ctx.net_id();
         let local_info = self.router_ctx.router_info();
@@ -312,6 +357,8 @@ impl<R: Runtime> SessionManager<R> {
                 transport_tx.clone(),
                 started,
                 metrics_handle,
+                ipv4,
+                ipv6,
             )
             .await
             {
@@ -347,6 +394,7 @@ impl<R: Runtime> SessionManager<R> {
     /// Called by [`SessionManager::accept_session()`] to accept an inbound session.
     async fn accept_session_inner(
         mut stream: R::TcpStream,
+        address: SocketAddr,
         net_id: u8,
         local_router_hash: Vec<u8>,
         noise_ctx: NoiseContext,
@@ -406,6 +454,7 @@ impl<R: Runtime> SessionManager<R> {
 
                 Ok(Ntcp2Session::new(
                     Role::Responder,
+                    address,
                     router_info,
                     stream,
                     key_context,
@@ -433,6 +482,7 @@ impl<R: Runtime> SessionManager<R> {
     pub fn accept_session(
         &self,
         stream: R::TcpStream,
+        address: SocketAddr,
     ) -> impl Future<Output = Result<Ntcp2Session<R>, (Option<RouterId>, Error)>> {
         let net_id = self.router_ctx.net_id();
         let local_router_hash = self.router_ctx.router_id().to_vec();
@@ -449,6 +499,7 @@ impl<R: Runtime> SessionManager<R> {
         async move {
             Self::accept_session_inner(
                 stream,
+                address,
                 net_id,
                 local_router_hash,
                 NoiseContext::new(chaining_key, inbound_initial_state),
@@ -475,20 +526,22 @@ mod tests {
         i2np::{Message, MessageType, I2NP_MESSAGE_EXPIRATION},
         primitives::{Capabilities, Date, Mapping, RouterAddress, RouterIdentity, RouterInfo, Str},
         profile::ProfileStorage,
+        router::context::builder::RouterContextBuilder,
         runtime::{
             mock::{MockRuntime, MockTcpListener, MockTcpStream},
             Runtime, TcpListener as _,
         },
         subsystem::OutboundMessage,
         timeout,
-        transport::{
-            ntcp2::{listener::Ntcp2Listener, session::SessionManager},
-            TerminationReason,
-        },
+        transport::ntcp2::{listener::Ntcp2Listener, session::SessionManager, TerminationReason},
     };
     use bytes::Bytes;
     use futures::StreamExt;
-    use std::{marker::PhantomData, time::Duration};
+    use std::{
+        marker::PhantomData,
+        net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+        time::Duration,
+    };
     use thingbuf::mpsc::channel;
     use tokio::net::TcpListener;
 
@@ -497,6 +550,7 @@ mod tests {
         router_address: Option<RouterAddress>,
         ntcp2_iv: [u8; 16],
         ntcp2_key: [u8; 32],
+        ipv6: bool,
         _runtime: PhantomData<R>,
     }
 
@@ -520,6 +574,7 @@ mod tests {
                 router_address: None,
                 ntcp2_iv,
                 ntcp2_key,
+                ipv6: false,
                 _runtime: PhantomData::default(),
             }
         }
@@ -529,12 +584,27 @@ mod tests {
             self
         }
 
+        fn with_ipv6(mut self) -> Self {
+            self.ipv6 = true;
+            self
+        }
+
         fn with_router_address(mut self, port: u16) -> Self {
             self.router_address = Some(RouterAddress::new_published_ntcp2(
                 self.ntcp2_key.clone(),
                 self.ntcp2_iv,
-                port,
                 "127.0.0.1".parse().unwrap(),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port),
+            ));
+            self
+        }
+
+        fn with_router_address_ipv6(mut self, port: u16) -> Self {
+            self.router_address = Some(RouterAddress::new_published_ntcp2(
+                self.ntcp2_key.clone(),
+                self.ntcp2_iv,
+                "::1".parse().unwrap(),
+                SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port),
             ));
             self
         }
@@ -550,9 +620,19 @@ mod tests {
                     (MockRuntime::time_since_epoch() - Duration::from_secs(2 * 60)).as_millis()
                         as u64,
                 ),
-                addresses: Vec::from_iter([self.router_address.take().unwrap_or(
-                    RouterAddress::new_unpublished_ntcp2(self.ntcp2_key.clone(), 8888),
-                )]),
+                addresses: Vec::from_iter([self.router_address.take().unwrap_or_else(|| {
+                    if self.ipv6 {
+                        RouterAddress::new_unpublished_ntcp2(
+                            self.ntcp2_key.clone(),
+                            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 8888),
+                        )
+                    } else {
+                        RouterAddress::new_unpublished_ntcp2(
+                            self.ntcp2_key.clone(),
+                            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+                        )
+                    }
+                })]),
                 options: Mapping::from_iter([
                     (Str::from("netId"), Str::from(self.net_id.to_string())),
                     (Str::from("caps"), Str::from("L")),
@@ -624,19 +704,15 @@ mod tests {
             transport_tx2,
         );
 
-        let handle =
-            tokio::spawn(
-                async move { local_manager.create_session(remote.router_info.clone()).await },
-            );
+        let handle = tokio::spawn(async move {
+            local_manager.create_session(remote.router_info.clone(), true, false).await
+        });
 
-        let stream = MockTcpStream::new(
-            tokio::time::timeout(Duration::from_secs(5), listener.accept())
-                .await
-                .unwrap()
-                .unwrap()
-                .0,
+        let (stream, address) = timeout!(listener.accept()).await.unwrap().unwrap();
+        let (res1, res2) = tokio::join!(
+            remote_manager.accept_session(MockTcpStream::new(stream), address),
+            handle
         );
-        let (res1, res2) = tokio::join!(remote_manager.accept_session(stream), handle);
 
         assert!(res1.is_ok());
         assert!(res2.unwrap().is_ok());
@@ -688,17 +764,14 @@ mod tests {
         );
 
         let handle = tokio::spawn(async move {
-            let stream = MockTcpStream::new(
-                tokio::time::timeout(Duration::from_secs(5), listener.accept())
-                    .await
-                    .unwrap()
-                    .unwrap()
-                    .0,
-            );
-            remote_manager.accept_session(stream).await
+            let (stream, address) = timeout!(listener.accept()).await.unwrap().unwrap();
+            remote_manager.accept_session(MockTcpStream::new(stream), address).await
         });
 
-        assert!(local_manager.create_session(remote.router_info.clone()).await.is_err());
+        assert!(local_manager
+            .create_session(remote.router_info.clone(), true, false)
+            .await
+            .is_err());
         assert!(handle.await.unwrap().is_err());
     }
 
@@ -749,17 +822,14 @@ mod tests {
         );
 
         let handle = tokio::spawn(async move {
-            let stream = MockTcpStream::new(
-                tokio::time::timeout(Duration::from_secs(5), listener.accept())
-                    .await
-                    .unwrap()
-                    .unwrap()
-                    .0,
-            );
-            remote_manager.accept_session(stream).await
+            let (stream, address) = timeout!(listener.accept()).await.unwrap().unwrap();
+            remote_manager.accept_session(MockTcpStream::new(stream), address).await
         });
 
-        assert!(local_manager.create_session(remote.router_info.clone()).await.is_err());
+        assert!(local_manager
+            .create_session(remote.router_info.clone(), true, false)
+            .await
+            .is_err());
         assert!(handle.await.unwrap().is_err());
     }
 
@@ -810,17 +880,14 @@ mod tests {
         );
 
         tokio::spawn(async move {
-            let stream = MockTcpStream::new(
-                tokio::time::timeout(Duration::from_secs(5), listener.accept())
-                    .await
-                    .unwrap()
-                    .unwrap()
-                    .0,
-            );
-            remote_manager.accept_session(stream).await.unwrap();
+            let (stream, address) = timeout!(listener.accept()).await.unwrap().unwrap();
+            remote_manager.accept_session(MockTcpStream::new(stream), address).await
         });
 
-        assert!(local_manager.create_session(remote.router_info.clone()).await.is_err());
+        assert!(local_manager
+            .create_session(remote.router_info.clone(), true, false)
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -855,7 +922,10 @@ mod tests {
 
         tokio::spawn(async move { while let Some(_) = listener.next().await {} });
 
-        assert!(local_manager.create_session(remote.router_info.clone()).await.is_err());
+        assert!(local_manager
+            .create_session(remote.router_info.clone(), true, false)
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -904,19 +974,15 @@ mod tests {
             remote_tx,
         );
 
-        let handle =
-            tokio::spawn(
-                async move { local_manager.create_session(remote.router_info.clone()).await },
-            );
+        let handle = tokio::spawn(async move {
+            local_manager.create_session(remote.router_info.clone(), true, false).await
+        });
 
-        let stream = MockTcpStream::new(
-            tokio::time::timeout(Duration::from_secs(5), listener.accept())
-                .await
-                .unwrap()
-                .unwrap()
-                .0,
+        let (stream, address) = timeout!(listener.accept()).await.unwrap().unwrap();
+        let (res1, res2) = tokio::join!(
+            remote_manager.accept_session(MockTcpStream::new(stream), address),
+            handle
         );
-        let (res1, res2) = tokio::join!(remote_manager.accept_session(stream), handle);
 
         tokio::spawn(res1.unwrap().run());
         tokio::spawn(res2.unwrap().unwrap().run());
@@ -1072,19 +1138,16 @@ mod tests {
                     transport_tx1,
                 );
 
-                local_manager.create_session(remote.router_info.clone()).await
+                local_manager.create_session(remote.router_info.clone(), true, false).await
             })
         });
 
-        let stream = MockTcpStream::new(
-            tokio::time::timeout(Duration::from_secs(5), listener.accept())
-                .await
-                .unwrap()
-                .unwrap()
-                .0,
-        );
+        let (stream, address) = timeout!(listener.accept()).await.unwrap().unwrap();
         let future = tokio::task::spawn_blocking(move || handle.join().unwrap());
-        let (res1, _res2) = tokio::join!(remote_manager.accept_session(stream), future);
+        let (res1, _res2) = tokio::join!(
+            remote_manager.accept_session(MockTcpStream::new(stream), address),
+            future
+        );
 
         assert!(res1.is_err());
     }
@@ -1144,19 +1207,16 @@ mod tests {
                     transport_tx1,
                 );
 
-                local_manager.create_session(remote.router_info.clone()).await
+                local_manager.create_session(remote.router_info.clone(), true, false).await
             })
         });
 
-        let stream = MockTcpStream::new(
-            tokio::time::timeout(Duration::from_secs(5), listener.accept())
-                .await
-                .unwrap()
-                .unwrap()
-                .0,
-        );
+        let (stream, address) = timeout!(listener.accept()).await.unwrap().unwrap();
         let future = tokio::task::spawn_blocking(move || handle.join().unwrap());
-        let (res1, _res2) = tokio::join!(remote_manager.accept_session(stream), future);
+        let (res1, _res2) = tokio::join!(
+            remote_manager.accept_session(MockTcpStream::new(stream), address),
+            future
+        );
 
         assert!(res1.is_err());
     }
@@ -1206,19 +1266,16 @@ mod tests {
             transport_tx2,
         );
 
-        let handle =
-            tokio::spawn(
-                async move { local_manager.create_session(remote.router_info.clone()).await },
-            );
+        let handle = tokio::spawn(async move {
+            local_manager.create_session(remote.router_info.clone(), true, false).await
+        });
 
-        let stream = MockTcpStream::new(
-            tokio::time::timeout(Duration::from_secs(5), listener.accept())
-                .await
-                .unwrap()
-                .unwrap()
-                .0,
-        );
-        let (res1, res2) = tokio::join!(remote_manager.accept_session(stream), handle);
+        let (stream, address) = tokio::time::timeout(Duration::from_secs(5), listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        let stream = MockTcpStream::new(stream);
+        let (res1, res2) = tokio::join!(remote_manager.accept_session(stream, address), handle);
 
         let handle1 = tokio::spawn(res1.unwrap().run());
         let handle2 = tokio::spawn(res2.unwrap().unwrap().run());
@@ -1253,5 +1310,175 @@ mod tests {
 
         assert_eq!(handle1.await.unwrap().1, TerminationReason::IdleTimeout);
         assert_eq!(handle2.await.unwrap().1, TerminationReason::IdleTimeout);
+    }
+
+    #[tokio::test]
+    async fn dial_ipv4_only_ipv6_supported() {
+        let local = Ntcp2Builder::<MockRuntime>::new().with_net_id(128).build();
+        let (transport_tx1, _transport_rx1) = channel(16);
+        let local_manager = SessionManager::new(
+            local.ntcp2_key,
+            local.ntcp2_iv,
+            RouterContextBuilder::default()
+                .with_router_info(
+                    local.router_info.clone(),
+                    local.static_key.clone(),
+                    local.signing_key.clone(),
+                )
+                .build(),
+            true,
+            transport_tx1,
+        );
+
+        // remote only supports ipv6
+        let listener = TcpListener::bind("[::]:0").await.unwrap();
+        let remote = Ntcp2Builder::<MockRuntime>::new()
+            .with_router_address_ipv6(listener.local_addr().unwrap().port())
+            .build();
+
+        assert!(local_manager
+            .create_session(remote.router_info.clone(), true, false)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn dial_ipv6_only_ipv4_supported() {
+        let local = Ntcp2Builder::<MockRuntime>::new().with_ipv6().with_net_id(128).build();
+        let (transport_tx1, _transport_rx1) = channel(16);
+        let local_manager = SessionManager::new(
+            local.ntcp2_key,
+            local.ntcp2_iv,
+            RouterContextBuilder::default()
+                .with_router_info(
+                    local.router_info.clone(),
+                    local.static_key.clone(),
+                    local.signing_key.clone(),
+                )
+                .build(),
+            true,
+            transport_tx1,
+        );
+
+        // remote only supports ipv4
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let remote = Ntcp2Builder::<MockRuntime>::new()
+            .with_router_address(listener.local_addr().unwrap().port())
+            .build();
+
+        assert!(local_manager
+            .create_session(remote.router_info.clone(), false, true)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn dial_ipv6_only_both_supported() {
+        let local = Ntcp2Builder::<MockRuntime>::new().with_ipv6().with_net_id(128).build();
+        let (transport_tx1, _transport_rx1) = channel(16);
+        let local_manager = SessionManager::new(
+            local.ntcp2_key,
+            local.ntcp2_iv,
+            RouterContextBuilder::default()
+                .with_router_info(
+                    local.router_info.clone(),
+                    local.static_key.clone(),
+                    local.signing_key.clone(),
+                )
+                .with_net_id(128)
+                .build(),
+            true,
+            transport_tx1,
+        );
+
+        let listener = TcpListener::bind("[::]:0").await.unwrap();
+        let (transport_tx1, _transport_rx1) = channel(16);
+        let remote = Ntcp2Builder::<MockRuntime>::new()
+            .with_net_id(128)
+            .with_router_address_ipv6(listener.local_addr().unwrap().port())
+            .build();
+        let remote_manager = SessionManager::new(
+            remote.ntcp2_key,
+            remote.ntcp2_iv,
+            RouterContextBuilder::default()
+                .with_router_info(
+                    remote.router_info.clone(),
+                    remote.static_key.clone(),
+                    remote.signing_key.clone(),
+                )
+                .with_net_id(128)
+                .build(),
+            true,
+            transport_tx1,
+        );
+
+        let handle = tokio::spawn(async move {
+            let (stream, address) = timeout!(listener.accept()).await.unwrap().unwrap();
+            remote_manager
+                .accept_session(MockTcpStream::new(stream), address)
+                .await
+                .unwrap()
+        });
+
+        assert!(local_manager
+            .create_session(remote.router_info.clone(), true, true)
+            .await
+            .is_ok());
+        assert!(handle.await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn dial_ipv4_only_both_supported() {
+        let local = Ntcp2Builder::<MockRuntime>::new().with_ipv6().with_net_id(128).build();
+        let (transport_tx1, _transport_rx1) = channel(16);
+        let local_manager = SessionManager::new(
+            local.ntcp2_key,
+            local.ntcp2_iv,
+            RouterContextBuilder::default()
+                .with_router_info(
+                    local.router_info.clone(),
+                    local.static_key.clone(),
+                    local.signing_key.clone(),
+                )
+                .with_net_id(128)
+                .build(),
+            true,
+            transport_tx1,
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (transport_tx1, _transport_rx1) = channel(16);
+        let remote = Ntcp2Builder::<MockRuntime>::new()
+            .with_net_id(128)
+            .with_router_address(listener.local_addr().unwrap().port())
+            .build();
+        let remote_manager = SessionManager::new(
+            remote.ntcp2_key,
+            remote.ntcp2_iv,
+            RouterContextBuilder::default()
+                .with_router_info(
+                    remote.router_info.clone(),
+                    remote.static_key.clone(),
+                    remote.signing_key.clone(),
+                )
+                .with_net_id(128)
+                .build(),
+            true,
+            transport_tx1,
+        );
+
+        let handle = tokio::spawn(async move {
+            let (stream, address) = timeout!(listener.accept()).await.unwrap().unwrap();
+            remote_manager
+                .accept_session(MockTcpStream::new(stream), address)
+                .await
+                .unwrap()
+        });
+
+        assert!(local_manager
+            .create_session(remote.router_info.clone(), true, true)
+            .await
+            .is_ok());
+        assert!(handle.await.is_ok());
     }
 }

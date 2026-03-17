@@ -117,7 +117,7 @@ impl fmt::Display for RouterAddress {
 
 impl RouterAddress {
     /// Create new unpublished NTCP2 [`RouterAddress`].
-    pub fn new_unpublished_ntcp2(key: [u8; 32], port: u16) -> Self {
+    pub fn new_unpublished_ntcp2(key: [u8; 32], address: SocketAddr) -> Self {
         let static_key = StaticPrivateKey::from(key).public();
         let key = base64_encode(&static_key);
 
@@ -130,19 +130,27 @@ impl RouterAddress {
             options,
             static_key,
             iv: None,
-            socket_address: Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)),
+            socket_address: Some(address),
         }
     }
 
     /// Create new unpublished NTCP2 [`RouterAddress`].
-    pub fn new_published_ntcp2(key: [u8; 32], iv: [u8; 16], port: u16, host: Ipv4Addr) -> Self {
+    ///
+    /// `address` is the address the NTCP2 listener is bound to.
+    /// `host` is the external address other routers should use.
+    pub fn new_published_ntcp2(
+        key: [u8; 32],
+        iv: [u8; 16],
+        host: IpAddr,
+        address: SocketAddr,
+    ) -> Self {
         let static_key = StaticPrivateKey::from(key).public();
 
         let mut options = Mapping::default();
         options.insert(Str::from("v"), Str::from("2"));
         options.insert(Str::from("s"), Str::from(base64_encode(&static_key)));
         options.insert(Str::from("host"), Str::from(host.to_string()));
-        options.insert(Str::from("port"), Str::from(port.to_string()));
+        options.insert(Str::from("port"), Str::from(address.port().to_string()));
         options.insert(Str::from("i"), Str::from(base64_encode(iv)));
 
         Self::Ntcp2 {
@@ -150,7 +158,7 @@ impl RouterAddress {
             options,
             static_key,
             iv: Some(iv),
-            socket_address: Some(SocketAddr::new(IpAddr::V4(host), port)),
+            socket_address: Some(address),
         }
     }
 
@@ -202,6 +210,57 @@ impl RouterAddress {
             options,
             introducers: Vec::new(),
             socket_address: Some(SocketAddr::new(IpAddr::V4(host), port)),
+        }
+    }
+
+    /// Convert NTCP2 address into a reachable address.
+    ///
+    /// `host` is the external address the local router is reachable from.
+    /// `port` is the port where the router the listener is bound to or the NAT-mapped
+    /// port learned during peer testing.
+    pub fn into_reachable_ntcp2(&mut self, iv: [u8; 16], port: u16, host: IpAddr) {
+        match self {
+            Self::Ssu2 { .. } => unreachable!(),
+            Self::Ntcp2 {
+                cost,
+                options,
+                iv: local_iv,
+                ..
+            } => {
+                options.insert(Str::from("host"), Str::from(host.to_string()));
+                options.insert(Str::from("port"), Str::from(port.to_string()));
+                options.insert(Str::from("i"), Str::from(base64_encode(iv)));
+
+                *local_iv = Some(iv);
+                *cost = 3;
+            }
+        }
+    }
+
+    /// Convert SSU2 address into a reachable address.
+    ///
+    /// `host` is the external address the local router is reachable from.
+    /// `port` is the port where the router the listener is bound to or the NAT-mapped
+    /// port learned during peer testing.
+    pub fn into_reachable_ssu2(&mut self, port: u16, host: IpAddr) {
+        match self {
+            Self::Ntcp2 { .. } => unreachable!(),
+            Self::Ssu2 {
+                introducers,
+                cost,
+                options,
+                ..
+            } => {
+                options.insert(Str::from("host"), Str::from(host.to_string()));
+                options.insert(Str::from("port"), Str::from(port.to_string()));
+
+                introducers.clear();
+                options.retain(|key, _| {
+                    !(key.starts_with("iexp") || key.starts_with("itag") || key.starts_with("ih"))
+                });
+
+                *cost = 8
+            }
         }
     }
 
@@ -477,7 +536,11 @@ mod tests {
 
     #[test]
     fn serialize_deserialize_unpublished_ntcp2() {
-        let serialized = RouterAddress::new_unpublished_ntcp2([1u8; 32], 8888).serialize();
+        let serialized = RouterAddress::new_unpublished_ntcp2(
+            [1u8; 32],
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+        )
+        .serialize();
         let static_key = StaticPrivateKey::from([1u8; 32]).public();
 
         match RouterAddress::parse::<MockRuntime>(&serialized).unwrap() {
@@ -506,8 +569,8 @@ mod tests {
         let serialized = RouterAddress::new_published_ntcp2(
             [1u8; 32],
             [0xaa; 16],
-            8888,
             "127.0.0.1".parse().unwrap(),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
         )
         .serialize();
         let static_key = StaticPrivateKey::from([1u8; 32]).public();
@@ -623,7 +686,10 @@ mod tests {
 
     #[test]
     fn ntcp2_static_key_missing() {
-        let mut address = RouterAddress::new_unpublished_ntcp2([0xaa; 32], 8888);
+        let mut address = RouterAddress::new_unpublished_ntcp2(
+            [0xaa; 32],
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+        );
         match address {
             RouterAddress::Ntcp2 {
                 ref mut options, ..
@@ -641,7 +707,10 @@ mod tests {
 
     #[test]
     fn invalid_ntcp2_static_key() {
-        let mut address = RouterAddress::new_unpublished_ntcp2([0xaa; 32], 8888);
+        let mut address = RouterAddress::new_unpublished_ntcp2(
+            [0xaa; 32],
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+        );
         match address {
             RouterAddress::Ntcp2 {
                 ref mut options, ..

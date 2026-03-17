@@ -52,6 +52,7 @@ futures-io = "0.3.31"
 emissary-util = { path = "../emissary-util", features = ["tokio"] }
 flate2 = { workspace = true }
 smol = { workspace = true }
+socket2 = { workspace = true }
 tokio-util = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 tracing-subscriber = { workspace = true }

@@ -38,7 +38,7 @@ use spin::rwlock::RwLock;
 
 use alloc::{sync::Arc, vec::Vec};
 use core::{
-    net::SocketAddr,
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::atomic::{AtomicUsize, Ordering},
 };
 
@@ -47,6 +47,31 @@ const LOG_TARGET: &str = "emissary::tunnel::selector";
 
 /// Maximum router participation.
 const MAX_PARTICIPATION: f64 = 0.33f64;
+
+/// Subnet.
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+enum Subnet {
+    /// /16 subnet
+    V4(u8, u8),
+    /// /48 subnet
+    V6([u8; 6]),
+}
+
+impl From<Ipv4Addr> for Subnet {
+    fn from(value: Ipv4Addr) -> Self {
+        Subnet::V4(value.octets()[0], value.octets()[1])
+    }
+}
+
+impl From<Ipv6Addr> for Subnet {
+    fn from(value: Ipv6Addr) -> Self {
+        let segments = value.octets();
+        let mut prefix = [0u8; 6];
+        prefix.copy_from_slice(&segments[..6]);
+
+        Subnet::V6(prefix)
+    }
+}
 
 /// Tunnel selector for a tunnel pool.
 ///
@@ -148,17 +173,15 @@ impl<R: Runtime> ExploratorySelector<R> {
         }
     }
 
-    /// Group router addresses of `router_ids` by /16 subnet.
-    fn group_by_subnet(&self, router_ids: Vec<RouterId>) -> HashMap<(u8, u8), Vec<RouterId>> {
-        // fetch ipv4 addresses of all routers
+    /// Group router addresses of `router_ids` by /16 and /48 subnets.
+    fn group_by_subnet(&self, router_ids: Vec<RouterId>) -> HashMap<Subnet, Vec<RouterId>> {
+        // fetch addresses of all routers
         let addresses = {
             let reader = self.profile_storage.reader();
 
             router_ids
                 .into_iter()
                 .filter_map(|router_id| {
-                    // address must exist since the `router_info.is_reachable()` check
-                    // above has ensured the router has at least one published address
                     let addresses =
                         reader.router_info(&router_id)?.addresses().map(|address| match address {
                             RouterAddress::Ntcp2 { socket_address, .. } => *socket_address,
@@ -167,8 +190,8 @@ impl<R: Runtime> ExploratorySelector<R> {
 
                     let addresses = addresses
                         .filter_map(|address| match address? {
-                            SocketAddr::V4(address) => Some(*address.ip()),
-                            SocketAddr::V6(_) => None,
+                            SocketAddr::V4(address) => Some(Subnet::from(*address.ip())),
+                            SocketAddr::V6(address) => Some(Subnet::from(*address.ip())),
                         })
                         .collect::<HashSet<_>>();
 
@@ -177,13 +200,12 @@ impl<R: Runtime> ExploratorySelector<R> {
                 .collect::<Vec<_>>()
         };
 
-        // group addresses by /16 subnet
+        // group addresses by subnets
         addresses.into_iter().fold(
-            HashMap::<(u8, u8), Vec<RouterId>>::new(),
-            |mut grouped, (router_id, addresses)| {
-                for address in addresses {
-                    let octets = address.octets();
-                    grouped.entry((octets[0], octets[1])).or_default().push(router_id.clone());
+            HashMap::<Subnet, Vec<RouterId>>::new(),
+            |mut grouped, (router_id, subnets)| {
+                for subnet in subnets {
+                    grouped.entry(subnet).or_default().push(router_id.clone());
                 }
 
                 grouped
@@ -1018,6 +1040,8 @@ impl<R: Runtime> HopSelector for ClientSelector<R> {
 
 #[cfg(test)]
 mod tests {
+    use std::net::{IpAddr, Ipv4Addr};
+
     use super::*;
     use crate::{
         primitives::{Capabilities, RouterAddress, RouterInfoBuilder, Str},
@@ -1065,7 +1089,81 @@ mod tests {
             false,
         );
 
-        // select hops 5 times and verify that the same set of hops is not selected every time
+        // select hops 3 times and verify that the same set of hops is not selected every time
+        let hops = selector.select_hops(3).unwrap();
+
+        let (num_same, _) = (0..5).fold((0usize, hops), |(count, prev), _| {
+            let hops = selector.select_hops(3).unwrap();
+            if prev
+                .iter()
+                .zip(hops.iter())
+                .all(|(a, b)| a.0 == b.0 && a.1.to_vec() == b.1.to_vec())
+            {
+                (count + 1, hops)
+            } else {
+                (count, hops)
+            }
+        });
+        assert_ne!(num_same, 5);
+    }
+
+    #[tokio::test]
+    async fn select_exploratory_hops_ipv6() {
+        let build_parameters = TunnelPoolBuildParameters::new(Default::default());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+
+        for _ in 0..10 {
+            profile_storage.add_router({
+                let mut info = RouterInfoBuilder::default().with_ipv6().build().0;
+                info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
+                info
+            });
+        }
+
+        let selector = ExploratorySelector::new(
+            profile_storage.clone(),
+            build_parameters.context_handle.clone(),
+            false,
+        );
+
+        // select hops 3 times and verify that the same set of hops is not selected every time
+        let hops = selector.select_hops(3).unwrap();
+
+        let (num_same, _) = (0..5).fold((0usize, hops), |(count, prev), _| {
+            let hops = selector.select_hops(3).unwrap();
+            if prev
+                .iter()
+                .zip(hops.iter())
+                .all(|(a, b)| a.0 == b.0 && a.1.to_vec() == b.1.to_vec())
+            {
+                (count + 1, hops)
+            } else {
+                (count, hops)
+            }
+        });
+        assert_ne!(num_same, 5);
+    }
+
+    #[tokio::test]
+    async fn select_exploratory_hops_mixed() {
+        let build_parameters = TunnelPoolBuildParameters::new(Default::default());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+
+        for _ in 0..10 {
+            profile_storage.add_router({
+                let mut info = RouterInfoBuilder::default().with_mixed().build().0;
+                info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
+                info
+            });
+        }
+
+        let selector = ExploratorySelector::new(
+            profile_storage.clone(),
+            build_parameters.context_handle.clone(),
+            false,
+        );
+
+        // select hops 3 times and verify that the same set of hops is not selected every time
         let hops = selector.select_hops(3).unwrap();
 
         let (num_same, _) = (0..5).fold((0usize, hops), |(count, prev), _| {
@@ -1091,12 +1189,14 @@ mod tests {
         for i in 0..3 {
             profile_storage.add_router({
                 let mut info = RouterInfoBuilder::default().build().0;
+                let address = format!("192.16{i}.{}.{}", i + 5, i + 10).parse::<IpAddr>().unwrap();
+
                 info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
                 info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
                     [1u8; 32],
                     [1u8; 16],
-                    8888,
-                    format!("192.16{i}.{}.{}", i + 5, i + 10).parse().unwrap(),
+                    address,
+                    SocketAddr::new(address, 8888),
                 )]);
                 info
             });
@@ -1105,12 +1205,14 @@ mod tests {
         for i in 0..5 {
             profile_storage.add_router({
                 let mut info = RouterInfoBuilder::default().build().0;
+                let address = format!("192.17{i}.{}.{}", i + 5, i + 10).parse::<IpAddr>().unwrap();
+
                 info.capabilities = Capabilities::parse(&Str::from("XfR")).unwrap();
                 info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
                     [1u8; 32],
                     [1u8; 16],
-                    8888,
-                    format!("192.17{i}.{}.{}", i + 5, i + 10).parse().unwrap(),
+                    address,
+                    SocketAddr::new(address, 8888),
                 )]);
                 info
             });
@@ -1264,13 +1366,15 @@ mod tests {
         // 5 addresses from 192.168.x.x subnet
         for i in 0..5 {
             profile_storage.add_router({
+                let address = format!("192.168.{}.{}", i + 5, i + 10).parse::<Ipv4Addr>().unwrap();
+
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
                 info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
                     [1u8; 32],
                     [1u8; 16],
-                    8888,
-                    format!("192.168.{}.{}", i + 5, i + 10).parse().unwrap(),
+                    IpAddr::V4(address),
+                    SocketAddr::new(IpAddr::V4(address), 8888),
                 )]);
                 info
             });
@@ -1279,13 +1383,75 @@ mod tests {
         // 5 addresses from 172.20.x.x subnet
         for i in 0..5 {
             profile_storage.add_router({
+                let address = format!("172.10.{}.{}", i + 5, i + 10).parse::<Ipv4Addr>().unwrap();
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
                 info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
                     [1u8; 32],
                     [1u8; 16],
-                    8888,
-                    format!("172.10.{}.{}", i + 5, i + 10).parse().unwrap(),
+                    IpAddr::V4(address),
+                    SocketAddr::new(IpAddr::V4(address), 8888),
+                )]);
+                info
+            });
+        }
+
+        let selector = ExploratorySelector::new(
+            profile_storage.clone(),
+            build_parameters.context_handle.clone(),
+            false,
+        );
+
+        // since three hops were requested but there were only two subnets,
+        // the request cannot be fulfilled
+        assert!(selector.select_hops(3).is_none());
+    }
+
+    #[tokio::test]
+    async fn exploratory_not_enough_routers_in_distinct_subnets_ipv6() {
+        let build_parameters = TunnelPoolBuildParameters::new(Default::default());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+
+        let first_subnet: Vec<Ipv6Addr> = vec![
+            "2001:db8:abcd:0001::1".parse().unwrap(),
+            "2001:db8:abcd:0002::dead".parse().unwrap(),
+            "2001:db8:abcd:1234:5678::1".parse().unwrap(),
+            "2001:db8:abcd:ffff::42".parse().unwrap(),
+            "2001:db8:abcd:0abc:def0:1234:5678:9abc".parse().unwrap(),
+        ];
+        let second_subnet: Vec<Ipv6Addr> = vec![
+            "2604:7a80:beef:0000::1".parse().unwrap(),
+            "2604:7a80:beef:0001::abcd".parse().unwrap(),
+            "2604:7a80:beef:1234:5678::42".parse().unwrap(),
+            "2604:7a80:beef:ffff::dead:beef".parse().unwrap(),
+            "2604:7a80:beef:0abc:def0:1111:2222:3333".parse().unwrap(),
+        ];
+
+        // 5 addresses from 2604:7a80:beef subnet
+        for address in first_subnet {
+            profile_storage.add_router({
+                let mut info = RouterInfoBuilder::default().build().0;
+                info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    IpAddr::V6(address),
+                    SocketAddr::new(IpAddr::V6(address), 8888),
+                )]);
+                info
+            });
+        }
+
+        // 5 addresses from 2604:7a80:beef subnet
+        for address in second_subnet {
+            profile_storage.add_router({
+                let mut info = RouterInfoBuilder::default().build().0;
+                info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    IpAddr::V6(address),
+                    SocketAddr::new(IpAddr::V6(address), 8888),
                 )]);
                 info
             });
@@ -1311,13 +1477,15 @@ mod tests {
         // 5 addresses from 192.168.x.x subnet
         for i in 0..5 {
             profile_storage.add_router({
+                let address = format!("192.168.{}.{}", i + 5, i + 10).parse::<Ipv4Addr>().unwrap();
+
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
                 info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
                     [1u8; 32],
                     [1u8; 16],
-                    8888,
-                    format!("192.168.{}.{}", i + 5, i + 10).parse().unwrap(),
+                    IpAddr::V4(address),
+                    SocketAddr::new(IpAddr::V4(address), 8888),
                 )]);
                 info
             });
@@ -1326,13 +1494,79 @@ mod tests {
         // 5 addresses from 172.20.x.x subnet
         for i in 0..5 {
             profile_storage.add_router({
+                let address = format!("172.10.{}.{}", i + 5, i + 10).parse::<Ipv4Addr>().unwrap();
+
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("XfR")).unwrap();
                 info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
                     [1u8; 32],
                     [1u8; 16],
-                    8888,
-                    format!("172.10.{}.{}", i + 5, i + 10).parse().unwrap(),
+                    IpAddr::V4(address),
+                    SocketAddr::new(IpAddr::V4(address), 8888),
+                )]);
+                info
+            });
+        }
+
+        let exploratory = ExploratorySelector::new(
+            profile_storage.clone(),
+            exploratory_build_parameters.context_handle.clone(),
+            false,
+        );
+        let selector =
+            ClientSelector::new(exploratory, client_build_parameters.context_handle.clone());
+
+        // since three hops were requested but there were only two subnets,
+        // the request cannot be fulfilled
+        assert!(selector.select_hops(3).is_none());
+    }
+
+    #[tokio::test]
+    async fn client_not_enough_routers_in_distinct_subnets_ipv4() {
+        let exploratory_build_parameters = TunnelPoolBuildParameters::new(Default::default());
+        let client_build_parameters = TunnelPoolBuildParameters::new(Default::default());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+
+        let first_subnet: Vec<Ipv6Addr> = vec![
+            "2001:db8:abcd:0001::1".parse().unwrap(),
+            "2001:db8:abcd:0002::dead".parse().unwrap(),
+            "2001:db8:abcd:1234:5678::1".parse().unwrap(),
+            "2001:db8:abcd:ffff::42".parse().unwrap(),
+            "2001:db8:abcd:0abc:def0:1234:5678:9abc".parse().unwrap(),
+        ];
+        let second_subnet: Vec<Ipv6Addr> = vec![
+            "2604:7a80:beef:0000::1".parse().unwrap(),
+            "2604:7a80:beef:0001::abcd".parse().unwrap(),
+            "2604:7a80:beef:1234:5678::42".parse().unwrap(),
+            "2604:7a80:beef:ffff::dead:beef".parse().unwrap(),
+            "2604:7a80:beef:0abc:def0:1111:2222:3333".parse().unwrap(),
+        ];
+
+        // 5 addresses from 2001:db8:abcd subnet
+        for address in first_subnet {
+            profile_storage.add_router({
+                let mut info = RouterInfoBuilder::default().build().0;
+                info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    IpAddr::V6(address),
+                    SocketAddr::new(IpAddr::V6(address), 8888),
+                )]);
+                info
+            });
+        }
+
+        // 5 addresses from 2604:7a80:beef subnet
+        for address in second_subnet {
+            profile_storage.add_router({
+                let mut info = RouterInfoBuilder::default().build().0;
+                info.capabilities = Capabilities::parse(&Str::from("XfR")).unwrap();
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    IpAddr::V6(address),
+                    SocketAddr::new(IpAddr::V6(address), 8888),
                 )]);
                 info
             });
@@ -1363,7 +1597,7 @@ mod tests {
                 info.capabilities = Capabilities::parse(&Str::from("LU")).unwrap();
                 info.addresses.push(RouterAddress::new_unpublished_ntcp2(
                     [i as u8; 32],
-                    2000 + i,
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 2000 + i),
                 ));
                 info
             });
@@ -1410,7 +1644,7 @@ mod tests {
                 info.capabilities = Capabilities::parse(&Str::from("OU")).unwrap();
                 info.addresses.push(RouterAddress::new_unpublished_ntcp2(
                     [i as u8; 32],
-                    2000 + i,
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 2000 + i),
                 ));
                 info
             });
@@ -1436,13 +1670,15 @@ mod tests {
         // 5 addresses from 192.168.x.x subnet
         for i in 0..5 {
             profile_storage.add_router({
+                let address = format!("192.168.{}.{}", i + 5, i + 10).parse::<Ipv4Addr>().unwrap();
+
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
                 info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
                     [1u8; 32],
                     [1u8; 16],
-                    8888,
-                    format!("192.168.{}.{}", i + 5, i + 10).parse().unwrap(),
+                    IpAddr::V4(address),
+                    SocketAddr::new(IpAddr::V4(address), 8888),
                 )]);
                 info
             });
@@ -1451,13 +1687,80 @@ mod tests {
         // 5 addresses from 172.20.x.x subnet
         for i in 0..5 {
             profile_storage.add_router({
+                let address = format!("172.10.{}.{}", i + 5, i + 10).parse::<Ipv4Addr>().unwrap();
+
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
                 info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
                     [1u8; 32],
                     [1u8; 16],
-                    8888,
-                    format!("172.10.{}.{}", i + 5, i + 10).parse().unwrap(),
+                    IpAddr::V4(address),
+                    SocketAddr::new(IpAddr::V4(address), 8888),
+                )]);
+                info
+            });
+        }
+
+        let selector = ExploratorySelector::new(
+            profile_storage.clone(),
+            build_parameters.context_handle.clone(),
+            true,
+        );
+
+        let hops = selector.select_hops(3).unwrap();
+        let reader = profile_storage.reader();
+        assert!(hops.into_iter().all(|(hash, _)| reader
+            .router_info(&RouterId::from(hash))
+            .unwrap()
+            .capabilities
+            .is_standard()));
+    }
+
+    #[tokio::test]
+    async fn exploratory_insecure_tunnels_not_enough_distinct_subnets_ipv6() {
+        let build_parameters = TunnelPoolBuildParameters::new(Default::default());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+
+        let first_subnet: Vec<Ipv6Addr> = vec![
+            "2001:db8:abcd:0001::1".parse().unwrap(),
+            "2001:db8:abcd:0002::dead".parse().unwrap(),
+            "2001:db8:abcd:1234:5678::1".parse().unwrap(),
+            "2001:db8:abcd:ffff::42".parse().unwrap(),
+            "2001:db8:abcd:0abc:def0:1234:5678:9abc".parse().unwrap(),
+        ];
+        let second_subnet: Vec<Ipv6Addr> = vec![
+            "2604:7a80:beef:0000::1".parse().unwrap(),
+            "2604:7a80:beef:0001::abcd".parse().unwrap(),
+            "2604:7a80:beef:1234:5678::42".parse().unwrap(),
+            "2604:7a80:beef:ffff::dead:beef".parse().unwrap(),
+            "2604:7a80:beef:0abc:def0:1111:2222:3333".parse().unwrap(),
+        ];
+
+        // 5 addresses from 2001:db8:abcd subnet
+        for address in first_subnet {
+            profile_storage.add_router({
+                let mut info = RouterInfoBuilder::default().build().0;
+                info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    IpAddr::V6(address),
+                    SocketAddr::new(IpAddr::V6(address), 8888),
+                )]);
+                info
+            });
+        }
+
+        // 5 addresses from 2604:7a80:beef subnet
+        for address in second_subnet {
+            profile_storage.add_router({
+                let mut info = RouterInfoBuilder::default().build().0;
+                info.capabilities = Capabilities::parse(&Str::from("XfR")).unwrap();
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    IpAddr::V6(address),
+                    SocketAddr::new(IpAddr::V6(address), 8888),
                 )]);
                 info
             });
@@ -1487,13 +1790,15 @@ mod tests {
         // 5 addresses from 192.168.x.x subnet
         for i in 0..5 {
             profile_storage.add_router({
+                let address = format!("192.168.{}.{}", i + 5, i + 10).parse::<Ipv4Addr>().unwrap();
+
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
                 info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
                     [1u8; 32],
                     [1u8; 16],
-                    8888,
-                    format!("192.168.{}.{}", i + 5, i + 10).parse().unwrap(),
+                    IpAddr::V4(address),
+                    SocketAddr::new(IpAddr::V4(address), 8888),
                 )]);
                 info
             });
@@ -1502,13 +1807,83 @@ mod tests {
         // 5 addresses from 172.20.x.x subnet
         for i in 0..5 {
             profile_storage.add_router({
+                let address = format!("172.10.{}.{}", i + 5, i + 10).parse::<Ipv4Addr>().unwrap();
+
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("XfR")).unwrap();
                 info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
                     [1u8; 32],
                     [1u8; 16],
-                    8888,
-                    format!("172.10.{}.{}", i + 5, i + 10).parse().unwrap(),
+                    IpAddr::V4(address),
+                    SocketAddr::new(IpAddr::V4(address), 8888),
+                )]);
+                info
+            });
+        }
+
+        let exploratory = ExploratorySelector::new(
+            profile_storage.clone(),
+            exploratory_build_parameters.context_handle.clone(),
+            true,
+        );
+        let selector =
+            ClientSelector::new(exploratory, client_build_parameters.context_handle.clone());
+
+        let hops = selector.select_hops(3).unwrap();
+        let reader = profile_storage.reader();
+        assert!(hops.into_iter().all(|(hash, _)| reader
+            .router_info(&RouterId::from(hash))
+            .unwrap()
+            .capabilities
+            .is_fast()));
+    }
+
+    #[tokio::test]
+    async fn client_insecure_tunnels_not_enough_distinct_subnets_ipv6() {
+        let exploratory_build_parameters = TunnelPoolBuildParameters::new(Default::default());
+        let client_build_parameters = TunnelPoolBuildParameters::new(Default::default());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+
+        let first_subnet: Vec<Ipv6Addr> = vec![
+            "2001:db8:abcd:0001::1".parse().unwrap(),
+            "2001:db8:abcd:0002::dead".parse().unwrap(),
+            "2001:db8:abcd:1234:5678::1".parse().unwrap(),
+            "2001:db8:abcd:ffff::42".parse().unwrap(),
+            "2001:db8:abcd:0abc:def0:1234:5678:9abc".parse().unwrap(),
+        ];
+        let second_subnet: Vec<Ipv6Addr> = vec![
+            "2604:7a80:beef:0000::1".parse().unwrap(),
+            "2604:7a80:beef:0001::abcd".parse().unwrap(),
+            "2604:7a80:beef:1234:5678::42".parse().unwrap(),
+            "2604:7a80:beef:ffff::dead:beef".parse().unwrap(),
+            "2604:7a80:beef:0abc:def0:1111:2222:3333".parse().unwrap(),
+        ];
+
+        // 5 addresses from 2001:db8:abcd subnet
+        for address in first_subnet {
+            profile_storage.add_router({
+                let mut info = RouterInfoBuilder::default().build().0;
+                info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    IpAddr::V6(address),
+                    SocketAddr::new(IpAddr::V6(address), 8888),
+                )]);
+                info
+            });
+        }
+
+        // 5 addresses from 2604:7a80:beef subnet
+        for address in second_subnet {
+            profile_storage.add_router({
+                let mut info = RouterInfoBuilder::default().build().0;
+                info.capabilities = Capabilities::parse(&Str::from("XfR")).unwrap();
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    IpAddr::V6(address),
+                    SocketAddr::new(IpAddr::V6(address), 8888),
                 )]);
                 info
             });
@@ -1539,13 +1914,15 @@ mod tests {
         // 5 addresses from 192.168.x.x subnet
         for i in 0..3 {
             profile_storage.add_router({
+                let address = format!("192.168.{}.{}", i + 5, i + 10).parse::<Ipv4Addr>().unwrap();
+
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
                 info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
                     [1u8; 32],
                     [1u8; 16],
-                    8888,
-                    format!("192.168.{}.{}", i + 5, i + 10).parse().unwrap(),
+                    IpAddr::V4(address),
+                    SocketAddr::new(IpAddr::V4(address), 8888),
                 )]);
                 info
             });
@@ -1554,13 +1931,102 @@ mod tests {
         // 5 addresses from 172.20.x.x subnet
         for i in 0..5 {
             profile_storage.add_router({
+                let address = format!("172.10.{}.{}", i + 5, i + 10).parse::<Ipv4Addr>().unwrap();
+
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("XfR")).unwrap();
                 info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
                     [1u8; 32],
                     [1u8; 16],
-                    8888,
-                    format!("172.10.{}.{}", i + 5, i + 10).parse().unwrap(),
+                    IpAddr::V4(address),
+                    SocketAddr::new(IpAddr::V4(address), 8888),
+                )]);
+                info
+            });
+        }
+
+        let selector = ExploratorySelector::new(
+            profile_storage.clone(),
+            build_parameters.context_handle.clone(),
+            true,
+        );
+
+        let hops = selector.select_hops(5usize).unwrap();
+        let (num_same, _) = (0..5).fold((0usize, hops), |(count, prev), _| {
+            let mut standard = 0usize;
+            let mut fast = 0usize;
+            let hops = selector.select_hops(5).unwrap();
+            let reader = profile_storage.reader();
+
+            for (hash, _) in &hops {
+                let router_info = reader.router_info(&RouterId::from(hash)).unwrap();
+
+                if router_info.capabilities.is_fast() {
+                    fast += 1;
+                } else {
+                    standard += 1;
+                }
+            }
+
+            assert_eq!(standard, 3);
+            assert_eq!(fast, 2);
+
+            if prev
+                .iter()
+                .zip(hops.iter())
+                .all(|(a, b)| a.0 == b.0 && a.1.to_vec() == b.1.to_vec())
+            {
+                (count + 1, hops)
+            } else {
+                (count, hops)
+            }
+        });
+        assert_ne!(num_same, 5);
+    }
+
+    #[tokio::test]
+    async fn exploratory_insecure_tunnels_not_enough_distinct_subnets_or_standard_peers_ipv6() {
+        let build_parameters = TunnelPoolBuildParameters::new(Default::default());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+
+        let first_subnet: Vec<Ipv6Addr> = vec![
+            "2001:db8:abcd:0001::1".parse().unwrap(),
+            "2001:db8:abcd:0002::dead".parse().unwrap(),
+            "2001:db8:abcd:1234:5678::1".parse().unwrap(),
+        ];
+        let second_subnet: Vec<Ipv6Addr> = vec![
+            "2604:7a80:beef:0000::1".parse().unwrap(),
+            "2604:7a80:beef:0001::abcd".parse().unwrap(),
+            "2604:7a80:beef:1234:5678::42".parse().unwrap(),
+            "2604:7a80:beef:ffff::dead:beef".parse().unwrap(),
+            "2604:7a80:beef:0abc:def0:1111:2222:3333".parse().unwrap(),
+        ];
+
+        // 3 addresses from 2001:db8:abcd subnet
+        for address in first_subnet {
+            profile_storage.add_router({
+                let mut info = RouterInfoBuilder::default().build().0;
+                info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    IpAddr::V6(address),
+                    SocketAddr::new(IpAddr::V6(address), 8888),
+                )]);
+                info
+            });
+        }
+
+        // 5 addresses from 2604:7a80:beef subnet
+        for address in second_subnet {
+            profile_storage.add_router({
+                let mut info = RouterInfoBuilder::default().build().0;
+                info.capabilities = Capabilities::parse(&Str::from("XfR")).unwrap();
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    IpAddr::V6(address),
+                    SocketAddr::new(IpAddr::V6(address), 8888),
                 )]);
                 info
             });
@@ -1614,13 +2080,15 @@ mod tests {
         // 5 addresses from 192.168.x.x subnet
         for i in 0..5 {
             profile_storage.add_router({
+                let address = format!("192.168.{}.{}", i + 5, i + 10).parse::<Ipv4Addr>().unwrap();
+
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
                 info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
                     [1u8; 32],
                     [1u8; 16],
-                    8888,
-                    format!("192.168.{}.{}", i + 5, i + 10).parse().unwrap(),
+                    IpAddr::V4(address),
+                    SocketAddr::new(IpAddr::V4(address), 8888),
                 )]);
                 info
             });
@@ -1629,13 +2097,105 @@ mod tests {
         // 5 addresses from 172.20.x.x subnet
         for i in 0..3 {
             profile_storage.add_router({
+                let address = format!("172.10.{}.{}", i + 5, i + 10).parse::<Ipv4Addr>().unwrap();
+
                 let mut info = RouterInfoBuilder::default().build().0;
                 info.capabilities = Capabilities::parse(&Str::from("XfR")).unwrap();
                 info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
                     [1u8; 32],
                     [1u8; 16],
-                    8888,
-                    format!("172.10.{}.{}", i + 5, i + 10).parse().unwrap(),
+                    IpAddr::V4(address),
+                    SocketAddr::new(IpAddr::V4(address), 8888),
+                )]);
+                info
+            });
+        }
+
+        let exploratory = ExploratorySelector::new(
+            profile_storage.clone(),
+            exploratory_build_parameters.context_handle.clone(),
+            true,
+        );
+        let selector =
+            ClientSelector::new(exploratory, client_build_parameters.context_handle.clone());
+
+        let hops = selector.select_hops(5usize).unwrap();
+        let (num_same, _) = (0..5).fold((0usize, hops), |(count, prev), _| {
+            let mut standard = 0usize;
+            let mut fast = 0usize;
+            let hops = selector.select_hops(5).unwrap();
+            let reader = profile_storage.reader();
+
+            for (hash, _) in &hops {
+                let router_info = reader.router_info(&RouterId::from(hash)).unwrap();
+
+                if router_info.capabilities.is_fast() {
+                    fast += 1;
+                } else {
+                    standard += 1;
+                }
+            }
+
+            assert_eq!(fast, 3);
+            assert_eq!(standard, 2);
+
+            if prev
+                .iter()
+                .zip(hops.iter())
+                .all(|(a, b)| a.0 == b.0 && a.1.to_vec() == b.1.to_vec())
+            {
+                (count + 1, hops)
+            } else {
+                (count, hops)
+            }
+        });
+        assert_ne!(num_same, 5);
+    }
+
+    #[tokio::test]
+    async fn client_insecure_tunnels_not_enough_distinct_subnets_or_fast_peers_ipv6() {
+        let exploratory_build_parameters = TunnelPoolBuildParameters::new(Default::default());
+        let client_build_parameters = TunnelPoolBuildParameters::new(Default::default());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+
+        let first_subnet: Vec<Ipv6Addr> = vec![
+            "2001:db8:abcd:0001::1".parse().unwrap(),
+            "2001:db8:abcd:0002::dead".parse().unwrap(),
+            "2001:db8:abcd:1234:5678::1".parse().unwrap(),
+            "2001:db8:abcd:ffff::42".parse().unwrap(),
+            "2001:db8:abcd:0abc:def0:1234:5678:9abc".parse().unwrap(),
+        ];
+        let second_subnet: Vec<Ipv6Addr> = vec![
+            "2604:7a80:beef:0000::1".parse().unwrap(),
+            "2604:7a80:beef:0001::abcd".parse().unwrap(),
+            "2604:7a80:beef:1234:5678::42".parse().unwrap(),
+        ];
+
+        // 5 addresses from 2001:db8:abcd subnet
+        for address in first_subnet {
+            profile_storage.add_router({
+                let mut info = RouterInfoBuilder::default().build().0;
+                info.capabilities = Capabilities::parse(&Str::from("LR")).unwrap();
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    IpAddr::V6(address),
+                    SocketAddr::new(IpAddr::V6(address), 8888),
+                )]);
+                info
+            });
+        }
+
+        // 3 addresses from 2604:7a80:beef subnet
+        for address in second_subnet {
+            profile_storage.add_router({
+                let mut info = RouterInfoBuilder::default().build().0;
+                info.capabilities = Capabilities::parse(&Str::from("XfR")).unwrap();
+                info.addresses = Vec::from_iter([RouterAddress::new_published_ntcp2(
+                    [1u8; 32],
+                    [1u8; 16],
+                    IpAddr::V6(address),
+                    SocketAddr::new(IpAddr::V6(address), 8888),
                 )]);
                 info
             });

@@ -25,7 +25,7 @@ upnp = true
 nat_pmp = false
 name = "emissary"
 
-# host not specified
+# ipv4 and ipv6 hosts not specified
 # upnp is used to resolve external address
 [ntcp2]
 port = 25515
@@ -108,16 +108,21 @@ Run `emissary-cli --help` to show the built-in help message with all available o
 | Option | Config file | CLI | Description |
 |--------|-------------|-----|-------------|
 | Port | `port` | - | Port to listen for incoming NTCP2 connections. (default: random port between 9151-30777) |
-| Host | `host` | - | Public IPv4 address for incoming connections. Can be auto-discovered via UPnP/NAT-PMP if left empty. |
-| Publish | `publish` | - | Publish the address in router info for incoming connections. (default: true) |
+| IPv4 host | `ipv4_host` | - | Public IPv4 address for incoming connections. Can be auto-discovered via SSU2/UPnP/NAT-PMP if left empty. |
+| IPv6 host | `ipv6_host` | - | Public IPv6 address for incoming connections. Can be auto-discovered via SSU2/UPnP/NAT-PMP if left empty. |
+| Enable IPv4 | `ipv4` | - | Enable IPv4 (default: true) |
+| Enable IPv6 | `ipv6` | - | Enable IPv6 (default: true) |
+| Publish | `publish` | - | Publish the address(es) in router info for incoming connections. (default: true) |
 
 Example:
 
 ```toml
 [ntcp2]
 port = 25515
-host = "203.0.113.50"
+ipv4_host = "203.0.113.50"
 publish = true
+ipv4 = true
+ipv6 = false
 ```
 
 ### SSU2

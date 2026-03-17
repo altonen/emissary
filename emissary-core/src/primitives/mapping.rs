@@ -147,6 +147,11 @@ impl Mapping {
     pub fn remove(&mut self, key: &Str) -> Option<Str> {
         self.0.remove(key)
     }
+
+    /// Apply `predicate` on all elements of `Mapping`, retaining elements that match it.
+    pub fn retain(&mut self, predicate: impl Fn(&Str, &mut Str) -> bool) {
+        self.0.retain(predicate);
+    }
 }
 
 impl IntoIterator for Mapping {
@@ -172,6 +177,12 @@ impl From<HashMap<Str, Str>> for Mapping {
 
 #[cfg(test)]
 mod tests {
+    use crate::{
+        crypto::base64_encode,
+        primitives::RouterId,
+        runtime::{mock::MockRuntime, Runtime},
+    };
+
     use super::*;
 
     #[test]
@@ -254,5 +265,40 @@ mod tests {
             Mapping::parse(ser).unwrap_err(),
             MappingParseError::InvalidBitstream
         );
+    }
+
+    #[test]
+    fn retain_works() {
+        let mut options = Mapping::from_iter([
+            (Str::from("host"), Str::from("127.0.0.1")),
+            (Str::from("port"), Str::from("8888")),
+        ]);
+
+        // add introducers
+        for i in 0..3 {
+            options.insert(
+                Str::from(format!("iexp{i}")),
+                Str::from((MockRuntime::time_since_epoch().as_secs() + 1337).to_string()),
+            );
+            options.insert(
+                Str::from(format!("ih{i}")),
+                Str::from(base64_encode(RouterId::random().to_vec())),
+            );
+            options.insert(
+                Str::from(format!("itag{i}")),
+                Str::from(format!("{}", 1337 + i)),
+            );
+        }
+        assert_eq!(options.len(), 11);
+
+        options.retain(|key, _| {
+            !(key.starts_with("iexp") || key.starts_with("itag") || key.starts_with("ih"))
+        });
+
+        assert_eq!(
+            options.get(&Str::from("host")),
+            Some(&Str::from("127.0.0.1"))
+        );
+        assert_eq!(options.get(&Str::from("port")), Some(&Str::from("8888")));
     }
 }

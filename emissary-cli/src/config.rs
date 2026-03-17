@@ -31,7 +31,11 @@ use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
-use std::{collections::HashSet, net::Ipv4Addr, path::PathBuf};
+use std::{
+    collections::HashSet,
+    net::{Ipv4Addr, Ipv6Addr},
+    path::PathBuf,
+};
 
 /// Reserved ports.
 ///
@@ -69,8 +73,12 @@ pub type ExploratoryConfig = TunnelConfig;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ntcp2Config {
     pub port: u16,
-    pub host: Option<Ipv4Addr>,
+    #[serde(alias = "host")]
+    pub ipv4_host: Option<Ipv4Addr>,
+    pub ipv6_host: Option<Ipv6Addr>,
     pub publish: Option<bool>,
+    pub ipv4: Option<bool>,
+    pub ipv6: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -246,7 +254,10 @@ impl EmissaryConfig {
                         }
                     }
                 },
-                host: None,
+                ipv4_host: None,
+                ipv6_host: None,
+                ipv4: Some(true),
+                ipv6: Some(true),
                 publish: Some(true),
             }),
             port_forwarding: Some(PortForwardingConfig {
@@ -463,10 +474,6 @@ impl Config {
 
     async fn load_router_config(path: PathBuf) -> crate::Result<EmissaryConfig> {
         let contents = tokio::fs::read_to_string(path.join("router.toml")).await?;
-        // // parse configuration, if it exists
-        // let mut file = fs::File::open(path.join("router.toml"))?;
-        // let mut contents = String::new();
-        // file.read_to_string(&mut contents)?;
 
         toml::from_str::<EmissaryConfig>(&contents).map_err(|error| {
             tracing::warn!(
@@ -594,7 +601,10 @@ impl Config {
             net_id: config.net_id,
             ntcp2_config: config.ntcp2.map(|config| emissary_core::Ntcp2Config {
                 port: config.port,
-                host: config.host,
+                ipv4_host: config.ipv4_host,
+                ipv6_host: config.ipv6_host,
+                ipv4: config.ipv4.unwrap_or(true),
+                ipv6: config.ipv6.unwrap_or(true),
                 publish: config.publish.unwrap_or(false),
                 key: ntcp2_key,
                 iv: ntcp2_iv,
@@ -922,7 +932,10 @@ mod tests {
         assert!(config.routers.is_empty());
         assert_eq!(config.static_key.len(), 32);
         assert_eq!(config.signing_key.len(), 32);
-        assert_eq!(config.ntcp2_config.as_ref().unwrap().host, None);
+        assert_eq!(config.ntcp2_config.as_ref().unwrap().ipv4_host, None);
+        assert_eq!(config.ntcp2_config.as_ref().unwrap().ipv6_host, None);
+        assert_eq!(config.ntcp2_config.as_ref().unwrap().ipv4, true);
+        assert_eq!(config.ntcp2_config.as_ref().unwrap().ipv6, true);
 
         // ensure ntcp2 port is within correct range and not any of the reserved ports
         {
@@ -968,8 +981,8 @@ mod tests {
             ntcp2_config.as_ref().unwrap().port
         );
         assert_eq!(
-            config.ntcp2_config.as_ref().unwrap().host,
-            ntcp2_config.as_ref().unwrap().host
+            config.ntcp2_config.as_ref().unwrap().ipv4_host,
+            ntcp2_config.as_ref().unwrap().ipv4_host
         );
         assert_eq!(
             config.ntcp2_config.as_ref().unwrap().key,
@@ -1005,7 +1018,10 @@ mod tests {
             }),
             ntcp2: Some(Ntcp2Config {
                 port: 1337u16,
-                host: None,
+                ipv4_host: None,
+                ipv6_host: None,
+                ipv4: Some(true),
+                ipv6: Some(false),
                 publish: None,
             }),
             ..EmissaryConfig::new::<TokioRuntime>()
@@ -1026,6 +1042,8 @@ mod tests {
         assert_eq!(ntcp2_config.port, 1337u16);
         assert_eq!(ntcp2_config.key, ntcp2_key);
         assert_eq!(ntcp2_config.iv, ntcp2_iv);
+        assert!(ntcp2_config.ipv4);
+        assert!(!ntcp2_config.ipv6);
     }
 
     #[tokio::test]
@@ -1137,6 +1155,72 @@ mod tests {
         match Config::parse::<TokioRuntime>(&make_arguments(), &storage).await {
             Err(Error::InvalidData) => {}
             _ => panic!("invalid result"),
+        }
+    }
+
+    #[tokio::test]
+    async fn host_alias_for_ipv4_host_works() {
+        let dir = tempdir().unwrap();
+        let storage = Storage::new(Some(dir.path().to_owned())).await.unwrap();
+
+        // `host` is an alias for `ipv4_host` for backwards-compatibility
+        {
+            let config_with_host = "\
+                allow_local=false\n\
+                insecure_tunnels=false\n\
+                floodfill=false\n\
+                [ntcp2]\n\
+                    port=8888\n\
+                    host=\"127.0.0.1\"\n\
+                    ipv6_host=\"::1\"\n\
+                    publish=true\n";
+
+            let mut file = tokio::fs::File::create(dir.path().to_owned().join("router.toml"))
+                .await
+                .unwrap();
+            file.write_all(config_with_host.as_bytes()).await.unwrap();
+            file.flush().await.unwrap();
+
+            let config = Config::parse(&make_arguments(), &storage).await.unwrap();
+
+            assert_eq!(
+                config.ntcp2_config.as_ref().unwrap().ipv4_host,
+                Some("127.0.0.1".parse().unwrap())
+            );
+            assert_eq!(
+                config.ntcp2_config.as_ref().unwrap().ipv6_host,
+                Some("::1".parse().unwrap())
+            );
+        }
+
+        // `ipv4_host` and `ipv6_host` both work
+        {
+            let config_with_ipv4_host = "\
+                allow_local=false\n\
+                insecure_tunnels=false\n\
+                floodfill=false\n\n\
+                [ntcp2]\n\
+                    port=8888\n\
+                    ipv4_host=\"127.0.0.1\"\n\
+                    ipv6_host=\"::1\"\n\
+                    publish=true";
+
+            let mut file = tokio::fs::File::create(dir.path().to_owned().join("router.toml"))
+                .await
+                .unwrap();
+            file.write_all(config_with_ipv4_host.as_bytes()).await.unwrap();
+            file.flush().await.unwrap();
+
+            let config = Config::parse(&make_arguments(), &storage).await.unwrap();
+
+            assert_eq!(
+                config.ntcp2_config.as_ref().unwrap().ipv4_host,
+                Some("127.0.0.1".parse().unwrap())
+            );
+            assert_eq!(
+                config.ntcp2_config.as_ref().unwrap().ipv6_host,
+                Some("::1".parse().unwrap())
+            );
         }
     }
 }

@@ -169,7 +169,7 @@ impl<R: Runtime> Router<R> {
         // this is done prior to constructing local router info in case ntcp2 config contained an
         // unspecified port, meaning the actual socket address of the transport is available only
         // after the listener has been created
-        let (ntcp2_context, ntcp2_address) =
+        let (ntcp2_context, ntcp2_ipv4_address, ntcp2_ipv6_address) =
             Ntcp2Transport::<R>::initialize(config.ntcp2.take()).await?;
 
         // attempt to initialize the ssu2 transport from provided config
@@ -200,7 +200,8 @@ impl<R: Runtime> Router<R> {
 
         let local_router_info = RouterInfo::new::<R>(
             &config,
-            ntcp2_address,
+            ntcp2_ipv4_address,
+            ntcp2_ipv6_address,
             ssu2_address,
             &local_static_key,
             &local_signing_key,

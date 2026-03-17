@@ -33,6 +33,7 @@ rand = { workspace = true, features = ["thread_rng"] }
 reqwest = { workspace = true, features = ["default-tls"] }
 serde = { workspace = true, features = ["derive"] }
 smol = { workspace = true, optional = true }
+socket2 = { workspace = true }
 tempfile = { workspace = true }
 tokio-util = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }

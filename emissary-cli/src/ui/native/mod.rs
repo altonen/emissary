@@ -28,7 +28,7 @@ use crate::{
                 advanced::AdvancedConfig,
                 client::{I2cpConfig, SamConfig},
                 proxies::{HttpProxyConfig, SocksProxyConfig},
-                transports::{PortForwardingConfig, TransportConfig},
+                transports::{Ntcp2Config, PortForwardingConfig, TransportConfig},
                 tunnels::{ExploratoryConfig, TransitConfig},
             },
             sidebar::sidebar,
@@ -89,7 +89,7 @@ pub struct RouterUi {
     config: Config,
 
     /// NTCP2 config.
-    ntcp2: TransportConfig,
+    ntcp2: Ntcp2Config,
 
     /// SSU2 config.
     ssu2: TransportConfig,
@@ -230,7 +230,7 @@ impl RouterUi {
         router_id: RouterId,
         shutdown_tx: Sender<()>,
     ) -> (Self, Task<Message>) {
-        let ntcp2 = TransportConfig::from(&config.ntcp2);
+        let ntcp2 = Ntcp2Config::from(&config.ntcp2);
         let ssu2 = TransportConfig::from(&config.ssu2);
         let port_forwarding = PortForwardingConfig::from(&config.port_forwarding);
         let i2cp = I2cpConfig::from(&config.i2cp);
@@ -595,8 +595,14 @@ impl RouterUi {
 
                 Task::none()
             }
-            Message::Ntcp2HostChanged(data) => {
-                self.ntcp2.set_host(data);
+            Message::Ntcp2Ipv4HostChanged(data) => {
+                self.ntcp2.set_ipv4_host(data);
+                self.settings_status = SettingsStatus::Idle(self.active_settings_tab);
+
+                Task::none()
+            }
+            Message::Ntcp2Ipv6HostChanged(data) => {
+                self.ntcp2.set_ipv6_host(data);
                 self.settings_status = SettingsStatus::Idle(self.active_settings_tab);
 
                 Task::none()
@@ -609,6 +615,18 @@ impl RouterUi {
             }
             Message::Ntcp2Enabled(enabled) => {
                 self.ntcp2.set_enabled(enabled);
+                self.settings_status = SettingsStatus::Idle(self.active_settings_tab);
+
+                Task::none()
+            }
+            Message::Ntcp2Ipv4Enabled(enabled) => {
+                self.ntcp2.set_ipv4_enabled(enabled);
+                self.settings_status = SettingsStatus::Idle(self.active_settings_tab);
+
+                Task::none()
+            }
+            Message::Ntcp2Ipv6Enabled(enabled) => {
+                self.ntcp2.set_ipv6_enabled(enabled);
                 self.settings_status = SettingsStatus::Idle(self.active_settings_tab);
 
                 Task::none()

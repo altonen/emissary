@@ -1026,6 +1026,7 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
 
                                     return Poll::Ready(Some(
                                         TransportEvent::ConnectionEstablished {
+                                            address: target,
                                             direction: Direction::Inbound,
                                             router_id,
                                         },
@@ -1048,6 +1049,7 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
                             relay_tag,
                         } => {
                             let router_id = context.router_id.clone();
+                            let remote_address = context.address;
 
                             tracing::trace!(
                                 target: LOG_TARGET,
@@ -1089,6 +1091,7 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
                             }
 
                             return Poll::Ready(Some(TransportEvent::ConnectionEstablished {
+                                address: remote_address,
                                 direction: Direction::Outbound,
                                 router_id,
                             }));

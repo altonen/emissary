@@ -64,8 +64,11 @@ async fn make_router(
                     TokioRuntime::rng().fill_bytes(&mut key);
                     key
                 },
-                host: Some("127.0.0.1".parse().unwrap()),
+                ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                ipv6_host: None,
                 publish: true,
+                ipv4: true,
+                ipv6: false,
             }),
             None,
         ),
@@ -1625,8 +1628,11 @@ async fn host_lookup(kind: TransportKind) {
                     TokioRuntime::rng().fill_bytes(&mut key);
                     key
                 },
-                host: Some("127.0.0.1".parse().unwrap()),
+                ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                ipv6_host: None,
                 publish: true,
+                ipv4: true,
+                ipv6: false,
             }),
             None,
         ),

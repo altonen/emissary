@@ -288,6 +288,9 @@ pub enum Direction {
 pub enum TransportEvent {
     /// Connection successfully established to router.
     ConnectionEstablished {
+        /// Address of remote router.
+        address: SocketAddr,
+
         /// Is this an outbound or an inbound connection.
         direction: Direction,
 
@@ -423,7 +426,7 @@ impl<R: Runtime> TransportManagerBuilder<R> {
 
     /// Register NTCP2 as an active transport.
     pub fn register_ntcp2(&mut self, context: Ntcp2Context<R>) {
-        self.supported_transports.insert(context.classify());
+        self.supported_transports.extend(context.classify());
         self.ntcp2_config = Some(context.config());
         self.transports.push(Box::new(Ntcp2Transport::new(
             context,
@@ -483,7 +486,7 @@ impl<R: Runtime> TransportManagerBuilder<R> {
             // publish the router info 10 seconds after booting, otherwise republish it periodically
             // in intervals of `ROUTER_INFO_REPUBLISH_INTERVAL`
             router_info_republish_timer: R::timer(Duration::from_secs(10)),
-            routers: HashSet::new(),
+            routers: HashMap::new(),
             ssu2_config: self.ssu2_config,
             supported_transports: self.supported_transports,
             transit_tunnels_disabled: self.transit_tunnels_disabled,
@@ -582,7 +585,9 @@ pub struct TransportManager<R: Runtime> {
     router_info_republish_timer: R::Timer,
 
     /// Connected routers.
-    routers: HashSet<RouterId>,
+    ///
+    /// The value indicates if the router is connected over IPv4.
+    routers: HashMap<RouterId, bool>,
 
     /// SSU2 config.
     ssu2_config: Option<Ssu2Config>,
@@ -643,16 +648,18 @@ impl<R: Runtime> TransportManager<R> {
         match &self.ntcp2_config {
             Some(Ntcp2Config {
                 port,
-                host,
+                ipv4_host,
                 publish: true,
-                key,
                 iv,
-            }) => match (host, address) {
-                (None, address) => {
-                    self.local_router_info.addresses.push(RouterAddress::new_published_ntcp2(
-                        *key, *iv, *port, address,
-                    ));
-                }
+                ..
+            }) => match (ipv4_host, address) {
+                (None, address) => match self.local_router_info.ntcp2_ipv4_mut() {
+                    Some(ntcp2) => ntcp2.into_reachable_ntcp2(*iv, *port, IpAddr::V4(address)),
+                    None => tracing::warn!(
+                        target: LOG_TARGET,
+                        "unable to make ntcp2 address reachable, transport not enabled",
+                    ),
+                },
                 (Some(published), address) if published == &address => {}
                 (Some(published), address) => tracing::warn!(
                     target: LOG_TARGET,
@@ -775,7 +782,7 @@ impl<R: Runtime> TransportManager<R> {
         // connection has been accepted by the `TransportManager`
         //
         // ignore these requests
-        if self.routers.contains(&router_id) {
+        if self.routers.contains_key(&router_id) {
             tracing::debug!(
                 target: LOG_TARGET,
                 %router_id,
@@ -853,7 +860,7 @@ impl<R: Runtime> TransportManager<R> {
 
                 // if we're connected to one of the introducers, we can dial right away
                 if let Some((introducer, relay_tag)) =
-                    introducers.iter().find(|(router_id, _)| self.routers.contains(router_id))
+                    introducers.iter().find(|(router_id, _)| self.routers.contains_key(router_id))
                 {
                     tracing::trace!(
                         target: LOG_TARGET,
@@ -1016,9 +1023,14 @@ impl<R: Runtime> TransportManager<R> {
     }
 
     /// Handle discovered external address.
+    ///
+    /// This address is discovered through SSU2 and our router addresses should be converted
+    /// to reachable only if peer testing has confirmed us to be reachable.
     fn on_external_address(&mut self, address: SocketAddr) {
         match address.ip() {
-            IpAddr::V4(address) if Some(address) != self.external_address =>
+            IpAddr::V4(address)
+                if Some(address) != self.external_address
+                    && self.firewall_status == FirewallStatus::Ok =>
                 self.add_external_address(address),
             _ => tracing::trace!(
                 target: LOG_TARGET,
@@ -1165,6 +1177,7 @@ impl<R: Runtime> Future for TransportManager<R> {
                     Poll::Pending => break,
                     Poll::Ready(None) => return Poll::Ready(()),
                     Poll::Ready(Some(TransportEvent::ConnectionEstablished {
+                        address,
                         direction,
                         router_id,
                     })) => match direction {
@@ -1190,65 +1203,8 @@ impl<R: Runtime> Future for TransportManager<R> {
                             this.router_ctx.metrics_handle().counter(NUM_REJECTED).increment(1);
                             this.transports[index].reject(&router_id);
                         }
-                        direction => match this.routers.insert(router_id.clone()) {
-                            true => {
-                                tracing::trace!(
-                                    target: LOG_TARGET,
-                                    %router_id,
-                                    ?direction,
-                                    "connection established",
-                                );
-
-                                this.transports[index].accept(&router_id);
-
-                                // if this was a successful connection to an introducer with active
-                                // client(s), start dialing each of the clients
-                                //
-                                // the routers can be dialed directly (without calling
-                                // `on_dial_request()`) as they've already been validated and were
-                                // only awaiting for an introducer connection
-                                //
-                                // `IntroducerConnection` may not exist if some other introducer
-                                // connected first and thus removed the connection
-                                if let Some(routers) = this.pending_connections.remove(&router_id) {
-                                    let ssu2_index = this.transports.len() - 1;
-
-                                    for client_router_id in routers {
-                                        let Some(IntroducerConnection { router_info, .. }) =
-                                            this.pending_introducers.remove(&client_router_id)
-                                        else {
-                                            tracing::trace!(
-                                                target: LOG_TARGET,
-                                                router_id = %client_router_id,
-                                                introducer = %router_id,
-                                                "context for client doesn't exist"
-                                            );
-                                            continue;
-                                        };
-
-                                        tracing::trace!(
-                                            target: LOG_TARGET,
-                                            router_id = %client_router_id,
-                                            introducer = %router_id,
-                                            "introducer connected, dialing router",
-                                        );
-
-                                        this.router_ctx
-                                            .metrics_handle()
-                                            .counter(NUM_INITIATED)
-                                            .increment(1);
-                                        this.transports[ssu2_index].connect(router_info);
-                                    }
-                                }
-
-                                this.router_ctx
-                                    .metrics_handle()
-                                    .gauge(NUM_CONNECTIONS)
-                                    .increment(1);
-                                this.router_ctx.metrics_handle().counter(NUM_ACCEPTED).increment(1);
-                                this.router_ctx.profile_storage().dial_succeeded(&router_id);
-                            }
-                            false => {
+                        direction => {
+                            if this.routers.contains_key(&router_id) {
                                 tracing::debug!(
                                     target: LOG_TARGET,
                                     %router_id,
@@ -1257,8 +1213,73 @@ impl<R: Runtime> Future for TransportManager<R> {
 
                                 this.router_ctx.metrics_handle().counter(NUM_REJECTED).increment(1);
                                 this.transports[index].reject(&router_id);
+                                continue;
                             }
-                        },
+
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                %router_id,
+                                ?direction,
+                                "connection established",
+                            );
+
+                            this.transports[index].accept(&router_id);
+                            this.routers.insert(router_id.clone(), address.is_ipv4());
+
+                            // if this was a successful connection to an introducer with
+                            // active client(s), start
+                            // dialing each of the clients
+                            //
+                            // the routers can be dialed directly (without calling
+                            // `on_dial_request()`) as they've already been validated and
+                            // were only awaiting for an
+                            // introducer connection
+                            //
+                            // `IntroducerConnection` may not exist if some other introducer
+                            // connected first and thus removed the connection
+                            if let Some(routers) = this.pending_connections.remove(&router_id) {
+                                let ssu2_index = this.transports.len() - 1;
+
+                                for client_router_id in routers {
+                                    let Some(IntroducerConnection { router_info, .. }) =
+                                        this.pending_introducers.remove(&client_router_id)
+                                    else {
+                                        tracing::trace!(
+                                            target: LOG_TARGET,
+                                            router_id = %client_router_id,
+                                            introducer = %router_id,
+                                            "context for client doesn't exist"
+                                        );
+                                        continue;
+                                    };
+
+                                    tracing::trace!(
+                                        target: LOG_TARGET,
+                                        router_id = %client_router_id,
+                                        introducer = %router_id,
+                                        "introducer connected, dialing router",
+                                    );
+
+                                    this.router_ctx
+                                        .metrics_handle()
+                                        .counter(NUM_INITIATED)
+                                        .increment(1);
+                                    this.transports[ssu2_index].connect(router_info);
+                                }
+                            }
+
+                            this.router_ctx.profile_storage().dial_succeeded(&router_id);
+                            this.router_ctx.metrics_handle().gauge(NUM_CONNECTIONS).increment(1);
+                            this.router_ctx.metrics_handle().counter(NUM_ACCEPTED).increment(1);
+                            this.router_ctx
+                                .metrics_handle()
+                                .gauge(if address.is_ipv4() {
+                                    NUM_IPV4
+                                } else {
+                                    NUM_IPV6
+                                })
+                                .increment(1);
+                        }
                     },
                     Poll::Ready(Some(TransportEvent::ConnectionClosed { router_id, reason })) => {
                         match reason {
@@ -1282,7 +1303,20 @@ impl<R: Runtime> Future for TransportManager<R> {
                             ),
                         }
 
-                        this.routers.remove(&router_id);
+                        match this.routers.remove(&router_id) {
+                            None => {
+                                tracing::warn!(
+                                    target: LOG_TARGET,
+                                    %router_id,
+                                    "connection closed to unknown router",
+                                );
+                                debug_assert!(false);
+                            }
+                            Some(true) =>
+                                this.router_ctx.metrics_handle().gauge(NUM_IPV4).decrement(1),
+                            Some(false) =>
+                                this.router_ctx.metrics_handle().gauge(NUM_IPV4).decrement(1),
+                        }
                         this.router_ctx.metrics_handle().gauge(NUM_CONNECTIONS).decrement(1);
                     }
                     Poll::Ready(Some(TransportEvent::ConnectionFailure { router_id })) => {
@@ -1573,10 +1607,13 @@ mod tests {
     async fn external_address_discovered_ntcp2() {
         let context = Ntcp2Transport::<MockRuntime>::initialize(Some(Ntcp2Config {
             port: 0,
-            host: Some("192.168.0.1".parse().unwrap()),
+            ipv4_host: Some("192.168.0.1".parse().unwrap()),
+            ipv6_host: None,
             publish: true,
             key: [0u8; 32],
             iv: [0u8; 16],
+            ipv4: true,
+            ipv6: false,
         }))
         .await
         .unwrap()
@@ -1617,10 +1654,13 @@ mod tests {
     async fn external_address_discovered_ntcp2_unpublished() {
         let context = Ntcp2Transport::<MockRuntime>::initialize(Some(Ntcp2Config {
             port: 0,
-            host: None,
+            ipv4_host: None,
+            ipv6_host: None,
             publish: false,
             key: [0u8; 32],
             iv: [0u8; 16],
+            ipv4: true,
+            ipv6: false,
         }))
         .await
         .unwrap()
@@ -1756,10 +1796,13 @@ mod tests {
         .unwrap();
         let ntcp2_context = Ntcp2Transport::<MockRuntime>::initialize(Some(Ntcp2Config {
             port: 0,
-            host: None,
+            ipv4_host: None,
+            ipv6_host: None,
             publish: true,
             key: [0u8; 32],
             iv: [0u8; 16],
+            ipv4: true,
+            ipv6: false,
         }))
         .await
         .unwrap()
@@ -1819,10 +1862,13 @@ mod tests {
     async fn discovered_address_doesnt_match_published_address_ntcp2() {
         let context = Ntcp2Transport::<MockRuntime>::initialize(Some(Ntcp2Config {
             port: 0,
-            host: Some("192.168.0.1".parse().unwrap()),
+            ipv4_host: Some("192.168.0.1".parse().unwrap()),
+            ipv6_host: None,
             publish: true,
             key: [0u8; 32],
             iv: [0u8; 16],
+            ipv4: true,
+            ipv6: false,
         }))
         .await
         .unwrap()
@@ -1985,10 +2031,12 @@ mod tests {
         manager.transports.push(Box::new(MockTransport {
             events: VecDeque::from_iter([
                 TransportEvent::ConnectionEstablished {
+                    address: "127.0.0.1:8888".parse().unwrap(),
                     router_id: router_id1.clone(),
                     direction: Direction::Inbound,
                 },
                 TransportEvent::ConnectionEstablished {
+                    address: "127.0.0.1:8888".parse().unwrap(),
                     router_id: router_id1.clone(),
                     direction: Direction::Inbound,
                 },
@@ -2116,6 +2164,7 @@ mod tests {
 
         event_tx
             .send(TransportEvent::ConnectionEstablished {
+                address: "127.0.0.1:8888".parse().unwrap(),
                 router_id: router_id.clone(),
                 direction: Direction::Inbound,
             })
@@ -2142,6 +2191,7 @@ mod tests {
 
         event_tx
             .send(TransportEvent::ConnectionEstablished {
+                address: "127.0.0.1:8888".parse().unwrap(),
                 router_id: router_id.clone(),
                 direction: Direction::Inbound,
             })
@@ -2254,6 +2304,7 @@ mod tests {
         // try to add new inbound connection from the node that's being queried
         event_tx
             .send(TransportEvent::ConnectionEstablished {
+                address: "127.0.0.1:8888".parse().unwrap(),
                 router_id: router_id.clone(),
                 direction: Direction::Inbound,
             })
@@ -2279,6 +2330,7 @@ mod tests {
         // add new inbound connection from the same node that was previously rejected
         event_tx
             .send(TransportEvent::ConnectionEstablished {
+                address: "127.0.0.1:8888".parse().unwrap(),
                 router_id: router_id.clone(),
                 direction: Direction::Inbound,
             })
@@ -2317,10 +2369,13 @@ mod tests {
         );
         let context = Ntcp2Transport::<MockRuntime>::initialize(Some(Ntcp2Config {
             port: 0,
-            host: Some("192.168.0.1".parse().unwrap()),
+            ipv4_host: Some("192.168.0.1".parse().unwrap()),
+            ipv6_host: None,
             publish: true,
             key: [0u8; 32],
             iv: [0u8; 16],
+            ipv4: true,
+            ipv6: false,
         }))
         .await
         .unwrap()
@@ -2506,10 +2561,13 @@ mod tests {
         builder.register_netdb_handle(handle);
         let context = Ntcp2Transport::<MockRuntime>::initialize(Some(Ntcp2Config {
             port: 0,
-            host: Some("192.168.0.1".parse().unwrap()),
+            ipv4_host: Some("192.168.0.1".parse().unwrap()),
+            ipv6_host: None,
             publish: true,
             key: [0u8; 32],
             iv: [0u8; 16],
+            ipv4: true,
+            ipv6: false,
         }))
         .await
         .unwrap()
@@ -2884,6 +2942,7 @@ mod tests {
 
         manager.transports.push(Box::new(MockTransport {
             events: VecDeque::from_iter([TransportEvent::ConnectionEstablished {
+                address: "127.0.0.1:8888".parse().unwrap(),
                 router_id: remote_router_id.clone(),
                 direction: Direction::Inbound,
             }]),
@@ -2892,7 +2951,7 @@ mod tests {
         dial_tx.try_send(remote_router_id.clone()).unwrap();
 
         // verify that router doesn't exist in either connected or pending
-        assert!(!manager.routers.contains(&remote_router_id));
+        assert!(!manager.routers.contains_key(&remote_router_id));
         assert!(!manager.pending_connections.contains_key(&remote_router_id));
 
         futures::future::poll_fn(|cx| {
@@ -2902,7 +2961,7 @@ mod tests {
         .await;
 
         // verify that `TransportManager` now has the router as a connected peer
-        assert!(manager.routers.contains(&remote_router_id));
+        assert!(manager.routers.contains_key(&remote_router_id));
         assert!(!manager.pending_connections.contains_key(&remote_router_id));
         assert!(netdb_rx.try_recv().is_err());
 
@@ -3157,10 +3216,13 @@ mod tests {
             if self.ntcp2.is_some() {
                 builder = builder.with_ntcp2(Ntcp2Config {
                     port: 8889,
-                    host: None,
+                    ipv4_host: None,
+                    ipv6_host: None,
                     publish: false,
                     key: [0xaa; 32],
                     iv: [0xbb; 16],
+                    ipv4: true,
+                    ipv6: false,
                 });
             }
             let (router_info, static_key, signing_key) = builder.build();
@@ -3243,10 +3305,13 @@ mod tests {
         let (router_info, ..) = RouterInfoBuilder::default()
             .with_ntcp2(Ntcp2Config {
                 port: 9999,
-                host: Some("127.0.0.1".parse().unwrap()),
+                ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                ipv6_host: None,
                 publish: true,
                 key: [0x11; 32],
                 iv: [0x22; 16],
+                ipv4: true,
+                ipv6: false,
             })
             .build();
         let router_id = router_info.identity.id();
@@ -3289,10 +3354,13 @@ mod tests {
         let (router_info, ..) = RouterInfoBuilder::default()
             .with_ntcp2(Ntcp2Config {
                 port: 9999,
-                host: Some("127.0.0.1".parse().unwrap()),
+                ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                ipv6_host: None,
                 publish: true,
                 key: [0x11; 32],
                 iv: [0x22; 16],
+                ipv4: true,
+                ipv6: false,
             })
             .build();
         let router_id = router_info.identity.id();
@@ -3488,7 +3556,7 @@ mod tests {
             .build();
 
         // mark introducer as connected router
-        manager.routers.insert(introducer_router_id);
+        manager.routers.insert(introducer_router_id, true);
         tokio::spawn(manager);
 
         dial_tx.send(router_id.clone()).await.unwrap();
@@ -3608,8 +3676,8 @@ mod tests {
         // verify that both the introducer and the router are no longer considered pending
         assert!(!manager.pending_connections.contains_key(&introducer_router_id));
         assert!(!manager.pending_connections.contains_key(&router_id));
-        assert!(!manager.routers.contains(&introducer_router_id));
-        assert!(!manager.routers.contains(&router_id));
+        assert!(!manager.routers.contains_key(&introducer_router_id));
+        assert!(!manager.routers.contains_key(&router_id));
 
         // verify that dial failure is reported to subsystem manager for `router_id`
         //
@@ -3651,6 +3719,7 @@ mod tests {
                 let router_id = futures::ready!(self.event_rx.poll_recv(cx)).unwrap();
 
                 Poll::Ready(Some(TransportEvent::ConnectionEstablished {
+                    address: "127.0.0.1:8888".parse().unwrap(),
                     direction: Direction::Outbound,
                     router_id,
                 }))
@@ -3742,11 +3811,11 @@ mod tests {
 
         // verify that the introducer is considered connected
         assert!(!manager.pending_connections.contains_key(&introducer_router_id));
-        assert!(manager.routers.contains(&introducer_router_id));
+        assert!(manager.routers.contains_key(&introducer_router_id));
 
         // and that the router is considered pending
         assert!(manager.pending_connections.contains_key(&router_id));
-        assert!(!manager.routers.contains(&router_id));
+        assert!(!manager.routers.contains_key(&router_id));
 
         // verify that transport manager started to dial the router
         assert_eq!(timeout!(conn_rx.recv()).await.unwrap().unwrap(), router_id);
@@ -3872,11 +3941,11 @@ mod tests {
 
         // verify that the introducer is no longer pending nor connected
         assert!(!manager.pending_connections.contains_key(&introducer_router_id));
-        assert!(!manager.routers.contains(&introducer_router_id));
+        assert!(!manager.routers.contains_key(&introducer_router_id));
 
         // and that the router is no longer pending
         assert!(!manager.pending_connections.contains_key(&router_id));
-        assert!(!manager.routers.contains(&router_id));
+        assert!(!manager.routers.contains_key(&router_id));
 
         // verify that subsystem manager is notified of the dial failure
         match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
@@ -3916,6 +3985,7 @@ mod tests {
                 let router_id = futures::ready!(self.event_rx.poll_recv(cx)).unwrap();
 
                 Poll::Ready(Some(TransportEvent::ConnectionEstablished {
+                    address: "127.0.0.1:8888".parse().unwrap(),
                     direction: Direction::Outbound,
                     router_id,
                 }))
@@ -4010,11 +4080,11 @@ mod tests {
 
         // verify that the introducer is considered connected
         assert!(!manager.pending_connections.contains_key(&introducer_router_id));
-        assert!(manager.routers.contains(&introducer_router_id));
+        assert!(manager.routers.contains_key(&introducer_router_id));
 
         // and that the router is considered pending
         assert!(manager.pending_connections.contains_key(&router_id));
-        assert!(!manager.routers.contains(&router_id));
+        assert!(!manager.routers.contains_key(&router_id));
 
         // verify that transport manager started to dial the router
         assert_eq!(timeout!(conn_rx.recv()).await.unwrap().unwrap(), router_id);
@@ -4049,6 +4119,7 @@ mod tests {
                 let router_id = futures::ready!(self.event_rx.poll_recv(cx)).unwrap();
 
                 Poll::Ready(Some(TransportEvent::ConnectionEstablished {
+                    address: "127.0.0.1:8888".parse().unwrap(),
                     direction: Direction::Outbound,
                     router_id,
                 }))
@@ -4162,7 +4233,7 @@ mod tests {
 
         // and that the router is not considered pending
         assert!(!manager.pending_connections.contains_key(&router_id));
-        assert!(!manager.routers.contains(&router_id));
+        assert!(!manager.routers.contains_key(&router_id));
 
         // verify that subsystem manager is notified of the client dial failure
         match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
@@ -4315,11 +4386,11 @@ mod tests {
         // verify that the introducer is still pending but no longer has a pending query
         assert!(manager.pending_connections.contains_key(&introducer_router_id));
         assert!(!manager.pending_queries.contains(&introducer_router_id));
-        assert!(!manager.routers.contains(&introducer_router_id));
+        assert!(!manager.routers.contains_key(&introducer_router_id));
 
         // and that the original router is still pending
         assert!(manager.pending_connections.contains_key(&router_id));
-        assert!(!manager.routers.contains(&router_id));
+        assert!(!manager.routers.contains_key(&router_id));
 
         // verify that the introducer is dialed
         assert_eq!(
@@ -4373,6 +4444,7 @@ mod tests {
                 let router_id = futures::ready!(self.event_rx.poll_recv(cx)).unwrap();
 
                 Poll::Ready(Some(TransportEvent::ConnectionEstablished {
+                    address: "127.0.0.1:8888".parse().unwrap(),
                     direction: Direction::Outbound,
                     router_id,
                 }))
@@ -4482,11 +4554,11 @@ mod tests {
         // verify that the introducer is still pending but no longer has a pending query
         assert!(manager.pending_connections.contains_key(&introducer_router_id));
         assert!(!manager.pending_queries.contains(&introducer_router_id));
-        assert!(!manager.routers.contains(&introducer_router_id));
+        assert!(!manager.routers.contains_key(&introducer_router_id));
 
         // and that the original router is still pending
         assert!(manager.pending_connections.contains_key(&router_id));
-        assert!(!manager.routers.contains(&router_id));
+        assert!(!manager.routers.contains_key(&router_id));
 
         // verify that the introducer is dialed
         assert_eq!(
@@ -4711,6 +4783,7 @@ mod tests {
                 match futures::ready!(self.event_rx.poll_recv(cx)).unwrap() {
                     Event::Success(router_id) =>
                         Poll::Ready(Some(TransportEvent::ConnectionEstablished {
+                            address: "127.0.0.1:8888".parse().unwrap(),
                             direction: Direction::Outbound,
                             router_id,
                         })),
@@ -4831,7 +4904,7 @@ mod tests {
         // verify pending introducer context no longer exist since the client router was dialed
         assert!(!manager.pending_introducers.contains_key(&router_id));
         assert!(!manager.pending_connections.contains_key(&introducer_router_id));
-        assert!(manager.routers.contains(&introducer_router_id));
+        assert!(manager.routers.contains_key(&introducer_router_id));
         assert!(manager.pending_connections.contains_key(&router_id));
 
         // verify the client router is dialed
@@ -4851,7 +4924,7 @@ mod tests {
 
             // and that the introducer is no considered connected
             assert!(!manager.pending_connections.contains_key(&introducer_router_id));
-            assert!(manager.routers.contains(&introducer_router_id));
+            assert!(manager.routers.contains_key(&introducer_router_id));
 
             // and connection for the client router is still pending
             assert!(manager.pending_connections.contains_key(&router_id));
@@ -4890,6 +4963,7 @@ mod tests {
                 match futures::ready!(self.event_rx.poll_recv(cx)).unwrap() {
                     Event::Success(router_id) =>
                         Poll::Ready(Some(TransportEvent::ConnectionEstablished {
+                            address: "127.0.0.1:8888".parse().unwrap(),
                             direction: Direction::Outbound,
                             router_id,
                         })),
@@ -5010,7 +5084,7 @@ mod tests {
         // verify pending introducer context no longer exist since the client router was dialed
         assert!(!manager.pending_introducers.contains_key(&router_id));
         assert!(!manager.pending_connections.contains_key(&introducer_router_id));
-        assert!(manager.routers.contains(&introducer_router_id));
+        assert!(manager.routers.contains_key(&introducer_router_id));
         assert!(manager.pending_connections.contains_key(&router_id));
 
         // verify the client router is dialed
@@ -5030,7 +5104,7 @@ mod tests {
 
             // and that the introducer is no considered connected
             assert!(!manager.pending_connections.contains_key(&introducer_router_id));
-            assert!(manager.routers.contains(&introducer_router_id));
+            assert!(manager.routers.contains_key(&introducer_router_id));
 
             // and connection for the client router is still pending
             assert!(manager.pending_connections.contains_key(&router_id));
@@ -5470,6 +5544,7 @@ mod tests {
                 match futures::ready!(self.event_rx.poll_recv(cx)).unwrap() {
                     Event::Success(router_id) =>
                         Poll::Ready(Some(TransportEvent::ConnectionEstablished {
+                            address: "127.0.0.1:8888".parse().unwrap(),
                             direction: Direction::Outbound,
                             router_id,
                         })),
@@ -5621,7 +5696,7 @@ mod tests {
         })
         .await;
 
-        assert!(introducers.keys().all(|key| manager.routers.contains(key)));
+        assert!(introducers.keys().all(|key| manager.routers.contains_key(key)));
         assert_eq!(manager.pending_connections.len(), 1);
         assert!(manager.pending_connections.contains_key(&router_id));
         assert!(manager.pending_introducers.is_empty());
