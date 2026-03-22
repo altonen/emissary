@@ -1012,6 +1012,7 @@ impl<R: Runtime> PeerTestManager<R> {
 
         // TODO: no good, refactor this
         for i in 0..2 * MAX_PARALLEL_TESTS {
+            #[allow(clippy::unnecessary_unwrap)]
             let external_address = if i < MAX_PARALLEL_TESTS {
                 if self.ipv4_socket.is_some() && self.ipv4_external_address.is_some() {
                     self.ipv4_external_address.expect("to exist")
