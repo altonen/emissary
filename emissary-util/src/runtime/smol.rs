@@ -29,6 +29,7 @@ use futures::{
 };
 use rand::{CryptoRng, RngExt};
 use smol::{future::FutureExt, stream::StreamExt, Async};
+use socket2::{Domain, Protocol, Socket, Type};
 
 #[cfg(feature = "metrics")]
 use metrics::{counter, describe_counter, describe_gauge, describe_histogram, gauge, histogram};
@@ -231,25 +232,70 @@ impl TcpListener<SmolTcpStream> for SmolTcpListener {
 }
 
 #[derive(Clone)]
-pub struct SmolUdpSocket(Arc<Async<std::net::UdpSocket>>);
+pub struct SmolUdpSocket {
+    socket: Arc<Async<std::net::UdpSocket>>,
+    mtu: usize,
+}
 
 impl UdpSocket for SmolUdpSocket {
     fn bind(address: SocketAddr) -> impl Future<Output = Option<Self>> {
         async move {
-            Async::<std::net::UdpSocket>::bind(address)
-                .ok()
-                .map(|socket| Self(Arc::new(socket)))
+            let interface = netdev::get_default_interface()
+                .inspect_err(|error| {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?error,
+                        "failed to get default interface",
+                    );
+                })
+                .ok()?;
+
+            let mtu = interface.mtu.unwrap_or_else(|| {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    "failed to get mtu for default interface, defaulting to 1500",
+                );
+                1500
+            });
+
+            Self::bind_with_mtu(address, mtu as usize).await
+        }
+    }
+
+    fn bind_with_mtu(address: SocketAddr, mtu: usize) -> impl Future<Output = Option<Self>> {
+        async move {
+            let socket = match address {
+                SocketAddr::V4(_) =>
+                    Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).ok()?,
+                SocketAddr::V6(_) => {
+                    let socket =
+                        Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP)).ok()?;
+                    socket.set_only_v6(true).ok()?;
+                    socket
+                }
+            };
+
+            socket.set_reuse_address(true).ok()?;
+            socket.set_nonblocking(true).ok()?;
+            socket.bind(&address.into()).ok()?;
+
+            let socket = std::net::UdpSocket::from(socket);
+
+            Some(Self {
+                socket: Arc::new(Async::try_from(socket).ok()?),
+                mtu,
+            })
         }
     }
 
     #[inline]
     fn send_to(&mut self, buf: &[u8], target: SocketAddr) -> impl Future<Output = Option<usize>> {
-        async move { self.0.send_to(buf, target).await.ok() }
+        async move { self.socket.send_to(buf, target).await.ok() }
     }
 
     #[inline]
     fn recv_from(&mut self, buf: &mut [u8]) -> impl Future<Output = Option<(usize, SocketAddr)>> {
-        async move { self.0.recv_from(buf).await.ok() }
+        async move { self.socket.recv_from(buf).await.ok() }
     }
 
     #[inline]
@@ -260,8 +306,8 @@ impl UdpSocket for SmolUdpSocket {
         target: SocketAddr,
     ) -> Poll<Option<usize>> {
         loop {
-            match ready!(self.0.poll_writable(cx)) {
-                Ok(()) => match self.0.get_ref().send_to(buf, target) {
+            match ready!(self.socket.poll_writable(cx)) {
+                Ok(()) => match self.socket.get_ref().send_to(buf, target) {
                     Ok(n) => return Poll::Ready(Some(n)),
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
                     Err(error) => {
@@ -292,8 +338,8 @@ impl UdpSocket for SmolUdpSocket {
         buf: &mut [u8],
     ) -> Poll<Option<(usize, SocketAddr)>> {
         loop {
-            match ready!(self.0.poll_readable(cx)) {
-                Ok(()) => match self.0.get_ref().recv_from(buf) {
+            match ready!(self.socket.poll_readable(cx)) {
+                Ok(()) => match self.socket.get_ref().recv_from(buf) {
                     Ok((n, addr)) => return Poll::Ready(Some((n, addr))),
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
                     Err(error) => {
@@ -317,8 +363,14 @@ impl UdpSocket for SmolUdpSocket {
         }
     }
 
+    #[inline]
     fn local_address(&self) -> Option<SocketAddr> {
-        self.0.get_ref().local_addr().ok()
+        self.socket.get_ref().local_addr().ok()
+    }
+
+    #[inline]
+    fn mtu(&self) -> usize {
+        self.mtu
     }
 }
 

@@ -56,6 +56,9 @@ const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(5);
 const PEER_TEST_EXPIRATION: Duration = Duration::from_secs(10);
 
 /// Maximum parallel tests.
+///
+/// This is maximum test per transport so both IPv4 and IPv6 each
+/// get 8 maximum paralle tests, totalling 16 parallel tests.
 const MAX_PARALLEL_TESTS: usize = 8usize;
 
 /// How long Alice should wait before sending message 6 to Charlie.
@@ -74,7 +77,9 @@ pub enum PeerTestManagerEvent {
         ///
         /// 3rd value denotes whether message 7 was received and if so,
         /// what was the address Charlie observed for message 6.
-        results: Vec<(bool, bool, Option<SocketAddr>)>,
+        ///
+        /// 4th values denotes whether the test was done over IPv4.
+        results: Vec<(bool, bool, Option<SocketAddr>, bool)>,
     },
 }
 
@@ -145,6 +150,9 @@ enum ActiveTest<R: Runtime> {
 
         /// Has message 5 been received.
         message_5_received: bool,
+
+        /// Is the test done over IPv4.
+        ipv4: bool,
     },
 
     /// Active peer test
@@ -172,7 +180,20 @@ enum ActiveTest<R: Runtime> {
 
         /// When was the test started.
         started: R::Instant,
+
+        /// Is the test done over IPv4.
+        ipv4: bool,
     },
+}
+
+impl<R: Runtime> ActiveTest<R> {
+    /// Returns `true` if the test is over IPv4.
+    fn is_ipv4(&self) -> bool {
+        match self {
+            Self::Pending { ipv4, .. } => *ipv4,
+            Self::Active { ipv4, .. } => *ipv4,
+        }
+    }
 }
 
 impl<R: Runtime> ActiveTest<R> {
@@ -211,13 +232,27 @@ pub struct PeerTestManager<R: Runtime> {
     /// All connected routers.
     connected: HashSet<RouterId>,
 
-    /// Our external address.
-    ///
-    /// `None` if there are no samples.
-    external_address: Option<SocketAddr>,
+    /// Has the router been forced to consider itself firewalled.
+    force_firewall: bool,
 
     /// Our intro key.
     intro_key: [u8; 32],
+
+    /// Our external IPv4 address.
+    ///
+    /// `None` if there are no samples.
+    ipv4_external_address: Option<SocketAddr>,
+
+    /// IPv4 UDP socket.
+    ipv4_socket: Option<R::UdpSocket>,
+
+    /// Our external IPv4 address.
+    ///
+    /// `None` if there are no samples.
+    ipv6_external_address: Option<SocketAddr>,
+
+    /// IPv6 UDP socket.
+    ipv6_socket: Option<R::UdpSocket>,
 
     /// Timer for maintaining local peer tests.
     maintenance_timer: R::Timer,
@@ -235,24 +270,19 @@ pub struct PeerTestManager<R: Runtime> {
     /// RX channel for receiving peer test-related messages from active sessions.
     rx: Receiver<PeerTestEvent, PeerTestEventRecycle>,
 
-    /// UDP socket.
-    socket: R::UdpSocket,
-
     /// RX channel for receiving peer test-related messages from active sessions.
     tx: Sender<PeerTestEvent, PeerTestEventRecycle>,
 
     /// Write buffer.
     write_buffer: VecDeque<(BytesMut, SocketAddr)>,
-
-    /// Has the router been forced to consider itself firewalled.
-    force_firewall: bool,
 }
 
 impl<R: Runtime> PeerTestManager<R> {
     /// Create new `PeerTestManager`.
     pub fn new(
         intro_key: [u8; 32],
-        socket: R::UdpSocket,
+        ipv4_socket: Option<R::UdpSocket>,
+        ipv6_socket: Option<R::UdpSocket>,
         router_ctx: RouterContext<R>,
         firewalled: bool,
     ) -> Self {
@@ -263,14 +293,16 @@ impl<R: Runtime> PeerTestManager<R> {
             active_remote: HashMap::new(),
             candidates: HashMap::new(),
             connected: HashSet::new(),
-            external_address: None,
             force_firewall: firewalled,
             intro_key,
+            ipv4_external_address: None,
+            ipv4_socket,
+            ipv6_external_address: None,
+            ipv6_socket,
             maintenance_timer: R::timer(MAINTENANCE_INTERVAL),
             pending_remote: HashMap::new(),
             router_ctx,
             rx,
-            socket,
             tx,
             write_buffer: VecDeque::new(),
         }
@@ -283,7 +315,10 @@ impl<R: Runtime> PeerTestManager<R> {
 
     /// Register external address.
     pub fn add_external_address(&mut self, address: SocketAddr) {
-        self.external_address = Some(address);
+        match address.is_ipv4() {
+            true => self.ipv4_external_address = Some(address),
+            false => self.ipv6_external_address = Some(address),
+        }
     }
 
     /// Add new active session to `PeerTestManager`.
@@ -543,16 +578,6 @@ impl<R: Runtime> PeerTestManager<R> {
             },
         };
 
-        let Some(RouterAddress::Ssu2 { intro_key, .. }) = router_info.ssu2_ipv4() else {
-            tracing::warn!(
-                target: LOG_TARGET,
-                %alice_router_id,
-                ?nonce,
-                "alice doesn't have a published ssu2 address, rejecting",
-            );
-            return None;
-        };
-
         // ensure alice is not connected
         if self.connected.contains(&alice_router_id) {
             tracing::debug!(
@@ -569,21 +594,54 @@ impl<R: Runtime> PeerTestManager<R> {
             });
         }
 
-        // only ipv4 is supported for now
-        if address.is_ipv6() {
-            tracing::debug!(
-                target: LOG_TARGET,
-                %alice_router_id,
-                ?nonce,
-                "ipv6 not supported, rejecting",
-            );
+        // find alice's intro key using the requested transport
+        let intro_key = match (
+            address.is_ipv4(),
+            self.ipv4_socket.is_some(),
+            self.ipv6_socket.is_some(),
+        ) {
+            (true, true, _) => {
+                let Some(RouterAddress::Ssu2 { intro_key, .. }) = router_info.ssu2_ipv4() else {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        %alice_router_id,
+                        ?nonce,
+                        "alice doesn't have a published ssu2 ipv4 address, rejecting",
+                    );
+                    return None;
+                };
 
-            return Some(PeerTestCommand::SendCharlieResponse {
-                nonce,
-                router_id: alice_router_id.clone(),
-                rejection: Some(RejectionReason::UnsupportedAddress),
-            });
-        }
+                intro_key
+            }
+            // address ipv6 and ipv6 socket is active
+            (false, _, true) => {
+                let Some(RouterAddress::Ssu2 { intro_key, .. }) = router_info.ssu2_ipv6() else {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        %alice_router_id,
+                        ?nonce,
+                        "alice doesn't have a published ssu2 ipv6 address, rejecting",
+                    );
+                    return None;
+                };
+
+                intro_key
+            }
+            // no active socket for requested address
+            _ => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ipv4 = ?address.is_ipv4(),
+                    "unsupported address, rejecting peer test request",
+                );
+
+                return Some(PeerTestCommand::SendCharlieResponse {
+                    nonce,
+                    router_id: alice_router_id.clone(),
+                    rejection: Some(RejectionReason::UnsupportedAddress),
+                });
+            }
+        };
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -772,6 +830,7 @@ impl<R: Runtime> PeerTestManager<R> {
                 nonce,
                 started,
                 message,
+                ipv4,
                 ..
             } => {
                 let ad = datagram[..32].to_vec();
@@ -812,6 +871,7 @@ impl<R: Runtime> PeerTestManager<R> {
                         src_id,
                         started,
                         message_5_received: true,
+                        ipv4,
                     },
                 );
             }
@@ -824,6 +884,7 @@ impl<R: Runtime> PeerTestManager<R> {
                 message,
                 message_5_received,
                 message_6_context,
+                ipv4,
             } => {
                 tracing::trace!(
                     target: LOG_TARGET,
@@ -865,6 +926,7 @@ impl<R: Runtime> PeerTestManager<R> {
                                 message,
                                 message_5_received: true,
                                 message_6_context,
+                                ipv4,
                             },
                         );
                     }
@@ -879,7 +941,7 @@ impl<R: Runtime> PeerTestManager<R> {
                         );
 
                         return Ok(Some(PeerTestManagerEvent::PeerTestResult {
-                            results: vec![(true, message_5_received, address)],
+                            results: vec![(true, message_5_received, address, ipv4)],
                         }));
                     }
                     block => {
@@ -905,25 +967,31 @@ impl<R: Runtime> PeerTestManager<R> {
             return None;
         }
 
-        // skip peer test since we don't know what our external address is
-        let external_address = self.external_address?;
-
         // filter out expired tests and construct test results for them
         let (expired, results): (Vec<_>, Vec<_>) = self
             .active
             .iter()
             .filter_map(|(src_id, test)| match test {
                 test @ ActiveTest::Pending {
-                    message_5_received, ..
+                    message_5_received,
+                    ipv4,
+                    ..
                 } if !test.is_active() => Some((
                     *src_id,
-                    (false, *message_5_received, Option::<SocketAddr>::None),
+                    (
+                        false,
+                        *message_5_received,
+                        Option::<SocketAddr>::None,
+                        *ipv4,
+                    ),
                 )),
                 test @ ActiveTest::Active {
-                    message_5_received, ..
+                    message_5_received,
+                    ipv4,
+                    ..
                 } if !test.is_active() => Some((
                     *src_id,
-                    (true, *message_5_received, Option::<SocketAddr>::None),
+                    (true, *message_5_received, Option::<SocketAddr>::None, *ipv4),
                 )),
                 _ => None,
             })
@@ -942,17 +1010,30 @@ impl<R: Runtime> PeerTestManager<R> {
         // start `MAX_PARALLEL_TESTS` peer tests
         let mut selected = HashSet::<RouterId>::new();
 
-        for _ in 0..MAX_PARALLEL_TESTS {
+        // TODO: no good, refactor this
+        for i in 0..2 * MAX_PARALLEL_TESTS {
+            let external_address = if i < MAX_PARALLEL_TESTS {
+                if self.ipv4_socket.is_some() && self.ipv4_external_address.is_some() {
+                    self.ipv4_external_address.expect("to exist")
+                } else {
+                    continue;
+                }
+            } else if self.ipv6_socket.is_some() && self.ipv6_external_address.is_some() {
+                self.ipv6_external_address.expect("to exist")
+            } else {
+                continue;
+            };
+
             // attempt to find peer test candidate and bail early if none is found
             let Some((bob_router_id, PeerTestCandiate { tx, .. })) =
-                self.select_router(true, &selected)
+                self.select_router(i < MAX_PARALLEL_TESTS, &selected)
             else {
                 tracing::debug!(
                     target: LOG_TARGET,
                     num_active = ?self.candidates.len(),
                     "cannot perform peer test, no available candidates",
                 );
-                break;
+                continue;
             };
 
             // insert bob into `selected` so it won't be selected for another parallel test
@@ -965,12 +1046,18 @@ impl<R: Runtime> PeerTestManager<R> {
                 out.put_u8(2);
                 out.put_u32(nonce);
                 out.put_u32(R::time_since_epoch().as_secs() as u32);
-                out.put_u8(6u8);
-                out.put_u16(external_address.port());
 
                 match external_address.ip() {
-                    IpAddr::V4(address) => out.put_slice(&address.octets()),
-                    IpAddr::V6(address) => out.put_slice(&address.octets()),
+                    IpAddr::V4(address) => {
+                        out.put_u8(6u8);
+                        out.put_u16(external_address.port());
+                        out.put_slice(&address.octets());
+                    }
+                    IpAddr::V6(address) => {
+                        out.put_u8(18u8);
+                        out.put_u16(external_address.port());
+                        out.put_slice(&address.octets());
+                    }
                 }
 
                 (out.to_vec(), nonce)
@@ -996,6 +1083,7 @@ impl<R: Runtime> PeerTestManager<R> {
                 %bob_router_id,
                 ?nonce,
                 ?src_id,
+                ipv4 = ?(i < MAX_PARALLEL_TESTS),
                 "send peer test request to bob",
             );
 
@@ -1014,6 +1102,7 @@ impl<R: Runtime> PeerTestManager<R> {
                             nonce,
                             src_id,
                             started: R::now(),
+                            ipv4: i < MAX_PARALLEL_TESTS,
                         },
                     );
                 }
@@ -1116,18 +1205,43 @@ impl<R: Runtime> PeerTestManager<R> {
             },
         };
 
-        let Some(RouterAddress::Ssu2 {
-            intro_key: charlie_intro_key,
-            socket_address: Some(charlie_address),
-            ..
-        }) = charlie_router_info.ssu2_ipv4()
-        else {
-            tracing::warn!(
-                target: LOG_TARGET,
-                "charlie doesnt have a dialabl address",
-            );
-            debug_assert!(false);
-            return;
+        let (charlie_intro_key, charlie_address) = match active_test.is_ipv4() {
+            true => match charlie_router_info.ssu2_ipv4() {
+                Some(RouterAddress::Ssu2 {
+                    intro_key,
+                    socket_address: Some(socket_address),
+                    ..
+                }) => (*intro_key, *socket_address),
+                None => {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        nonce = ?received_nonce,
+                        charlie_router_id = %charlie_router_info.identity.id(),
+                        "charlie doesn't have a dialable ipv4 address",
+                    );
+                    debug_assert!(false);
+                    return;
+                }
+                _ => unreachable!(),
+            },
+            false => match charlie_router_info.ssu2_ipv6() {
+                None => {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        nonce = ?received_nonce,
+                        charlie_router_id = %charlie_router_info.identity.id(),
+                        "charlie doesnt have a dialable ipv6 address",
+                    );
+                    debug_assert!(false);
+                    return;
+                }
+                Some(RouterAddress::Ssu2 {
+                    intro_key,
+                    socket_address: Some(socket_address),
+                    ..
+                }) => (*intro_key, *socket_address),
+                _ => unreachable!(),
+            },
         };
 
         // TODO: verify signature of `message`
@@ -1140,6 +1254,7 @@ impl<R: Runtime> PeerTestManager<R> {
                 src_id,
                 message_5_received,
                 message,
+                ipv4,
                 ..
             } => {
                 tracing::debug!(
@@ -1147,6 +1262,7 @@ impl<R: Runtime> PeerTestManager<R> {
                     ?test_nonce,
                     %bob_router_id,
                     time_taken = ?started.elapsed(),
+                    ?ipv4,
                     "peer test request accepted",
                 );
 
@@ -1154,8 +1270,8 @@ impl<R: Runtime> PeerTestManager<R> {
                     .with_net_id(self.router_ctx.net_id())
                     .with_dst_id(src_id)
                     .with_src_id(!src_id)
-                    .with_intro_key(*charlie_intro_key)
-                    .with_addres(*charlie_address)
+                    .with_intro_key(charlie_intro_key)
+                    .with_addres(charlie_address)
                     .build::<R>();
 
                 let message_6_context = if message_5_received {
@@ -1165,7 +1281,7 @@ impl<R: Runtime> PeerTestManager<R> {
                         %bob_router_id,
                         "message 5 received before sending message 6, not firewalled",
                     );
-                    self.write_buffer.push_back((pkt, *charlie_address));
+                    self.write_buffer.push_back((pkt, charlie_address));
 
                     None
                 } else {
@@ -1176,7 +1292,7 @@ impl<R: Runtime> PeerTestManager<R> {
                         "start timer for sending message 6 to charlie",
                     );
 
-                    Some((R::timer(ALICE_WAIT_TIMEOUT), pkt, *charlie_address))
+                    Some((R::timer(ALICE_WAIT_TIMEOUT), pkt, charlie_address))
                 };
 
                 self.active.insert(
@@ -1190,6 +1306,7 @@ impl<R: Runtime> PeerTestManager<R> {
                         message,
                         src_id,
                         started,
+                        ipv4,
                     },
                 );
             }
@@ -1304,7 +1421,22 @@ impl<R: Runtime> Stream for PeerTestManager<R> {
         }
 
         while let Some((pkt, address)) = this.write_buffer.pop_front() {
-            match Pin::new(&mut this.socket).poll_send_to(cx, &pkt, address) {
+            let socket = match address.is_ipv4() {
+                true => this.ipv4_socket.as_mut(),
+                false => this.ipv6_socket.as_mut(),
+            };
+
+            let Some(socket) = socket else {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ipv4 = ?address.is_ipv4(),
+                    "attempted to send datagram over a socket that's not active",
+                );
+                debug_assert!(false);
+                continue;
+            };
+
+            match Pin::new(socket).poll_send_to(cx, &pkt, address) {
                 Poll::Pending => {
                     this.write_buffer.push_front((pkt, address));
                     break;
@@ -1375,6 +1507,7 @@ mod tests {
         let static_key = StaticPrivateKey::random(&mut rand::rng()).public();
         let ssu2 = RouterAddress::Ssu2 {
             cost: 8,
+            mtu: 1500,
             options: Mapping::from_iter([
                 (Str::from("caps"), caps),
                 (Str::from("i"), Str::from(base64_encode([0xbb; 32]))),
@@ -1413,9 +1546,12 @@ mod tests {
     async fn session_doesnt_exist_in_profile_storage() {
         let mut manager = PeerTestManager::new(
             [0xaa; 32],
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            None,
             RouterContextBuilder::default().build(),
             false,
         );
@@ -1434,9 +1570,12 @@ mod tests {
 
         let mut manager = PeerTestManager::new(
             [0xaa; 32],
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            None,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
             false,
         );
@@ -1454,9 +1593,12 @@ mod tests {
 
         let mut manager = PeerTestManager::new(
             [0xaa; 32],
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            None,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
             false,
         );
@@ -1474,9 +1616,12 @@ mod tests {
 
         let mut manager = PeerTestManager::new(
             [0xaa; 32],
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            None,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
             false,
         );
@@ -1494,9 +1639,12 @@ mod tests {
 
         let mut manager = PeerTestManager::new(
             [0xaa; 32],
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            None,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
             false,
         );
@@ -1515,9 +1663,12 @@ mod tests {
 
         let mut manager = PeerTestManager::new(
             [0xaa; 32],
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            None,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
             false,
         );
@@ -1537,9 +1688,12 @@ mod tests {
 
         let mut manager = PeerTestManager::new(
             [0xaa; 32],
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            None,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
             false,
         );
@@ -1568,9 +1722,12 @@ mod tests {
 
         let mut manager = PeerTestManager::new(
             [0xaa; 32],
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            None,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
             false,
         );
@@ -1606,9 +1763,12 @@ mod tests {
 
         let mut manager = PeerTestManager::new(
             [0xaa; 32],
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            None,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
             false,
         );
@@ -1644,9 +1804,12 @@ mod tests {
 
         let mut manager = PeerTestManager::new(
             [0xaa; 32],
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            None,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
             false,
         );
@@ -1682,9 +1845,12 @@ mod tests {
 
         let mut manager = PeerTestManager::new(
             [0xaa; 32],
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            None,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
             false,
         );
@@ -1744,9 +1910,12 @@ mod tests {
 
         let mut manager = PeerTestManager::new(
             [0xaa; 32],
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            None,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
             false,
         );
@@ -1784,7 +1953,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bob_request_rejected_address_not_supported() {
+    async fn bob_request_rejected_ipv6_not_supported() {
         let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
         let (alice_router_id, alice_router_info, alice_serialized) =
             make_router_info(Str::from("BC"), Some(true));
@@ -1795,9 +1964,12 @@ mod tests {
 
         let mut manager = PeerTestManager::new(
             [0xaa; 32],
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            None,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
             false,
         );
@@ -1809,6 +1981,58 @@ mod tests {
         manager_tx
             .try_send(PeerTestEvent::BobRequest {
                 address: "[::]:8888".parse().unwrap(),
+                nonce: 1337,
+                router_info: None,
+                message: b"message".to_vec(),
+                router_id: alice_router_id,
+                tx: bob_tx,
+            })
+            .unwrap();
+        futures::future::poll_fn(|cx| {
+            let _ = manager.poll_next_unpin(cx);
+            Poll::Ready(())
+        })
+        .await;
+
+        match bob_rx.try_recv().unwrap() {
+            PeerTestCommand::SendCharlieResponse {
+                nonce: 1337,
+                rejection: Some(RejectionReason::UnsupportedAddress),
+                ..
+            } => {}
+            command => panic!("unexpected command: {command:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn bob_request_rejected_ipv4_not_supported() {
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let (alice_router_id, alice_router_info, alice_serialized) =
+            make_router_info(Str::from("BC"), Some(true));
+        let (bob_router_id, bob_router_info, bob_serialized) =
+            make_router_info(Str::from("BC"), Some(true));
+        storage.discover_router(alice_router_info, alice_serialized);
+        storage.discover_router(bob_router_info, bob_serialized);
+
+        let mut manager = PeerTestManager::new(
+            [0xaa; 32],
+            None,
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("[::1]:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            RouterContextBuilder::default().with_profile_storage(storage).build(),
+            false,
+        );
+        let manager_tx = manager.tx.clone();
+        let (bob_tx, bob_rx) = channel(16);
+
+        manager.add_session(&bob_router_id, bob_tx.clone());
+
+        manager_tx
+            .try_send(PeerTestEvent::BobRequest {
+                address: "127.0.0.1:8888".parse().unwrap(),
                 nonce: 1337,
                 router_info: None,
                 message: b"message".to_vec(),
@@ -1851,9 +2075,12 @@ mod tests {
 
         let mut manager = PeerTestManager::new(
             [0xaa; 32],
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            None,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
             false,
         );
@@ -1938,9 +2165,12 @@ mod tests {
 
         let mut manager = PeerTestManager::new(
             [0xaa; 32],
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            None,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
             false,
         );
@@ -2001,9 +2231,12 @@ mod tests {
 
         let mut manager = PeerTestManager::new(
             [0xaa; 32],
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            None,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
             false,
         );
@@ -2067,9 +2300,12 @@ mod tests {
     async fn out_of_session_too_short_packet() {
         let mut manager = PeerTestManager::new(
             [0xaa; 32],
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            None,
             RouterContextBuilder::default().build(),
             false,
         );
@@ -2089,9 +2325,12 @@ mod tests {
     async fn out_of_session_no_active_test() {
         let mut manager = PeerTestManager::new(
             [0xaa; 32],
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            None,
             RouterContextBuilder::default().build(),
             false,
         );
@@ -2107,9 +2346,12 @@ mod tests {
     async fn out_of_session_peer_test_block_missing() {
         let mut manager = PeerTestManager::new(
             [0xaa; 32],
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            None,
             RouterContextBuilder::default().build(),
             false,
         );
@@ -2155,9 +2397,12 @@ mod tests {
     async fn out_of_session_invalid_peer_test_block() {
         let mut manager = PeerTestManager::new(
             [0xaa; 32],
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            None,
             RouterContextBuilder::default().build(),
             false,
         );
@@ -2216,9 +2461,12 @@ mod tests {
     async fn out_of_session_response() {
         let mut manager = PeerTestManager::new(
             [0xaa; 32],
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            None,
             RouterContextBuilder::default().build(),
             false,
         );
@@ -2311,10 +2559,15 @@ mod tests {
         let (bob_router_info, _bob_static_key, bob_signing_key) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
                 port: bob_socket.local_address().unwrap().port(),
-                host: Some("127.0.0.1".parse().unwrap()),
+                ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                ipv6_host: None,
+                ipv4: true,
+                ipv6: false,
                 publish: true,
                 static_key: [0xaa; 32],
                 intro_key: [0xbb; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
             })
             .build();
         let bob_serialized = bob_router_info.serialize(&bob_signing_key);
@@ -2329,10 +2582,15 @@ mod tests {
             RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: charlie_socket.local_address().unwrap().port(),
-                    host: Some("127.0.0.1".parse().unwrap()),
+                    ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: true,
                     static_key: [0xcc; 32],
                     intro_key: [0xdd; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
         let charlie_address = charlie_socket.local_address().unwrap();
@@ -2349,7 +2607,8 @@ mod tests {
         let address = socket.local_address().unwrap();
         let mut manager = PeerTestManager::new(
             [0xff; 32],
-            socket,
+            Some(socket),
+            None,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
             false,
         );
@@ -2496,10 +2755,15 @@ mod tests {
         let (bob_router_info, _bob_static_key, bob_signing_key) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
                 port: bob_socket.local_address().unwrap().port(),
-                host: Some("127.0.0.1".parse().unwrap()),
+                ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                ipv6_host: None,
+                ipv4: true,
+                ipv6: false,
                 publish: true,
                 static_key: [0xaa; 32],
                 intro_key: [0xbb; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
             })
             .build();
         let bob_serialized = bob_router_info.serialize(&bob_signing_key);
@@ -2523,7 +2787,8 @@ mod tests {
         let address = socket.local_address().unwrap();
         let mut manager = PeerTestManager::new(
             [0xff; 32],
-            socket,
+            Some(socket),
+            None,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
             false,
         );
@@ -2629,10 +2894,15 @@ mod tests {
         let (bob_router_info, _bob_static_key, bob_signing_key) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
                 port: bob_socket.local_address().unwrap().port(),
-                host: Some("127.0.0.1".parse().unwrap()),
+                ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                ipv6_host: None,
+                ipv4: true,
+                ipv6: false,
                 publish: true,
                 static_key: [0xaa; 32],
                 intro_key: [0xbb; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
             })
             .build();
         let bob_serialized = bob_router_info.serialize(&bob_signing_key);
@@ -2647,10 +2917,15 @@ mod tests {
             RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: charlie_socket.local_address().unwrap().port(),
-                    host: Some("127.0.0.1".parse().unwrap()),
+                    ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: true,
                     static_key: [0xcc; 32],
                     intro_key: [0xdd; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
         let charlie_address = charlie_socket.local_address().unwrap();
@@ -2667,7 +2942,8 @@ mod tests {
         let address = socket.local_address().unwrap();
         let mut manager = PeerTestManager::new(
             [0xff; 32],
-            socket,
+            Some(socket),
+            None,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
             false,
         );
@@ -2828,10 +3104,15 @@ mod tests {
         let (bob_router_info, _bob_static_key, bob_signing_key) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
                 port: bob_socket.local_address().unwrap().port(),
-                host: Some("127.0.0.1".parse().unwrap()),
+                ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                ipv6_host: None,
+                ipv4: true,
+                ipv6: false,
                 publish: true,
                 static_key: [0xaa; 32],
                 intro_key: [0xbb; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
             })
             .build();
         let bob_serialized = bob_router_info.serialize(&bob_signing_key);
@@ -2846,10 +3127,15 @@ mod tests {
             RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: charlie_socket.local_address().unwrap().port(),
-                    host: Some("127.0.0.1".parse().unwrap()),
+                    ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: true,
                     static_key: [0xcc; 32],
                     intro_key: [0xdd; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
         let charlie_address = charlie_socket.local_address().unwrap();
@@ -2866,7 +3152,8 @@ mod tests {
         let address = socket.local_address().unwrap();
         let mut manager = PeerTestManager::new(
             [0xff; 32],
-            socket,
+            Some(socket),
+            None,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
             false,
         );
@@ -2998,10 +3285,15 @@ mod tests {
         let (bob_router_info, _bob_static_key, bob_signing_key) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
                 port: bob_socket.local_address().unwrap().port(),
-                host: Some("127.0.0.1".parse().unwrap()),
+                ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                ipv6_host: None,
+                ipv4: true,
+                ipv6: false,
                 publish: true,
                 static_key: [0xaa; 32],
                 intro_key: [0xbb; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
             })
             .build();
         let bob_serialized = bob_router_info.serialize(&bob_signing_key);
@@ -3016,10 +3308,15 @@ mod tests {
             RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: charlie_socket.local_address().unwrap().port(),
-                    host: Some("127.0.0.1".parse().unwrap()),
+                    ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: true,
                     static_key: [0xcc; 32],
                     intro_key: [0xdd; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
         let charlie_address = charlie_socket.local_address().unwrap();
@@ -3036,7 +3333,8 @@ mod tests {
         let address = socket.local_address().unwrap();
         let mut manager = PeerTestManager::new(
             [0xff; 32],
-            socket,
+            Some(socket),
+            None,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
             false,
         );
@@ -3190,10 +3488,15 @@ mod tests {
         let (bob_router_info, _bob_static_key, bob_signing_key) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
                 port: bob_socket.local_address().unwrap().port(),
-                host: Some("127.0.0.1".parse().unwrap()),
+                ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                ipv6_host: None,
+                ipv4: true,
+                ipv6: false,
                 publish: true,
                 static_key: [0xaa; 32],
                 intro_key: [0xbb; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
             })
             .build();
         let bob_serialized = bob_router_info.serialize(&bob_signing_key);
@@ -3210,7 +3513,8 @@ mod tests {
         let address = socket.local_address().unwrap();
         let mut manager = PeerTestManager::new(
             [0xff; 32],
-            socket,
+            Some(socket),
+            None,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
             false,
         );
@@ -3265,10 +3569,15 @@ mod tests {
             let (router_info, _static_key, signing_key) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 8888 + i,
-                    host: Some("127.0.0.1".parse().unwrap()),
+                    ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: true,
                     static_key: [i as u8; 32],
                     intro_key: [(i + 1) as u8; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
             let serialized = router_info.serialize(&signing_key);
@@ -3282,9 +3591,12 @@ mod tests {
 
         let mut manager = PeerTestManager::new(
             [0xff; 32],
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            None,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
             false,
         );
@@ -3318,10 +3630,15 @@ mod tests {
             let (router_info, _static_key, signing_key) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 8888 + i,
-                    host: Some("127.0.0.1".parse().unwrap()),
+                    ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: true,
                     static_key: [i as u8; 32],
                     intro_key: [(i + 1) as u8; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
             let serialized = router_info.serialize(&signing_key);
@@ -3335,9 +3652,12 @@ mod tests {
 
         let mut manager = PeerTestManager::new(
             [0xff; 32],
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            None,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
             false,
         );
@@ -3371,10 +3691,15 @@ mod tests {
             let (router_info, _static_key, signing_key) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 8888 + i,
-                    host: Some("127.0.0.1".parse().unwrap()),
+                    ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: true,
                     static_key: [i as u8; 32],
                     intro_key: [(i + 1) as u8; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
             let serialized = router_info.serialize(&signing_key);
@@ -3388,9 +3713,12 @@ mod tests {
 
         let mut manager = PeerTestManager::new(
             [0xff; 32],
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            None,
             RouterContextBuilder::default().with_profile_storage(storage).build(),
             false,
         );
@@ -3411,6 +3739,7 @@ mod tests {
                 src_id: 1337,
                 started: MockRuntime::now(),
                 message_5_received: true,
+                ipv4: true,
             },
         );
 
@@ -3424,6 +3753,7 @@ mod tests {
                 src_id: 1338,
                 started: MockRuntime::now().subtract(2 * PEER_TEST_EXPIRATION),
                 message_5_received: false,
+                ipv4: true,
             },
         );
         manager.active.insert(
@@ -3435,6 +3765,7 @@ mod tests {
                 src_id: 1339,
                 started: MockRuntime::now().subtract(2 * PEER_TEST_EXPIRATION),
                 message_5_received: true,
+                ipv4: true,
             },
         );
 

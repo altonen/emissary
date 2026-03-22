@@ -76,9 +76,11 @@ async fn make_router(
             None,
             Some(Ssu2Config {
                 port: 0u16,
-                host: Some("127.0.0.1".parse().unwrap()),
+                ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                ipv6_host: None,
+                ipv4: true,
+                ipv6: false,
                 publish: true,
-
                 static_key: {
                     let mut iv = [0u8; 32];
                     TokioRuntime::rng().fill_bytes(&mut iv);
@@ -89,6 +91,8 @@ async fn make_router(
                     TokioRuntime::rng().fill_bytes(&mut key);
                     key
                 },
+                ipv4_mtu: None,
+                ipv6_mtu: None,
             }),
         ),
     };
@@ -1640,9 +1644,11 @@ async fn host_lookup(kind: TransportKind) {
             None,
             Some(Ssu2Config {
                 port: 0u16,
-                host: Some("127.0.0.1".parse().unwrap()),
+                ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                ipv6_host: None,
+                ipv4: true,
+                ipv6: false,
                 publish: true,
-
                 static_key: {
                     let mut iv = [0u8; 32];
                     TokioRuntime::rng().fill_bytes(&mut iv);
@@ -1653,6 +1659,8 @@ async fn host_lookup(kind: TransportKind) {
                     TokioRuntime::rng().fill_bytes(&mut key);
                     key
                 },
+                ipv4_mtu: None,
+                ipv6_mtu: None,
             }),
         ),
     };

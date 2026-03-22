@@ -17,6 +17,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    constants::ssu2,
     crypto::{
         chachapoly::ChaChaPoly, hmac::Hmac, noise::NoiseContext, EphemeralPrivateKey,
         EphemeralPublicKey, StaticPrivateKey, StaticPublicKey,
@@ -85,6 +86,9 @@ pub struct InboundSsu2Context<R: Runtime> {
 
     /// Local intro key.
     pub intro_key: [u8; 32],
+
+    /// Our MTU size for `address`.
+    pub mtu: usize,
 
     /// Net ID.
     pub net_id: u8,
@@ -215,6 +219,9 @@ pub struct InboundSsu2Session<R: Runtime> {
     /// Local intro key.
     intro_key: [u8; 32],
 
+    /// Our MTU size for `address`.
+    mtu: usize,
+
     /// Net ID.
     net_id: u8,
 
@@ -267,6 +274,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
             chaining_key,
             dst_id,
             intro_key,
+            mtu,
             net_id,
             pkt,
             pkt_num,
@@ -299,6 +307,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
             address,
             dst_id,
             intro_key,
+            mtu,
             net_id,
             noise_ctx: NoiseContext::new(
                 TryInto::<[u8; 32]>::try_into(chaining_key.to_vec()).expect("to succeed"),
@@ -333,6 +342,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
             chaining_key,
             dst_id,
             intro_key,
+            mtu,
             net_id,
             pkt,
             relay_tag,
@@ -356,6 +366,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
             address,
             dst_id,
             intro_key,
+            mtu,
             net_id,
             noise_ctx: NoiseContext::new(
                 TryInto::<[u8; 32]>::try_into(chaining_key.to_vec()).expect("to succeed"),
@@ -823,11 +834,28 @@ impl<R: Runtime> InboundSsu2Session<R> {
             .with_ack(0u32, 0u8, None)
             .build::<R>();
 
+        // calculate maximum payload size
+        let max_payload_size = {
+            let remote_mtu = router_info
+                .addresses()
+                .find_map(|address| match address {
+                    RouterAddress::Ntcp2 { .. } => None,
+                    RouterAddress::Ssu2 { mtu, .. } => Some(*mtu),
+                })
+                .unwrap_or(1500);
+
+            match self.address {
+                SocketAddr::V4(_) => self.mtu.min(remote_mtu) - ssu2::IPV4_OVERHEAD,
+                SocketAddr::V6(_) => self.mtu.min(remote_mtu) - ssu2::IPV6_OVERHEAD,
+            }
+        };
+
         Ok(Some(PendingSsu2SessionStatus::NewInboundSession {
             context: Ssu2SessionContext {
                 address: self.address,
                 dst_id: self.src_id,
                 intro_key: *intro_key,
+                max_payload_size,
                 pkt_rx: self.rx.take().expect("to exist"),
                 recv_key_ctx: KeyContext::new(k_data_ab, k_header_2_ab),
                 router_id: router_info.identity.id(),
@@ -1164,11 +1192,16 @@ mod tests {
         let (mut router_info, _, signing_key) = RouterInfoBuilder::default()
             .with_ssu2(crate::Ssu2Config {
                 port: outbound_address.port(),
-                host: Some(Ipv4Addr::new(127, 0, 0, 1)),
+                ipv4_host: Some(Ipv4Addr::new(127, 0, 0, 1)),
+                ipv6_host: None,
+                ipv4: true,
+                ipv6: false,
                 publish: true,
                 static_key: TryInto::<[u8; 32]>::try_into(outbound_static_key.as_ref().to_vec())
                     .unwrap(),
                 intro_key: outbound_intro_key,
+                ipv4_mtu: None,
+                ipv6_mtu: None,
             })
             .build();
 
@@ -1188,6 +1221,7 @@ mod tests {
             dst_id,
             local_intro_key: outbound_intro_key,
             local_static_key: outbound_static_key,
+            max_payload_size: 1472,
             net_id: 2u8,
             remote_intro_key: inbound_intro_key,
             request_tag: false,
@@ -1237,6 +1271,7 @@ mod tests {
             chaining_key: Bytes::from(chaining_key),
             dst_id,
             intro_key: inbound_intro_key,
+            mtu: 1500,
             net_id: 2u8,
             pkt,
             pkt_num,
@@ -1827,7 +1862,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fragmented_session_confirmed() {
+    async fn fragmented_session_confirmed_zzz() {
         let (
             InboundContext {
                 inbound_session,
@@ -1881,7 +1916,7 @@ mod tests {
         // read `SessionConfirmed` from outbound session
         {
             // two fragments are expected
-            for _ in 0..2 {
+            for _ in 0..3 {
                 let Packet { mut pkt, address } = inbound_socket_rx.recv().await.unwrap();
                 let mut reader = HeaderReader::new(intro_key, &mut pkt).unwrap();
                 let _connection_id = reader.dst_id();

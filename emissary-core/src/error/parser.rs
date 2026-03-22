@@ -323,6 +323,9 @@ pub enum RouterAddressParseError {
 
     /// Invalid SSU2 intro key.
     InvalidSsu2IntroKey,
+
+    /// Invalid MTU.
+    InvalidMtu,
 }
 
 impl From<MappingParseError> for RouterAddressParseError {

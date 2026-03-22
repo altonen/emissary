@@ -18,7 +18,7 @@
 
 use emissary_core::{
     events::EventSubscriber, router::Router, runtime::Runtime, Config, Ntcp2Config, SamConfig,
-    TransitConfig,
+    Ssu2Config, TransitConfig,
 };
 use emissary_util::runtime::tokio::Runtime as TokioRuntime;
 use rand::Rng;
@@ -30,6 +30,7 @@ use std::time::Duration;
 #[derive(Clone, Copy)]
 enum TransportKind {
     Ntcp2,
+    Ssu2,
 }
 
 async fn make_router(
@@ -60,6 +61,29 @@ async fn make_router(
                 ipv6: true,
             }),
             None,
+        ),
+        TransportKind::Ssu2 => (
+            None,
+            Some(Ssu2Config {
+                ipv4_host: mixed.then_some("127.0.0.1".parse().unwrap()),
+                ipv4: mixed,
+                ipv6_host: Some("::1".parse().unwrap()),
+                ipv6: true,
+                port: 0u16,
+                publish: true,
+                static_key: {
+                    let mut iv = [0u8; 32];
+                    TokioRuntime::rng().fill_bytes(&mut iv);
+                    iv
+                },
+                intro_key: {
+                    let mut key = [0u8; 32];
+                    TokioRuntime::rng().fill_bytes(&mut key);
+                    key
+                },
+                ipv4_mtu: None,
+                ipv6_mtu: None,
+            }),
         ),
     };
 
@@ -94,6 +118,16 @@ async fn ipv6_only_ntcp2() {
 #[tokio::test]
 async fn ipv4_ipv6_mixed_ntcp2() {
     ipv6_test(TransportKind::Ntcp2, true).await;
+}
+
+#[tokio::test]
+async fn ipv6_only_ssu2() {
+    ipv6_test(TransportKind::Ssu2, false).await;
+}
+
+#[tokio::test]
+async fn ipv4_ipv6_mixed_ssu2() {
+    ipv6_test(TransportKind::Ssu2, true).await;
 }
 
 async fn ipv6_test(kind: TransportKind, mixed: bool) {

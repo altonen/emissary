@@ -67,6 +67,7 @@ pub trait TcpListener<TcpStream>: Unpin + Send + Sized + 'static {
 
 pub trait UdpSocket: Unpin + Send + Sized + Clone {
     fn bind(address: SocketAddr) -> impl Future<Output = Option<Self>>;
+    fn bind_with_mtu(address: SocketAddr, mtu: usize) -> impl Future<Output = Option<Self>>;
     fn send_to(
         &mut self,
         buf: &[u8],
@@ -88,6 +89,7 @@ pub trait UdpSocket: Unpin + Send + Sized + Clone {
         buf: &mut [u8],
     ) -> Poll<Option<(usize, SocketAddr)>>;
     fn local_address(&self) -> Option<SocketAddr>;
+    fn mtu(&self) -> usize;
 }
 
 pub trait JoinSet<T>: Stream<Item = T> + Unpin + Send {

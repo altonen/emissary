@@ -211,21 +211,68 @@ impl TcpListener<TokioTcpStream> for TokioTcpListener {
 }
 
 #[derive(Clone)]
-pub struct TokioUdpSocket(Arc<net::UdpSocket>);
+pub struct TokioUdpSocket {
+    socket: Arc<net::UdpSocket>,
+    mtu: usize,
+}
 
 impl UdpSocket for TokioUdpSocket {
     fn bind(address: SocketAddr) -> impl Future<Output = Option<Self>> {
-        async move { net::UdpSocket::bind(address).await.ok().map(|socket| Self(Arc::new(socket))) }
+        async move {
+            let interface = netdev::get_default_interface()
+                .inspect_err(|error| {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?error,
+                        "failed to get default interface",
+                    );
+                })
+                .ok()?;
+
+            let mtu = interface.mtu.unwrap_or_else(|| {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    "failed to get mtu for default interface, defaulting to 1500",
+                );
+                1500
+            });
+
+            Self::bind_with_mtu(address, mtu as usize).await
+        }
+    }
+
+    fn bind_with_mtu(address: SocketAddr, mtu: usize) -> impl Future<Output = Option<Self>> {
+        async move {
+            let socket = match address {
+                SocketAddr::V4(_) =>
+                    Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).ok()?,
+                SocketAddr::V6(_) => {
+                    let socket =
+                        Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP)).ok()?;
+                    socket.set_only_v6(true).ok()?;
+                    socket
+                }
+            };
+
+            socket.set_reuse_address(true).ok()?;
+            socket.set_nonblocking(true).ok()?;
+            socket.bind(&address.into()).ok()?;
+
+            Some(Self {
+                socket: Arc::new(net::UdpSocket::from_std(std::net::UdpSocket::from(socket)).ok()?),
+                mtu,
+            })
+        }
     }
 
     #[inline]
     fn send_to(&mut self, buf: &[u8], target: SocketAddr) -> impl Future<Output = Option<usize>> {
-        async move { self.0.send_to(buf, target).await.ok() }
+        async move { self.socket.send_to(buf, target).await.ok() }
     }
 
     #[inline]
     fn recv_from(&mut self, buf: &mut [u8]) -> impl Future<Output = Option<(usize, SocketAddr)>> {
-        async move { self.0.recv_from(buf).await.ok() }
+        async move { self.socket.recv_from(buf).await.ok() }
     }
 
     #[inline]
@@ -235,7 +282,7 @@ impl UdpSocket for TokioUdpSocket {
         buf: &[u8],
         target: SocketAddr,
     ) -> Poll<Option<usize>> {
-        Poll::Ready(futures::ready!(self.0.poll_send_to(cx, buf, target)).ok())
+        Poll::Ready(futures::ready!(self.socket.poll_send_to(cx, buf, target)).ok())
     }
 
     #[inline]
@@ -246,7 +293,7 @@ impl UdpSocket for TokioUdpSocket {
     ) -> Poll<Option<(usize, SocketAddr)>> {
         let mut buf = ReadBuf::new(buf);
 
-        match futures::ready!(self.0.poll_recv_from(cx, &mut buf)) {
+        match futures::ready!(self.socket.poll_recv_from(cx, &mut buf)) {
             Err(_) => Poll::Ready(None),
             Ok(from) => {
                 let nread = buf.filled().len();
@@ -255,8 +302,14 @@ impl UdpSocket for TokioUdpSocket {
         }
     }
 
+    #[inline]
     fn local_address(&self) -> Option<SocketAddr> {
-        self.0.local_addr().ok()
+        self.socket.local_addr().ok()
+    }
+
+    #[inline]
+    fn mtu(&self) -> usize {
+        self.mtu
     }
 }
 

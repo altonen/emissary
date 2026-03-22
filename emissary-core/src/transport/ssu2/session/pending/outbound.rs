@@ -81,6 +81,9 @@ pub struct OutboundSsu2Context<R: Runtime> {
     /// Local static key.
     pub local_static_key: StaticPrivateKey,
 
+    /// Maximum payload size.
+    pub max_payload_size: usize,
+
     /// Network ID.
     pub net_id: u8,
 
@@ -207,6 +210,9 @@ pub struct OutboundSsu2Session<R: Runtime> {
     /// Local router intro key.
     local_intro_key: [u8; 32],
 
+    /// Maximum payload size size.
+    max_payload_size: usize,
+
     /// Network ID.
     net_id: u8,
 
@@ -259,6 +265,7 @@ impl<R: Runtime> OutboundSsu2Session<R> {
             dst_id,
             local_intro_key,
             local_static_key,
+            max_payload_size,
             net_id,
             remote_intro_key,
             request_tag,
@@ -294,6 +301,7 @@ impl<R: Runtime> OutboundSsu2Session<R> {
             dst_id,
             external_address: None,
             local_intro_key,
+            max_payload_size,
             net_id,
             noise_ctx: NoiseContext::new(
                 TryInto::<[u8; 32]>::try_into(chaining_key.to_vec()).expect("to succeed"),
@@ -326,6 +334,7 @@ impl<R: Runtime> OutboundSsu2Session<R> {
             dst_id,
             local_intro_key,
             local_static_key,
+            max_payload_size,
             net_id,
             remote_intro_key,
             router_id,
@@ -355,6 +364,7 @@ impl<R: Runtime> OutboundSsu2Session<R> {
             dst_id,
             external_address: None,
             local_intro_key,
+            max_payload_size,
             net_id,
             noise_ctx: NoiseContext::new(
                 TryInto::<[u8; 32]>::try_into(chaining_key.to_vec()).expect("to succeed"),
@@ -626,6 +636,7 @@ impl<R: Runtime> OutboundSsu2Session<R> {
             Hmac::new(&temp_key).update(b"SessionConfirmed").update([0x01]).finalize_new();
 
         let mut message = SessionConfirmedBuilder::default()
+            .with_max_payload_size(self.max_payload_size)
             .with_dst_id(self.dst_id)
             .with_src_id(self.src_id)
             .with_static_key(local_static_key.public())
@@ -805,6 +816,7 @@ impl<R: Runtime> OutboundSsu2Session<R> {
                 address: self.address,
                 dst_id: self.dst_id,
                 intro_key: self.remote_intro_key,
+                max_payload_size: self.max_payload_size,
                 pkt_rx: self.rx.take().expect("to exist"),
                 recv_key_ctx: KeyContext::new(k_data_ba, k_header_2_ba),
                 router_id: self.router_id.clone(),
@@ -1080,11 +1092,16 @@ mod tests {
         let (router_info, _, signing_key) = RouterInfoBuilder::default()
             .with_ssu2(crate::Ssu2Config {
                 port: 8889,
-                host: Some(Ipv4Addr::new(127, 0, 0, 1)),
+                ipv4_host: Some(Ipv4Addr::new(127, 0, 0, 1)),
+                ipv6_host: None,
+                ipv4: true,
+                ipv6: false,
                 publish: true,
                 static_key: TryInto::<[u8; 32]>::try_into(outbound_static_key.as_ref().to_vec())
                     .unwrap(),
                 intro_key: outbound_intro_key,
+                ipv4_mtu: None,
+                ipv6_mtu: None,
             })
             .build();
 
@@ -1094,6 +1111,7 @@ mod tests {
             dst_id,
             local_intro_key: outbound_intro_key,
             local_static_key: outbound_static_key,
+            max_payload_size: 1500 - 28,
             net_id: 2u8,
             remote_intro_key: inbound_intro_key,
             router_id: router_info.identity.id(),
@@ -1143,6 +1161,7 @@ mod tests {
             chaining_key: Bytes::from(chaining_key),
             dst_id,
             intro_key: inbound_intro_key,
+            mtu: 1500,
             net_id: 2u8,
             pkt,
             pkt_num,

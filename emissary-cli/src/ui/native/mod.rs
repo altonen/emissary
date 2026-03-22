@@ -28,7 +28,7 @@ use crate::{
                 advanced::AdvancedConfig,
                 client::{I2cpConfig, SamConfig},
                 proxies::{HttpProxyConfig, SocksProxyConfig},
-                transports::{Ntcp2Config, PortForwardingConfig, TransportConfig},
+                transports::{Ntcp2Config, PortForwardingConfig, Ssu2Config},
                 tunnels::{ExploratoryConfig, TransitConfig},
             },
             sidebar::sidebar,
@@ -92,7 +92,7 @@ pub struct RouterUi {
     ntcp2: Ntcp2Config,
 
     /// SSU2 config.
-    ssu2: TransportConfig,
+    ssu2: Ssu2Config,
 
     /// Port forwarding config.
     port_forwarding: PortForwardingConfig,
@@ -231,7 +231,7 @@ impl RouterUi {
         shutdown_tx: Sender<()>,
     ) -> (Self, Task<Message>) {
         let ntcp2 = Ntcp2Config::from(&config.ntcp2);
-        let ssu2 = TransportConfig::from(&config.ssu2);
+        let ssu2 = Ssu2Config::from(&config.ssu2);
         let port_forwarding = PortForwardingConfig::from(&config.port_forwarding);
         let i2cp = I2cpConfig::from(&config.i2cp);
         let sam = SamConfig::from(&config.sam);
@@ -637,8 +637,38 @@ impl RouterUi {
 
                 Task::none()
             }
-            Message::Ssu2HostChanged(data) => {
-                self.ssu2.set_host(data);
+            Message::Ssu2Ipv4HostChanged(data) => {
+                self.ssu2.set_ipv4_host(data);
+                self.settings_status = SettingsStatus::Idle(self.active_settings_tab);
+
+                Task::none()
+            }
+            Message::Ssu2Ipv6HostChanged(data) => {
+                self.ssu2.set_ipv6_host(data);
+                self.settings_status = SettingsStatus::Idle(self.active_settings_tab);
+
+                Task::none()
+            }
+            Message::Ssu2Ipv4MtuChanged(data) => {
+                self.ssu2.set_ipv4_mtu(data);
+                self.settings_status = SettingsStatus::Idle(self.active_settings_tab);
+
+                Task::none()
+            }
+            Message::Ssu2Ipv6MtuChanged(data) => {
+                self.ssu2.set_ipv6_mtu(data);
+                self.settings_status = SettingsStatus::Idle(self.active_settings_tab);
+
+                Task::none()
+            }
+            Message::Ssu2Ipv4Enabled(enabled) => {
+                self.ssu2.set_ipv4_enabled(enabled);
+                self.settings_status = SettingsStatus::Idle(self.active_settings_tab);
+
+                Task::none()
+            }
+            Message::Ssu2Ipv6Enabled(enabled) => {
+                self.ssu2.set_ipv6_enabled(enabled);
                 self.settings_status = SettingsStatus::Idle(self.active_settings_tab);
 
                 Task::none()

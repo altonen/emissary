@@ -66,7 +66,8 @@ impl RouterInfo {
         config: &Config,
         ntcp2_ipv4: Option<RouterAddress>,
         ntcp2_ipv6: Option<RouterAddress>,
-        ssu2: Option<RouterAddress>,
+        ssu2_ipv4: Option<RouterAddress>,
+        ssu2_ipv6: Option<RouterAddress>,
         static_key: &StaticPrivateKey,
         signing_key: &SigningPrivateKey,
         transit_tunnels_disabled: bool,
@@ -121,7 +122,11 @@ impl RouterInfo {
                     addresses.push(ntcp2);
                 }
 
-                if let Some(ssu2) = ssu2 {
+                if let Some(ssu2) = ssu2_ipv4 {
+                    addresses.push(ssu2);
+                }
+
+                if let Some(ssu2) = ssu2_ipv6 {
                     addresses.push(ssu2);
                 }
 
@@ -315,6 +320,15 @@ impl RouterInfo {
         })
     }
 
+    /// Try to locate NTCP2 over IPv6 and return mutable reference to it.
+    pub fn ntcp2_ipv6_mut(&mut self) -> Option<&mut RouterAddress> {
+        self.addresses.iter_mut().find(|address| match address {
+            RouterAddress::Ntcp2 { socket_address, .. } =>
+                socket_address.is_some_and(|address| address.is_ipv6()),
+            _ => false,
+        })
+    }
+
     /// Try to locate SSU2 over IPv4.
     pub fn ssu2_ipv4(&self) -> Option<&RouterAddress> {
         self.addresses.iter().find(|address| match address {
@@ -324,11 +338,29 @@ impl RouterInfo {
         })
     }
 
+    /// Try to locate SSU2 over IPv6.
+    pub fn ssu2_ipv6(&self) -> Option<&RouterAddress> {
+        self.addresses.iter().find(|address| match address {
+            RouterAddress::Ssu2 { socket_address, .. } =>
+                socket_address.is_some_and(|address| address.is_ipv6()),
+            _ => false,
+        })
+    }
+
     /// Try to locate SSU2 over IPv4 and return mutable reference to it.
     pub fn ssu2_ipv4_mut(&mut self) -> Option<&mut RouterAddress> {
         self.addresses.iter_mut().find(|address| match address {
             RouterAddress::Ssu2 { socket_address, .. } =>
                 socket_address.is_some_and(|address| address.is_ipv4()),
+            _ => false,
+        })
+    }
+
+    /// Try to locate SSU2 over IPv6 and return mutable reference to it.
+    pub fn ssu2_ipv6_mut(&mut self) -> Option<&mut RouterAddress> {
+        self.addresses.iter_mut().find(|address| match address {
+            RouterAddress::Ssu2 { socket_address, .. } =>
+                socket_address.is_some_and(|address| address.is_ipv6()),
             _ => false,
         })
     }
@@ -358,6 +390,14 @@ impl RouterInfo {
                 _ => Some(transport),
             }
         })
+    }
+
+    /// Attempt to select transport from router addresses using `filter`.
+    pub fn select_transport_with_filter(
+        &self,
+        filter: impl Fn(&RouterAddress) -> bool,
+    ) -> Option<&RouterAddress> {
+        self.addresses.iter().find(|transport| filter(transport))
     }
 }
 
@@ -450,48 +490,83 @@ pub(crate) mod builder {
                 publish,
             }) = self.ntcp2.take()
             {
-                match (publish, ipv4_host) {
-                    (true, Some(host)) => addresses.push(RouterAddress::new_published_ntcp2(
-                        key,
-                        iv,
-                        IpAddr::V4(host),
-                        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
-                    )),
-                    (_, _) => addresses.push(RouterAddress::new_unpublished_ntcp2(
-                        key,
-                        SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port),
-                    )),
+                if ipv4 {
+                    match (publish, ipv4_host) {
+                        (true, Some(host)) => addresses.push(RouterAddress::new_published_ntcp2(
+                            key,
+                            iv,
+                            IpAddr::V4(host),
+                            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+                        )),
+                        (_, _) => addresses.push(RouterAddress::new_unpublished_ntcp2(
+                            key,
+                            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port),
+                        )),
+                    }
                 }
 
-                match (publish, ipv6_host) {
-                    (true, Some(host)) => addresses.push(RouterAddress::new_published_ntcp2(
-                        key,
-                        iv,
-                        IpAddr::V6(host),
-                        SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port),
-                    )),
-                    (_, _) => addresses.push(RouterAddress::new_unpublished_ntcp2(
-                        key,
-                        SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port),
-                    )),
+                if ipv6 {
+                    match (publish, ipv6_host) {
+                        (true, Some(host)) => addresses.push(RouterAddress::new_published_ntcp2(
+                            key,
+                            iv,
+                            IpAddr::V6(host),
+                            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port),
+                        )),
+                        (_, _) => addresses.push(RouterAddress::new_unpublished_ntcp2(
+                            key,
+                            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port),
+                        )),
+                    }
                 }
             };
 
             if let Some(Ssu2Config {
                 port,
-                host,
+                ipv4_host,
+                ipv6_host,
+                ipv4,
+                ipv6,
                 publish,
                 static_key,
                 intro_key,
+                ..
             }) = self.ssu2.take()
             {
-                match (publish, host) {
-                    (true, Some(host)) => addresses.push(RouterAddress::new_published_ssu2(
-                        static_key, intro_key, port, host,
-                    )),
-                    (_, _) => addresses.push(RouterAddress::new_unpublished_ssu2(
-                        static_key, intro_key, port,
-                    )),
+                if ipv4 {
+                    match (publish, ipv4_host) {
+                        (true, Some(host)) => addresses.push(RouterAddress::new_published_ssu2(
+                            static_key,
+                            intro_key,
+                            IpAddr::V4(host),
+                            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+                            1500,
+                        )),
+                        (_, _) => addresses.push(RouterAddress::new_unpublished_ssu2(
+                            static_key,
+                            intro_key,
+                            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port),
+                            1500,
+                        )),
+                    }
+                }
+
+                if ipv6 {
+                    match (publish, ipv6_host) {
+                        (true, Some(host)) => addresses.push(RouterAddress::new_published_ssu2(
+                            static_key,
+                            intro_key,
+                            IpAddr::V6(host),
+                            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port),
+                            1500,
+                        )),
+                        (_, _) => addresses.push(RouterAddress::new_unpublished_ssu2(
+                            static_key,
+                            intro_key,
+                            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port),
+                            1500,
+                        )),
+                    }
                 }
             }
 
@@ -958,8 +1033,9 @@ mod tests {
                 RouterAddress::new_published_ssu2(
                     [1u8; 32],
                     [2u8; 32],
-                    8888,
                     "127.0.0.1".parse().unwrap(),
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+                    1500,
                 ),
             ]),
             options: Mapping::from_iter([
@@ -993,8 +1069,9 @@ mod tests {
                 RouterAddress::new_published_ssu2(
                     [1u8; 32],
                     [2u8; 32],
-                    8888,
                     "127.0.0.1".parse().unwrap(),
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+                    1500,
                 ),
             ]),
             options: Mapping::from_iter([
@@ -1023,7 +1100,12 @@ mod tests {
                     [1u8; 32],
                     SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
                 ),
-                RouterAddress::new_unpublished_ssu2([1u8; 32], [2u8; 32], 8888),
+                RouterAddress::new_unpublished_ssu2(
+                    [1u8; 32],
+                    [2u8; 32],
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+                    1500,
+                ),
             ]),
             options: Mapping::from_iter([
                 (Str::from("netId"), Str::from("2")),
@@ -1054,6 +1136,7 @@ mod tests {
                     RouterAddress::Ssu2 {
                         introducers: Vec::new(),
                         cost: 10,
+                        mtu: 1500,
                         static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
                         intro_key: [0xbb; 32],
                         options: Mapping::default(),
@@ -1080,6 +1163,7 @@ mod tests {
                     RouterAddress::Ssu2 {
                         introducers: Vec::new(),
                         cost: 10,
+                        mtu: 1500,
                         static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
                         intro_key: [0xbb; 32],
                         options: Mapping::default(),
@@ -1088,6 +1172,7 @@ mod tests {
                     RouterAddress::Ssu2 {
                         introducers: Vec::new(),
                         cost: 12,
+                        mtu: 1500,
                         static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
                         intro_key: [0xbb; 32],
                         options: Mapping::default(),
@@ -1121,6 +1206,7 @@ mod tests {
                     RouterAddress::Ssu2 {
                         introducers: Vec::new(),
                         cost: 10,
+                        mtu: 1500,
                         static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
                         intro_key: [0xbb; 32],
                         options: Mapping::default(),
@@ -1166,6 +1252,7 @@ mod tests {
                     RouterAddress::Ssu2 {
                         introducers: Vec::new(),
                         cost: 10,
+                        mtu: 1500,
                         static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
                         intro_key: [0xbb; 32],
                         options: Mapping::default(),
@@ -1209,6 +1296,7 @@ mod tests {
                     RouterAddress::Ssu2 {
                         introducers: Vec::new(),
                         cost: 10,
+                        mtu: 1500,
                         static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
                         intro_key: [0xbb; 32],
                         options: Mapping::default(),
@@ -1241,6 +1329,7 @@ mod tests {
                     RouterAddress::Ssu2 {
                         introducers: vec![(RouterId::random(), 1337)],
                         cost: 10,
+                        mtu: 1500,
                         static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
                         intro_key: [0xbb; 32],
                         options: Mapping::from_iter([(Str::from("caps"), Str::from("4"))]),
@@ -1280,6 +1369,7 @@ mod tests {
                 vec![RouterAddress::Ssu2 {
                     introducers: Vec::new(),
                     cost: 10,
+                    mtu: 1500,
                     static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
                     intro_key: [0xbb; 32],
                     options: Mapping::default(),
@@ -1296,6 +1386,7 @@ mod tests {
                 vec![RouterAddress::Ssu2 {
                     introducers: Vec::new(),
                     cost: 10,
+                    mtu: 1500,
                     static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
                     intro_key: [0xbb; 32],
                     options: Mapping::default(),
@@ -1312,6 +1403,7 @@ mod tests {
                 vec![RouterAddress::Ssu2 {
                     introducers: Vec::new(),
                     cost: 10,
+                    mtu: 1500,
                     static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
                     intro_key: [0xbb; 32],
                     options: Mapping::default(),

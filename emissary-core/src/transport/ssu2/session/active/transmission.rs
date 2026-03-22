@@ -30,12 +30,13 @@ use crate::{
     },
 };
 
+use bytes::BytesMut;
+
 use alloc::{
     collections::{BTreeMap, VecDeque},
     sync::Arc,
     vec::Vec,
 };
-use bytes::BytesMut;
 use core::{
     cmp::{max, min},
     fmt,
@@ -301,6 +302,9 @@ pub struct TransmissionManager<R: Runtime> {
     /// Metrics handle.
     metrics: R::MetricsHandle,
 
+    /// Maximum payload size.
+    max_payload_size: usize,
+
     /// Pending segments.
     pending: VecDeque<SegmentKind>,
 
@@ -410,12 +414,14 @@ impl<R: Runtime> TransmissionManager<R> {
         send_key_ctx: KeyContext,
         pkt_num: Arc<AtomicU32>,
         metrics: R::MetricsHandle,
+        max_payload_size: usize,
     ) -> Self {
         Self {
             dst_id,
             intro_key,
             last_immediate_ack: 0u32,
             metrics,
+            max_payload_size,
             pending: VecDeque::new(),
             pkt_num,
             remote_ack_manager: RemoteAckManager::new(),
@@ -449,7 +455,7 @@ impl<R: Runtime> TransmissionManager<R> {
 
     /// Does a payload of size `size` fit inside a single datagram.
     pub fn fits_in_datagram(&self, size: usize) -> bool {
-        size + SSU2_OVERHEAD <= 1200
+        size + SSU2_OVERHEAD <= self.max_payload_size
     }
 
     /// Register packet number for a packet received from remote router.
@@ -699,6 +705,7 @@ impl<R: Runtime> TransmissionManager<R> {
                         DataMessageBuilder::default()
                     }
                     .with_dst_id(self.dst_id)
+                    .with_max_payload_size(self.max_payload_size)
                     .with_key_context(self.intro_key, &self.send_key_ctx)
                     .with_message(pkt_num, segment)
                     .with_ack(highest_seen, num_acks, ranges.as_deref())
@@ -882,6 +889,7 @@ mod tests {
             },
             Arc::new(AtomicU32::new(1u32)),
             MockRuntime::register_metrics(Vec::new(), None),
+            1472,
         );
         mgr.schedule(Message {
             payload: vec![1, 2, 3],
@@ -908,6 +916,7 @@ mod tests {
             },
             Arc::new(AtomicU32::new(1u32)),
             MockRuntime::register_metrics(Vec::new(), None),
+            1472,
         );
         mgr.schedule(Message {
             payload: vec![0u8; 1200 * 3 + 512],
@@ -937,6 +946,7 @@ mod tests {
             },
             Arc::new(AtomicU32::new(1u32)),
             MockRuntime::register_metrics(Vec::new(), None),
+            1472,
         );
         mgr.schedule(Message {
             payload: vec![0u8; 1200 * 3 + 512],
@@ -964,6 +974,7 @@ mod tests {
             },
             Arc::new(AtomicU32::new(1u32)),
             MockRuntime::register_metrics(Vec::new(), None),
+            1472,
         );
         mgr.schedule(Message {
             payload: vec![0u8; 1200 * 3 + 512],
@@ -994,6 +1005,7 @@ mod tests {
             },
             Arc::new(AtomicU32::new(1u32)),
             MockRuntime::register_metrics(Vec::new(), None),
+            1472,
         );
         mgr.schedule(Message {
             payload: vec![0u8; 1200 * 10 + 512],
@@ -1024,6 +1036,7 @@ mod tests {
             },
             Arc::new(AtomicU32::new(1u32)),
             MockRuntime::register_metrics(Vec::new(), None),
+            1472,
         );
         mgr.schedule(Message {
             payload: vec![0u8; 1200 * 9 + 512],
@@ -1057,6 +1070,7 @@ mod tests {
             },
             Arc::new(AtomicU32::new(1u32)),
             MockRuntime::register_metrics(Vec::new(), None),
+            1472,
         );
         mgr.schedule(Message {
             payload: vec![0u8; 1200 * 9 + 512],
@@ -1086,6 +1100,7 @@ mod tests {
             },
             Arc::new(AtomicU32::new(1u32)),
             MockRuntime::register_metrics(Vec::new(), None),
+            1472,
         );
         mgr.schedule(Message {
             payload: vec![0u8; 1200 * 9 + 512],
@@ -1116,6 +1131,7 @@ mod tests {
             },
             Arc::new(AtomicU32::new(1u32)),
             MockRuntime::register_metrics(Vec::new(), None),
+            1472,
         );
         mgr.schedule(Message {
             payload: vec![0u8; 1200 * 9 + 512],
@@ -1146,6 +1162,7 @@ mod tests {
             },
             Arc::new(AtomicU32::new(1u32)),
             MockRuntime::register_metrics(Vec::new(), None),
+            1472,
         );
         mgr.schedule(Message {
             payload: vec![0u8; 1200 * 9 + 512],
@@ -1174,6 +1191,7 @@ mod tests {
             },
             Arc::new(AtomicU32::new(1u32)),
             MockRuntime::register_metrics(Vec::new(), None),
+            1472,
         );
         mgr.schedule(Message {
             payload: vec![0u8; 1200 * 9 + 512],
@@ -1202,6 +1220,7 @@ mod tests {
             },
             Arc::new(AtomicU32::new(1u32)),
             MockRuntime::register_metrics(Vec::new(), None),
+            1472,
         );
         mgr.schedule(Message {
             payload: vec![0u8; 1200 * 9 + 512],
@@ -1231,6 +1250,7 @@ mod tests {
             },
             Arc::new(AtomicU32::new(1u32)),
             MockRuntime::register_metrics(Vec::new(), None),
+            1472,
         );
         mgr.schedule(Message {
             payload: vec![0u8; 1200 * 9 + 512],
@@ -1259,6 +1279,7 @@ mod tests {
             },
             Arc::new(AtomicU32::new(1u32)),
             MockRuntime::register_metrics(Vec::new(), None),
+            1472,
         );
         mgr.schedule(Message {
             payload: vec![0u8; 1200 * 9 + 512],
@@ -1287,6 +1308,7 @@ mod tests {
             },
             Arc::new(AtomicU32::new(1u32)),
             MockRuntime::register_metrics(Vec::new(), None),
+            1472,
         );
         mgr.schedule(Message {
             payload: vec![0u8; 1200 * 9 + 512],
@@ -1315,6 +1337,7 @@ mod tests {
             },
             Arc::new(AtomicU32::new(1u32)),
             MockRuntime::register_metrics(Vec::new(), None),
+            1472,
         );
         mgr.schedule(Message {
             payload: vec![0u8; 1200 * 9 + 512],
@@ -1340,6 +1363,7 @@ mod tests {
             },
             Arc::new(AtomicU32::new(1u32)),
             MockRuntime::register_metrics(Vec::new(), None),
+            1472,
         );
         mgr.schedule(Message {
             payload: vec![0u8; 1200 * 9 + 512],
@@ -1387,6 +1411,7 @@ mod tests {
             },
             Arc::new(AtomicU32::new(1u32)),
             MockRuntime::register_metrics(Vec::new(), None),
+            1472,
         );
         mgr.schedule(Message {
             payload: vec![0u8; 1200 * 8],
@@ -1478,6 +1503,7 @@ mod tests {
             },
             Arc::new(AtomicU32::new(1u32)),
             MockRuntime::register_metrics(Vec::new(), None),
+            1472,
         );
         mgr.schedule(Message {
             payload: vec![0u8; 1200 * 9 + 512],
@@ -1513,6 +1539,7 @@ mod tests {
             },
             Arc::new(AtomicU32::new(1u32)),
             MockRuntime::register_metrics(Vec::new(), None),
+            1472,
         );
         mgr.schedule(Message {
             payload: vec![0u8; 1200 * 15 + 512],
@@ -1589,6 +1616,7 @@ mod tests {
             },
             Arc::new(AtomicU32::new(1u32)),
             MockRuntime::register_metrics(Vec::new(), None),
+            1472,
         );
         mgr.schedule(Message {
             payload: vec![0u8; 1200 * 31 + 512],
@@ -1642,6 +1670,7 @@ mod tests {
             },
             Arc::new(AtomicU32::new(1u32)),
             MockRuntime::register_metrics(Vec::new(), None),
+            1472,
         );
         mgr.schedule(Message {
             payload: vec![0u8; 1200 * 39 + 512],
@@ -1698,6 +1727,7 @@ mod tests {
             },
             Arc::new(AtomicU32::new(1u32)),
             MockRuntime::register_metrics(Vec::new(), None),
+            1472,
         );
         mgr.schedule(Message {
             payload: vec![0u8; 1200 * 5],
@@ -1732,6 +1762,7 @@ mod tests {
             },
             Arc::new(AtomicU32::new(1u32)),
             MockRuntime::register_metrics(Vec::new(), None),
+            1200,
         );
 
         let block = PeerTestBlock::AliceRequest {

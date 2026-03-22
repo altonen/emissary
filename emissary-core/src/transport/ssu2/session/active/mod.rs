@@ -66,8 +66,6 @@ mod peer_test;
 mod relay;
 mod transmission;
 
-// TODO: move code from `TransmissionManager` into here?
-
 /// Logging target for the file.
 const LOG_TARGET: &str = "emissary::ssu2::active";
 
@@ -159,6 +157,9 @@ pub struct Ssu2SessionContext {
     ///
     /// Used for encrypting the first part of the header.
     pub intro_key: [u8; 32],
+
+    /// Maximum payload size.
+    pub max_payload_size: usize,
 
     /// RX channel for receiving inbound packets from [`Ssu2Socket`].
     pub pkt_rx: Receiver<Packet>,
@@ -293,7 +294,6 @@ impl<R: Runtime> Ssu2Session<R> {
             router_ctx,
             router_id: context.router_id.clone(),
             send_key_ctx: context.send_key_ctx.clone(),
-            socket,
             transmission: TransmissionManager::<R>::new(
                 context.dst_id,
                 context.router_id,
@@ -301,7 +301,9 @@ impl<R: Runtime> Ssu2Session<R> {
                 context.send_key_ctx,
                 pkt_num,
                 metrics,
+                context.max_payload_size,
             ),
+            socket,
             transport_tx,
             verifying_key: context.verifying_key,
             write_buffer: VecDeque::new(),
@@ -808,6 +810,7 @@ mod tests {
             address: recv_socket.local_address().unwrap(),
             dst_id: 1337u64,
             intro_key: [1u8; 32],
+            max_payload_size: 1472,
             pkt_rx: from_socket_rx,
             recv_key_ctx: KeyContext {
                 k_data: [2u8; 32],
@@ -976,6 +979,7 @@ mod tests {
             address: recv_socket.local_address().unwrap(),
             dst_id: 1337u64,
             intro_key: [1u8; 32],
+            max_payload_size: 1472,
             pkt_rx: from_socket_rx,
             recv_key_ctx: KeyContext {
                 k_data: [2u8; 32],

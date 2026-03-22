@@ -208,6 +208,7 @@ mod tests {
             address: "127.0.0.1:8888".parse().unwrap(),
             dst_id: 1337,
             intro_key: [0xaa; 32],
+            max_payload_size: 1472,
             pkt_rx,
             recv_key_ctx: KeyContext {
                 k_data: [0xbb; 32],

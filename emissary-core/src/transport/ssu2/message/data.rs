@@ -307,12 +307,11 @@ impl fmt::Debug for RelayBlock {
 }
 
 /// Data message
-#[derive(Default)]
 pub struct DataMessageBuilder<'a> {
     /// ACK information.
     acks: Option<(u32, u8, Option<&'a [(u8, u8)]>)>,
 
-    // Destination connection ID.
+    /// Destination connection ID.
     dst_id: Option<u64>,
 
     /// Should the immediate ACK bit be set.
@@ -324,6 +323,9 @@ pub struct DataMessageBuilder<'a> {
     /// Packet number and [`MessageKind`].
     message: Option<(u32, MessageKind<'a>)>,
 
+    /// Maximum payload size.
+    max_payload_size: usize,
+
     /// Packet number.
     ///
     /// Set only if `message` is `None`.
@@ -331,6 +333,21 @@ pub struct DataMessageBuilder<'a> {
 
     /// Termination reason.
     termination_reason: Option<TerminationReason>,
+}
+
+impl<'a> Default for DataMessageBuilder<'a> {
+    fn default() -> Self {
+        Self {
+            acks: None,
+            dst_id: None,
+            immediate_ack: false,
+            key_context: None,
+            message: None,
+            max_payload_size: 1472,
+            pkt_num: None,
+            termination_reason: None,
+        }
+    }
 }
 
 impl<'a> DataMessageBuilder<'a> {
@@ -349,6 +366,12 @@ impl<'a> DataMessageBuilder<'a> {
     /// Set immediate ACK in the header.
     pub fn with_immediate_ack(mut self) -> Self {
         self.immediate_ack = true;
+        self
+    }
+
+    /// Specify maximum payload size.
+    pub fn with_max_payload_size(mut self, max_payload_size: usize) -> Self {
+        self.max_payload_size = max_payload_size;
         self
     }
 
@@ -412,11 +435,10 @@ impl<'a> DataMessageBuilder<'a> {
 
         // build payload
         let mut payload = {
-            let mut bytes_left = if self.termination_reason.is_some() {
-                1300 - TERMINATION_BLOCK_MIN_SIZE // TODO: not correct
-            } else {
-                1300 // TODO: not correct
-            };
+            let mut bytes_left = self.max_payload_size - POLY13055_MAC_LEN - header.len();
+            if self.termination_reason.is_some() {
+                bytes_left -= TERMINATION_BLOCK_MIN_SIZE;
+            }
             let mut out = BytesMut::with_capacity(bytes_left);
 
             match message {
@@ -683,7 +705,7 @@ impl<'a> DataMessageBuilder<'a> {
         out.put_slice(&header);
         out.put_slice(&payload);
 
-        debug_assert!(out.len() < 1500 - 68);
+        debug_assert!(out.len() <= self.max_payload_size);
         out
     }
 }

@@ -160,19 +160,31 @@ impl TcpListener<MockTcpStream> for MockTcpListener {
 }
 
 #[derive(Clone)]
-pub struct MockUdpSocket(Arc<net::UdpSocket>);
+pub struct MockUdpSocket {
+    socket: Arc<net::UdpSocket>,
+    mtu: usize,
+}
 
 impl UdpSocket for MockUdpSocket {
     fn bind(address: SocketAddr) -> impl Future<Output = Option<Self>> {
-        async move { net::UdpSocket::bind(address).await.ok().map(|socket| Self(Arc::new(socket))) }
+        async move { Self::bind_with_mtu(address, 1500).await }
+    }
+
+    fn bind_with_mtu(address: SocketAddr, mtu: usize) -> impl Future<Output = Option<Self>> {
+        async move {
+            net::UdpSocket::bind(address).await.ok().map(|socket| Self {
+                socket: Arc::new(socket),
+                mtu,
+            })
+        }
     }
 
     fn send_to(&mut self, buf: &[u8], target: SocketAddr) -> impl Future<Output = Option<usize>> {
-        async move { self.0.send_to(buf, target).await.ok() }
+        async move { self.socket.send_to(buf, target).await.ok() }
     }
 
     fn recv_from(&mut self, buf: &mut [u8]) -> impl Future<Output = Option<(usize, SocketAddr)>> {
-        async move { self.0.recv_from(buf).await.ok() }
+        async move { self.socket.recv_from(buf).await.ok() }
     }
 
     fn poll_send_to(
@@ -181,7 +193,7 @@ impl UdpSocket for MockUdpSocket {
         buf: &[u8],
         target: SocketAddr,
     ) -> Poll<Option<usize>> {
-        Poll::Ready(futures::ready!(self.0.poll_send_to(cx, buf, target)).ok())
+        Poll::Ready(futures::ready!(self.socket.poll_send_to(cx, buf, target)).ok())
     }
 
     fn poll_recv_from(
@@ -191,7 +203,7 @@ impl UdpSocket for MockUdpSocket {
     ) -> Poll<Option<(usize, SocketAddr)>> {
         let mut buf = ReadBuf::new(buf);
 
-        match futures::ready!(self.0.poll_recv_from(cx, &mut buf)) {
+        match futures::ready!(self.socket.poll_recv_from(cx, &mut buf)) {
             Err(_) => return Poll::Ready(None),
             Ok(from) => {
                 let nread = buf.filled().len();
@@ -201,7 +213,11 @@ impl UdpSocket for MockUdpSocket {
     }
 
     fn local_address(&self) -> Option<SocketAddr> {
-        self.0.local_addr().ok()
+        self.socket.local_addr().ok()
+    }
+
+    fn mtu(&self) -> usize {
+        self.mtu
     }
 }
 

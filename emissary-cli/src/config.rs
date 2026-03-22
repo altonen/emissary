@@ -84,7 +84,13 @@ pub struct Ntcp2Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ssu2Config {
     pub port: u16,
-    pub host: Option<Ipv4Addr>,
+    pub ipv4: Option<bool>,
+    #[serde(alias = "host")]
+    pub ipv4_host: Option<Ipv4Addr>,
+    pub ipv4_mtu: Option<usize>,
+    pub ipv6: Option<bool>,
+    pub ipv6_host: Option<Ipv6Addr>,
+    pub ipv6_mtu: Option<usize>,
     pub publish: Option<bool>,
 }
 
@@ -625,7 +631,12 @@ impl Config {
             socks_proxy: config.socks_proxy,
             ssu2_config: config.ssu2.map(|config| emissary_core::Ssu2Config {
                 port: config.port,
-                host: config.host,
+                ipv4: config.ipv4.unwrap_or(true),
+                ipv4_host: config.ipv4_host,
+                ipv4_mtu: config.ipv4_mtu,
+                ipv6: config.ipv6.unwrap_or(true),
+                ipv6_host: config.ipv6_host,
+                ipv6_mtu: config.ipv6_mtu,
                 publish: config.publish.unwrap_or(false),
                 static_key: ssu2_static_key,
                 intro_key: ssu2_intro_key,

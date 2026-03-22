@@ -51,6 +51,7 @@ pub use {
 
 mod bloom;
 mod config;
+mod constants;
 mod destination;
 mod error;
 mod i2cp;

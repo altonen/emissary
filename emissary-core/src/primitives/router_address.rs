@@ -17,6 +17,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    constants,
     crypto::{base64_decode, base64_encode, StaticPrivateKey, StaticPublicKey},
     error::parser::RouterAddressParseError,
     primitives::{Date, Mapping, RouterId, Str},
@@ -29,7 +30,7 @@ use nom::{number::complete::be_u8, Err, IResult};
 use alloc::{format, string::ToString, vec::Vec};
 use core::{
     fmt,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, SocketAddr},
 };
 
 /// Maximum amount of introducers.
@@ -85,6 +86,9 @@ pub enum RouterAddress {
 
         /// Router cost.
         cost: u8,
+
+        /// MTU.
+        mtu: usize,
 
         /// SSU2 static key.
         ///
@@ -163,7 +167,12 @@ impl RouterAddress {
     }
 
     /// Create new unpublished SSU2 [`RouterAddress`].
-    pub fn new_unpublished_ssu2(static_key: [u8; 32], intro_key: [u8; 32], port: u16) -> Self {
+    pub fn new_unpublished_ssu2(
+        static_key: [u8; 32],
+        intro_key: [u8; 32],
+        address: SocketAddr,
+        mtu: usize,
+    ) -> Self {
         let static_key = StaticPrivateKey::from(static_key).public();
         let encoded_static_key = base64_encode(&static_key);
         let encoded_intro_key = base64_encode(intro_key);
@@ -172,24 +181,38 @@ impl RouterAddress {
         options.insert(Str::from("v"), Str::from("2"));
         options.insert(Str::from("s"), Str::from(encoded_static_key));
         options.insert(Str::from("i"), Str::from(encoded_intro_key));
-        options.insert(Str::from("caps"), Str::from("BC4"));
+
+        if address.is_ipv4() {
+            options.insert(Str::from("caps"), Str::from("4"));
+        } else {
+            options.insert(Str::from("caps"), Str::from("6"));
+        }
+
+        if mtu != constants::ssu2::MAX_MTU {
+            options.insert(Str::from("mtu"), Str::from(mtu.to_string()));
+        }
 
         Self::Ssu2 {
             cost: 14,
             intro_key,
+            mtu,
             static_key,
-            socket_address: Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)),
+            socket_address: Some(address),
             introducers: Vec::new(),
             options,
         }
     }
 
     /// Create new unpublished SSU2 [`RouterAddress`].
+    ///
+    /// `address` is the address the NTCP2 listener is bound to.
+    /// `host` is the external address other routers should use.
     pub fn new_published_ssu2(
         static_key: [u8; 32],
         intro_key: [u8; 32],
-        port: u16,
-        host: Ipv4Addr,
+        host: IpAddr,
+        address: SocketAddr,
+        mtu: usize,
     ) -> Self {
         let static_key = StaticPrivateKey::from(static_key).public();
         let encoded_static_key = base64_encode(&static_key);
@@ -200,16 +223,26 @@ impl RouterAddress {
         options.insert(Str::from("s"), Str::from(encoded_static_key));
         options.insert(Str::from("i"), Str::from(encoded_intro_key));
         options.insert(Str::from("host"), Str::from(host.to_string()));
-        options.insert(Str::from("port"), Str::from(port.to_string()));
-        options.insert(Str::from("caps"), Str::from("BC4"));
+        options.insert(Str::from("port"), Str::from(address.port().to_string()));
+
+        if mtu != constants::ssu2::MAX_MTU {
+            options.insert(Str::from("mtu"), Str::from(mtu.to_string()));
+        }
+
+        if address.is_ipv4() {
+            options.insert(Str::from("caps"), Str::from("BC4"));
+        } else {
+            options.insert(Str::from("caps"), Str::from("BC6"));
+        }
 
         Self::Ssu2 {
             cost: 8,
             static_key,
             intro_key,
+            mtu,
             options,
             introducers: Vec::new(),
-            socket_address: Some(SocketAddr::new(IpAddr::V4(host), port)),
+            socket_address: Some(address),
         }
     }
 
@@ -376,12 +409,25 @@ impl RouterAddress {
                     Vec::new()
                 };
 
+                // get the MTU of remote router
+                //
+                // address is discarded if the mtu is invalid
+                let mtu = match options.get(&Str::from("mtu")) {
+                    None => constants::ssu2::MAX_MTU,
+                    Some(value) => value
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(|mtu| (mtu >= constants::ssu2::MIN_MTU).then_some(mtu))
+                        .ok_or(Err::Error(RouterAddressParseError::InvalidMtu))?,
+                };
+
                 Ok((
                     rest,
                     Self::Ssu2 {
                         cost,
                         introducers,
                         intro_key,
+                        mtu: mtu.min(constants::ssu2::MAX_MTU),
                         options,
                         socket_address,
                         static_key,
@@ -532,7 +578,10 @@ impl RouterAddress {
 mod tests {
     use super::*;
     use crate::runtime::mock::MockRuntime;
-    use std::time::Duration;
+    use std::{
+        net::{Ipv4Addr, Ipv6Addr},
+        time::Duration,
+    };
 
     #[test]
     fn serialize_deserialize_unpublished_ntcp2() {
@@ -607,9 +656,53 @@ mod tests {
     }
 
     #[test]
+    fn serialize_deserialize_published_ntcp2_ipv6() {
+        let serialized = RouterAddress::new_published_ntcp2(
+            [1u8; 32],
+            [0xaa; 16],
+            "::1".parse().unwrap(),
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 8888),
+        )
+        .serialize();
+        let static_key = StaticPrivateKey::from([1u8; 32]).public();
+
+        match RouterAddress::parse::<MockRuntime>(&serialized).unwrap() {
+            RouterAddress::Ntcp2 {
+                cost,
+                options,
+                static_key: s,
+                iv,
+                socket_address,
+            } => {
+                assert_eq!(cost, 3);
+                assert_eq!(s.to_vec(), static_key.to_vec());
+                assert_eq!(iv, Some([0xaa; 16]));
+                assert_eq!(socket_address, Some("[::1]:8888".parse().unwrap()));
+                assert_eq!(
+                    options.get(&Str::from("i")),
+                    Some(&Str::from(base64_encode(&[0xaa; 16])))
+                );
+                assert_eq!(
+                    options.get(&Str::from("s")),
+                    Some(&Str::from(base64_encode(&static_key)))
+                );
+                assert_eq!(options.get(&Str::from("v")), Some(&Str::from("2")));
+                assert_eq!(options.get(&Str::from("host")), Some(&Str::from("::1")));
+                assert_eq!(options.get(&Str::from("port")), Some(&Str::from("8888")));
+            }
+            _ => panic!("invalid ntp2 address"),
+        }
+    }
+
+    #[test]
     fn serialize_deserialize_unpublished_ssu2() {
-        let serialized =
-            RouterAddress::new_unpublished_ssu2([1u8; 32], [2u8; 32], 8888).serialize();
+        let serialized = RouterAddress::new_unpublished_ssu2(
+            [1u8; 32],
+            [2u8; 32],
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+            1500,
+        )
+        .serialize();
         let static_key = StaticPrivateKey::from([1u8; 32]).public();
         let intro_key = [2u8; 32];
 
@@ -645,8 +738,9 @@ mod tests {
         let serialized = RouterAddress::new_published_ssu2(
             [1u8; 32],
             [2u8; 32],
-            8888,
             "127.0.0.1".parse().unwrap(),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+            1500,
         )
         .serialize();
         let static_key = StaticPrivateKey::from([1u8; 32]).public();
@@ -678,6 +772,48 @@ mod tests {
                     options.get(&Str::from("host")),
                     Some(&Str::from("127.0.0.1"))
                 );
+                assert_eq!(options.get(&Str::from("port")), Some(&Str::from("8888")));
+            }
+            _ => panic!("invalid ssu2 address"),
+        }
+    }
+
+    #[test]
+    fn serialize_deserialize_published_ssu2_ipv6() {
+        let serialized = RouterAddress::new_published_ssu2(
+            [1u8; 32],
+            [2u8; 32],
+            "::1".parse().unwrap(),
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 8888),
+            1500,
+        )
+        .serialize();
+        let static_key = StaticPrivateKey::from([1u8; 32]).public();
+        let intro_key = [2u8; 32];
+
+        match RouterAddress::parse::<MockRuntime>(&serialized).unwrap() {
+            RouterAddress::Ssu2 {
+                cost,
+                static_key: s,
+                intro_key: i,
+                options,
+                socket_address,
+                ..
+            } => {
+                assert_eq!(cost, 8);
+                assert_eq!(s.to_vec(), static_key.to_vec());
+                assert_eq!(i, intro_key);
+                assert_eq!(socket_address, Some("[::1]:8888".parse().unwrap()));
+                assert_eq!(
+                    options.get(&Str::from("s")),
+                    Some(&Str::from(base64_encode(&static_key)))
+                );
+                assert_eq!(
+                    options.get(&Str::from("i")),
+                    Some(&Str::from(base64_encode(&intro_key)))
+                );
+                assert_eq!(options.get(&Str::from("v")), Some(&Str::from("2")));
+                assert_eq!(options.get(&Str::from("host")), Some(&Str::from("::1")));
                 assert_eq!(options.get(&Str::from("port")), Some(&Str::from("8888")));
             }
             _ => panic!("invalid ssu2 address"),
@@ -728,7 +864,12 @@ mod tests {
 
     #[test]
     fn ssu2_static_key_missing() {
-        let mut address = RouterAddress::new_unpublished_ssu2([0xaa; 32], [0xbb; 32], 8888);
+        let mut address = RouterAddress::new_unpublished_ssu2(
+            [0xaa; 32],
+            [0xbb; 32],
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+            1500,
+        );
         match address {
             RouterAddress::Ssu2 {
                 ref mut options, ..
@@ -746,7 +887,12 @@ mod tests {
 
     #[test]
     fn ssu2_intro_key_missing() {
-        let mut address = RouterAddress::new_unpublished_ssu2([0xaa; 32], [0xbb; 32], 8888);
+        let mut address = RouterAddress::new_unpublished_ssu2(
+            [0xaa; 32],
+            [0xbb; 32],
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+            1500,
+        );
         match address {
             RouterAddress::Ssu2 {
                 ref mut options, ..
@@ -764,7 +910,12 @@ mod tests {
 
     #[test]
     fn invalid_ssu2_static_key() {
-        let mut address = RouterAddress::new_unpublished_ssu2([0xaa; 32], [0xbb; 32], 8888);
+        let mut address = RouterAddress::new_unpublished_ssu2(
+            [0xaa; 32],
+            [0xbb; 32],
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+            1500,
+        );
         match address {
             RouterAddress::Ssu2 {
                 ref mut options, ..
@@ -782,7 +933,12 @@ mod tests {
 
     #[test]
     fn invalid_ssu2_intro_key() {
-        let mut address = RouterAddress::new_unpublished_ssu2([0xaa; 32], [0xbb; 32], 8888);
+        let mut address = RouterAddress::new_unpublished_ssu2(
+            [0xaa; 32],
+            [0xbb; 32],
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+            1500,
+        );
         match address {
             RouterAddress::Ssu2 {
                 ref mut options, ..
@@ -800,7 +956,12 @@ mod tests {
 
     #[test]
     fn introducers_parsed() {
-        let mut address = RouterAddress::new_unpublished_ssu2([0xaa; 32], [0xbb; 32], 8888);
+        let mut address = RouterAddress::new_unpublished_ssu2(
+            [0xaa; 32],
+            [0xbb; 32],
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+            1500,
+        );
         let router_id = RouterId::random();
 
         match address {
@@ -835,8 +996,9 @@ mod tests {
         let mut address = RouterAddress::new_published_ssu2(
             [0xaa; 32],
             [0xbb; 32],
-            8888,
             "127.0.0.1".parse().unwrap(),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+            1500,
         );
         let router_id = RouterId::random();
 
@@ -864,7 +1026,12 @@ mod tests {
 
     #[test]
     fn stale_introducers_ignored() {
-        let mut address = RouterAddress::new_unpublished_ssu2([0xaa; 32], [0xbb; 32], 8888);
+        let mut address = RouterAddress::new_unpublished_ssu2(
+            [0xaa; 32],
+            [0xbb; 32],
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+            1500,
+        );
         let router_id1 = RouterId::random();
         let router_id2 = RouterId::random();
 
@@ -952,6 +1119,7 @@ mod tests {
             RouterAddress::Ssu2 {
                 introducers: Vec::new(),
                 cost: 8,
+                mtu: 1500,
                 static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
                 intro_key: [0xaa; 32],
                 options: Mapping::default(),
@@ -966,6 +1134,7 @@ mod tests {
             RouterAddress::Ssu2 {
                 introducers: Vec::new(),
                 cost: 8,
+                mtu: 1500,
                 static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
                 intro_key: [0xaa; 32],
                 options: Mapping::default(),
@@ -980,6 +1149,7 @@ mod tests {
             RouterAddress::Ssu2 {
                 introducers: Vec::new(),
                 cost: 8,
+                mtu: 1500,
                 static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
                 intro_key: [0xaa; 32],
                 options: Mapping::from_iter([(Str::from("caps"), Str::from("4"))]),
@@ -994,6 +1164,7 @@ mod tests {
             RouterAddress::Ssu2 {
                 introducers: Vec::new(),
                 cost: 8,
+                mtu: 1500,
                 static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
                 intro_key: [0xaa; 32],
                 options: Mapping::from_iter([(Str::from("caps"), Str::from("6"))]),
@@ -1008,6 +1179,7 @@ mod tests {
             RouterAddress::Ssu2 {
                 introducers: Vec::new(),
                 cost: 8,
+                mtu: 1500,
                 static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
                 intro_key: [0xaa; 32],
                 options: Mapping::default(),
@@ -1016,5 +1188,127 @@ mod tests {
             .classify(),
             None,
         );
+    }
+
+    #[test]
+    fn standard_mtu_not_published() {
+        // published
+        {
+            let address = RouterAddress::new_published_ssu2(
+                [0xaa; 32],
+                [0xbb; 32],
+                "127.0.0.1".parse().unwrap(),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+                1500,
+            );
+
+            match address {
+                RouterAddress::Ssu2 { options, .. } => {
+                    assert!(options.get(&Str::from("mtu")).is_none());
+                }
+                _ => panic!("invalid ssu2 address"),
+            }
+        }
+
+        // unpublished
+        {
+            let address = RouterAddress::new_unpublished_ssu2(
+                [0xaa; 32],
+                [0xbb; 32],
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+                1500,
+            );
+
+            match address {
+                RouterAddress::Ssu2 { options, .. } => {
+                    assert!(options.get(&Str::from("mtu")).is_none());
+                }
+                _ => panic!("invalid ssu2 address"),
+            }
+        }
+    }
+
+    #[test]
+    fn non_standard_mtu_published() {
+        // published
+        {
+            let address = RouterAddress::new_published_ssu2(
+                [0xaa; 32],
+                [0xbb; 32],
+                "127.0.0.1".parse().unwrap(),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+                1300,
+            );
+
+            match address {
+                RouterAddress::Ssu2 { options, .. } => {
+                    assert_eq!(options.get(&Str::from("mtu")), Some(&Str::from("1300")));
+                }
+                _ => panic!("invalid ssu2 address"),
+            }
+        }
+
+        // unpublished
+        {
+            let address = RouterAddress::new_unpublished_ssu2(
+                [0xaa; 32],
+                [0xbb; 32],
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+                1300,
+            );
+
+            match address {
+                RouterAddress::Ssu2 { options, .. } => {
+                    assert_eq!(options.get(&Str::from("mtu")), Some(&Str::from("1300")));
+                }
+                _ => panic!("invalid ssu2 address"),
+            }
+        }
+    }
+
+    #[test]
+    fn ssu2_invalid_mtu() {
+        let mut address = RouterAddress::new_unpublished_ssu2(
+            [0xaa; 32],
+            [0xbb; 32],
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+            1500,
+        );
+        match address {
+            RouterAddress::Ssu2 {
+                ref mut options, ..
+            } => {
+                options.insert(Str::from("mtu"), Str::from("1024"));
+            }
+            _ => panic!("invalid ssu2 address"),
+        }
+
+        assert_eq!(
+            RouterAddress::parse::<MockRuntime>(&address.serialize()).unwrap_err(),
+            RouterAddressParseError::InvalidMtu
+        );
+    }
+
+    #[test]
+    fn ssu2_mtu_clamped() {
+        let mut address = RouterAddress::new_unpublished_ssu2(
+            [0xaa; 32],
+            [0xbb; 32],
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+            1500,
+        );
+        match address {
+            RouterAddress::Ssu2 {
+                ref mut options, ..
+            } => {
+                options.insert(Str::from("mtu"), Str::from("5555"));
+            }
+            _ => panic!("invalid ssu2 address"),
+        }
+
+        match RouterAddress::parse::<MockRuntime>(&address.serialize()).unwrap() {
+            RouterAddress::Ssu2 { mtu, .. } => assert_eq!(mtu, constants::ssu2::MAX_MTU),
+            _ => panic!("invalid address"),
+        }
     }
 }

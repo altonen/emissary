@@ -18,6 +18,7 @@
 
 use crate::{
     config::Ssu2Config,
+    constants::ssu2,
     crypto::StaticPrivateKey,
     error::{ConnectionError, Error},
     primitives::{RouterAddress, RouterId, RouterInfo, TransportKind},
@@ -28,14 +29,14 @@ use crate::{
 };
 
 use futures::{Stream, StreamExt};
+use thingbuf::mpsc::Sender;
 
-use alloc::{format, vec::Vec};
+use alloc::{format, vec, vec::Vec};
 use core::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     pin::Pin,
     task::{Context, Poll},
 };
-use thingbuf::mpsc::Sender;
 
 mod detector;
 mod duplicate;
@@ -76,28 +77,46 @@ pub struct Ssu2Context<R: Runtime> {
     /// SSU configuration.
     config: Ssu2Config,
 
-    /// UDP socket.
-    socket: R::UdpSocket,
-
-    /// Socket address.
-    socket_address: SocketAddr,
-
     /// Force router to be firewalled.
     firewalled: bool,
+
+    /// IPv4 MTU.
+    ipv4_mtu: Option<usize>,
+
+    /// IPv4 UDP socket.
+    ipv4_socket: Option<R::UdpSocket>,
+
+    /// IPv4 socket address.
+    ipv4_socket_address: Option<SocketAddr>,
+
+    /// IPv6 MTU.
+    ipv6_mtu: Option<usize>,
+
+    /// IPv6 UDP socket.
+    ipv6_socket: Option<R::UdpSocket>,
+
+    /// IPV6 socket address.
+    ipv6_socket_address: Option<SocketAddr>,
 }
 
 impl<R: Runtime> Ssu2Context<R> {
     /// Get the port where [`Ssu2Socket`] is bound to.
     pub fn port(&self) -> u16 {
-        self.socket_address.port()
+        self.ipv4_socket_address
+            .as_ref()
+            .or(self.ipv6_socket_address.as_ref())
+            .map(SocketAddr::port)
+            .expect("socket address to exist")
     }
 
-    /// Classify `Ssu2Socket` into a `TransportKind`.
-    pub fn classify(&self) -> TransportKind {
-        match self.socket_address.ip() {
-            IpAddr::V4(_) => TransportKind::Ssu2V4,
-            IpAddr::V6(_) => TransportKind::Ssu2V6,
-        }
+    /// Classify `Ssu2Socket` into zero or more `TransportKind`s.
+    pub fn classify(&self) -> impl Iterator<Item = TransportKind> {
+        vec![
+            self.ipv4_socket.is_some().then_some(TransportKind::Ssu2V4),
+            self.ipv6_socket.is_some().then_some(TransportKind::Ssu2V6),
+        ]
+        .into_iter()
+        .flatten()
     }
 
     /// Get copy of [`Ssu2Config`].
@@ -121,22 +140,32 @@ impl<R: Runtime> Ssu2Transport<R> {
         transport_tx: Sender<SubsystemEvent>,
     ) -> Self {
         let Ssu2Context {
-            socket_address,
-            socket,
             config,
             firewalled,
+            ipv4_mtu,
+            ipv4_socket,
+            ipv4_socket_address,
+            ipv6_mtu,
+            ipv6_socket,
+            ipv6_socket_address,
         } = context;
 
         tracing::info!(
             target: LOG_TARGET,
-            listen_address = ?socket_address,
+            ipv4_address = ?ipv4_socket_address,
+            ipv4_mtu = ?ipv4_mtu,
+            ipv6_address = ?ipv6_socket_address,
+            ipv6_mtu = ?ipv6_mtu,
             ?allow_local,
             "starting ssu2",
         );
 
         Self {
             socket: Ssu2Socket::<R>::new(
-                socket,
+                ipv4_socket,
+                ipv4_mtu,
+                ipv6_socket,
+                ipv6_mtu,
                 StaticPrivateKey::from(config.static_key),
                 config.intro_key,
                 transport_tx,
@@ -151,53 +180,81 @@ impl<R: Runtime> Ssu2Transport<R> {
         metrics::register_metrics(metrics)
     }
 
-    /// Initialize [`SsU2Transport`].
-    ///
-    /// If SSU2 has been enabled, create a router address using the configuration that was provided
-    /// and bind a UDP socket to the port that was specified.
-    ///
-    /// Returns a [`RouterAddress`] of the transport and an [`SsU2Context`] that needs to be passed
-    /// to [`SsU2Transport::new()`] when constructing the transport.
-    pub async fn initialize(
-        config: Option<Ssu2Config>,
-    ) -> crate::Result<(Option<Ssu2Context<R>>, Option<RouterAddress>)> {
-        let Some(config) = config else {
-            return Ok((None, None));
+    /// Configure socket.
+    async fn configure_socket(
+        config: &Ssu2Config,
+        ipv4: bool,
+        host: Option<IpAddr>,
+        mtu: Option<usize>,
+    ) -> crate::Result<(
+        Option<R::UdpSocket>,
+        Option<SocketAddr>,
+        Option<RouterAddress>,
+    )> {
+        if (ipv4 && !config.ipv4) || (!ipv4 && !config.ipv6) {
+            return Ok((None, None, None));
+        }
+
+        let address = if ipv4 {
+            format!("0.0.0.0:{}", config.port).parse::<SocketAddr>().expect("to succeed")
+        } else {
+            format!("[::]:{}", config.port).parse::<SocketAddr>().expect("to succeed")
         };
 
-        tracing::warn!(
-            target: LOG_TARGET,
-            "ssu2 support is experimental and not recommend for general use",
-        );
-
-        let socket =
-            R::UdpSocket::bind(format!("0.0.0.0:{}", config.port).parse().expect("to succeed"))
-                .await
-                .ok_or_else(|| {
-                    tracing::warn!(
+        let socket = match mtu {
+            None => R::UdpSocket::bind(address).await,
+            Some(mut mtu) => {
+                if mtu > ssu2::MAX_MTU {
+                    tracing::info!(
                         target: LOG_TARGET,
-                        port = %config.port,
-                        "ssu2 port in use, select another port for the transport",
+                        ?mtu,
+                        "clamping configured mtu to maximum mtu ({})",
+                        ssu2::MAX_MTU,
                     );
+                    mtu = ssu2::MAX_MTU;
+                }
 
-                    Error::Connection(ConnectionError::BindFailure)
-                })?;
-
-        let socket_address = socket.local_address().ok_or_else(|| {
+                R::UdpSocket::bind_with_mtu(address, mtu).await
+            }
+        }
+        .ok_or_else(|| {
             tracing::warn!(
                 target: LOG_TARGET,
-                "failed to get local address of the ssu2 listener",
+                port = %config.port,
+                "ssu2 port in use, select another port for the transport",
             );
 
             Error::Connection(ConnectionError::BindFailure)
         })?;
 
-        let address = match (config.publish, config.host) {
+        let mtu = socket.mtu();
+        if socket.mtu() < ssu2::MIN_MTU {
+            tracing::error!(
+                target: LOG_TARGET,
+                ?mtu,
+                "mtu size is smaller than minimum mtu ({}), unable to start ssu2 for {}",
+                ssu2::MIN_MTU,
+                if ipv4 { "ipv4" } else { "ipv6" },
+            );
+            return Ok((None, None, None));
+        }
+
+        let socket_address = socket.local_address().ok_or_else(|| {
+            tracing::warn!(
+                target: LOG_TARGET,
+                "failed to get local address of the ipv4 ssu2 listener",
+            );
+
+            Error::Connection(ConnectionError::BindFailure)
+        })?;
+
+        let address = match (config.publish, host) {
             (true, Some(host)) => RouterAddress::new_published_ssu2(
                 config.static_key,
                 config.intro_key,
-                socket_address.port(),
                 host,
+                socket_address,
+                mtu,
             ),
             (true, None) => {
                 tracing::debug!(
@@ -207,24 +264,81 @@ impl<R: Runtime> Ssu2Transport<R> {
                 RouterAddress::new_unpublished_ssu2(
                     config.static_key,
                     config.intro_key,
-                    socket_address.port(),
+                    socket_address,
+                    mtu,
                 )
             }
             (_, _) => RouterAddress::new_unpublished_ssu2(
                 config.static_key,
                 config.intro_key,
-                socket_address.port(),
+                socket_address,
+                mtu,
             ),
         };
+
+        Ok((Some(socket), Some(socket_address), Some(address)))
+    }
+
+    /// Initialize `Ssu2Transport`.
+    ///
+    /// If SSU2 has been enabled, create router address(es) using the configuration that was
+    /// provided and bind UDP socket(s) to the port specified in the config.
+    ///
+    /// `Ssu2Transport` can be run as IPv4-only, IPv6-only or with IPv4 and IPv6 enabled.
+    ///
+    /// Returns `RouterAddress`(es) of the transport and an `Ssu22Context` that needs to be passed
+    /// to `Ssu22Transport::new()` when constructing the transport.
+    pub async fn initialize(
+        config: Option<Ssu2Config>,
+    ) -> crate::Result<(
+        Option<Ssu2Context<R>>,
+        Option<RouterAddress>,
+        Option<RouterAddress>,
+    )> {
+        let Some(config) = config else {
+            return Ok((None, None, None));
+        };
+
+        tracing::warn!(
+            target: LOG_TARGET,
+            "ssu2 support is experimental and not recommend for general use",
+        );
+
+        // create ipv4 address if it was enabled
+        let (ipv4_socket, ipv4_socket_address, ipv4_address) = Self::configure_socket(
+            &config,
+            true,
+            config.ipv4_host.map(IpAddr::V4),
+            config.ipv4_mtu,
+        )
+        .await?;
+
+        // create ipv6 address if it was enabled
+        let (ipv6_socket, ipv6_socket_address, ipv6_address) = Self::configure_socket(
+            &config,
+            false,
+            config.ipv6_host.map(IpAddr::V6),
+            config.ipv6_mtu,
+        )
+        .await?;
+
+        if ipv6_socket.is_none() && ipv4_socket.is_none() {
+            return Ok((None, None, None));
+        }
 
         Ok((
             Some(Ssu2Context {
                 config,
-                socket,
-                socket_address,
+                ipv4_socket_address,
+                ipv4_mtu: ipv4_socket.as_ref().map(|socket| socket.mtu()),
+                ipv4_socket,
+                ipv6_socket_address,
+                ipv6_mtu: ipv6_socket.as_ref().map(|socket| socket.mtu()),
+                ipv6_socket,
                 firewalled: false,
             }),
-            Some(address),
+            ipv4_address,
+            ipv6_address,
         ))
     }
 }
@@ -270,27 +384,48 @@ mod tests {
     use thingbuf::mpsc::channel;
 
     #[tokio::test]
-    async fn connect_ssu2() {
+    async fn connect_ssu2_ipv4() {
+        connect_ssu2(true).await
+    }
+
+    #[tokio::test]
+    async fn connect_ssu2_ipv6() {
+        connect_ssu2(false).await
+    }
+
+    async fn connect_ssu2(ipv4: bool) {
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
-        let (ctx1, address1) = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
-            port: 0u16,
-            host: Some("127.0.0.1".parse().unwrap()),
-            publish: true,
-            static_key: [0xaa; 32],
-            intro_key: [0xbb; 32],
-        }))
-        .await
-        .unwrap();
-        let (ctx2, address2) = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
-            port: 0u16,
-            host: Some("127.0.0.1".parse().unwrap()),
-            publish: true,
-            static_key: [0xcc; 32],
-            intro_key: [0xdd; 32],
-        }))
-        .await
-        .unwrap();
+        let (ctx1, address1_ipv4, address1_ipv6) =
+            Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                port: 0u16,
+                ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
+                ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
+                ipv4,
+                ipv6: !ipv4,
+                publish: true,
+                static_key: [0xaa; 32],
+                intro_key: [0xbb; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
+            }))
+            .await
+            .unwrap();
+        let (ctx2, address2_ipv4, address2_ipv6) =
+            Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                port: 0u16,
+                ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
+                ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
+                ipv4,
+                ipv6: !ipv4,
+                publish: true,
+                static_key: [0xcc; 32],
+                intro_key: [0xdd; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
+            }))
+            .await
+            .unwrap();
 
         let (static1, signing1) = (
             StaticPrivateKey::random(MockRuntime::rng()),
@@ -304,7 +439,8 @@ mod tests {
             &Default::default(),
             None,
             None,
-            address1,
+            address1_ipv4,
+            address1_ipv6,
             &static1,
             &signing1,
             false,
@@ -313,7 +449,8 @@ mod tests {
             &Default::default(),
             None,
             None,
-            address2,
+            address2_ipv4,
+            address2_ipv6,
             &static2,
             &signing2,
             false,
@@ -330,7 +467,7 @@ mod tests {
                 router_info1.identity.id(),
                 Bytes::from(router_info1.serialize(&signing1)),
                 static1,
-                signing1,
+                signing1.clone(),
                 2u8,
                 event_handle.clone(),
             ),
@@ -345,17 +482,24 @@ mod tests {
                 router_info2.identity.id(),
                 Bytes::from(router_info2.serialize(&signing2)),
                 static2,
-                signing2,
+                signing2.clone(),
                 2u8,
                 event_handle.clone(),
             ),
             event2_tx,
         );
+        let router_info2 =
+            RouterInfo::parse::<MockRuntime>(router_info2.serialize(&signing2)).unwrap();
+
         tokio::spawn(async move {
             loop {
                 match transport2.next().await.unwrap() {
-                    TransportEvent::ConnectionEstablished { router_id, .. } =>
-                        transport2.accept(&router_id),
+                    TransportEvent::ConnectionEstablished {
+                        router_id, address, ..
+                    } => {
+                        assert_eq!(address.is_ipv4(), ipv4);
+                        transport2.accept(&router_id);
+                    }
                     _ => {}
                 }
             }
@@ -365,7 +509,10 @@ mod tests {
         let future = async move {
             loop {
                 match transport1.next().await.unwrap() {
-                    TransportEvent::ConnectionEstablished { router_id, .. } => {
+                    TransportEvent::ConnectionEstablished {
+                        router_id, address, ..
+                    } => {
+                        assert_eq!(address.is_ipv4(), ipv4);
                         transport1.accept(&router_id);
                         break;
                     }
@@ -381,27 +528,48 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn connect_ssu2_wrong_network() {
+    async fn connect_ssu2_wrong_network_ipv4() {
+        connect_ssu2_wrong_network(true).await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn connect_ssu2_wrong_network_ipv6() {
+        connect_ssu2_wrong_network(false).await
+    }
+
+    async fn connect_ssu2_wrong_network(ipv4: bool) {
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
-        let (ctx1, address1) = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
-            port: 0u16,
-            host: Some("127.0.0.1".parse().unwrap()),
-            publish: true,
-            static_key: [0xaa; 32],
-            intro_key: [0xbb; 32],
-        }))
-        .await
-        .unwrap();
-        let (ctx2, address2) = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
-            port: 0u16,
-            host: Some("127.0.0.1".parse().unwrap()),
-            publish: true,
-            static_key: [0xcc; 32],
-            intro_key: [0xdd; 32],
-        }))
-        .await
-        .unwrap();
+        let (ctx1, address1_ipv4, address1_ipv6) =
+            Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                port: 0u16,
+                ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
+                ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
+                ipv4,
+                ipv6: !ipv4,
+                publish: true,
+                static_key: [0xaa; 32],
+                intro_key: [0xbb; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
+            }))
+            .await
+            .unwrap();
+        let (ctx2, address2_ipv4, address2_ipv6) =
+            Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                port: 0u16,
+                ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                ipv6_host: None,
+                ipv4,
+                ipv6: !ipv4,
+                publish: true,
+                static_key: [0xcc; 32],
+                intro_key: [0xdd; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
+            }))
+            .await
+            .unwrap();
 
         let (static1, signing1) = (
             StaticPrivateKey::random(MockRuntime::rng()),
@@ -415,7 +583,8 @@ mod tests {
             &Default::default(),
             None,
             None,
-            address1,
+            address1_ipv4,
+            address1_ipv6,
             &static1,
             &signing1,
             false,
@@ -424,7 +593,8 @@ mod tests {
             &Default::default(),
             None,
             None,
-            address2,
+            address2_ipv4,
+            address2_ipv6,
             &static2,
             &signing2,
             false,
@@ -481,36 +651,63 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn peer_test_works() {
+    async fn peer_test_works_ipv4() {
+        peer_test_works(true).await;
+    }
+
+    #[tokio::test]
+    async fn peer_test_works_ipv6() {
+        peer_test_works(false).await;
+    }
+
+    async fn peer_test_works(ipv4: bool) {
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
-        let (ctx1, address1) = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
-            port: 0u16,
-            host: Some("127.0.0.1".parse().unwrap()),
-            publish: true,
-            static_key: [0xaa; 32],
-            intro_key: [0xbb; 32],
-        }))
-        .await
-        .unwrap();
-        let (ctx2, address2) = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
-            port: 0u16,
-            host: Some("127.0.0.1".parse().unwrap()),
-            publish: true,
-            static_key: [0xcc; 32],
-            intro_key: [0xdd; 32],
-        }))
-        .await
-        .unwrap();
-        let (ctx3, address3) = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
-            port: 0u16,
-            host: Some("127.0.0.1".parse().unwrap()),
-            publish: true,
-            static_key: [0xee; 32],
-            intro_key: [0xff; 32],
-        }))
-        .await
-        .unwrap();
+        let (ctx1, address1_ipv4, address1_ipv6) =
+            Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                port: 0u16,
+                ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
+                ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
+                ipv4,
+                ipv6: !ipv4,
+                publish: true,
+                static_key: [0xaa; 32],
+                intro_key: [0xbb; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
+            }))
+            .await
+            .unwrap();
+        let (ctx2, address2_ipv4, address2_ipv6) =
+            Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                port: 0u16,
+                ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
+                ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
+                ipv4,
+                ipv6: !ipv4,
+                publish: true,
+                static_key: [0xcc; 32],
+                intro_key: [0xdd; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
+            }))
+            .await
+            .unwrap();
+        let (ctx3, address3_ipv4, address3_ipv6) =
+            Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                port: 0u16,
+                ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
+                ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
+                ipv4,
+                ipv6: !ipv4,
+                publish: true,
+                static_key: [0xee; 32],
+                intro_key: [0xff; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
+            }))
+            .await
+            .unwrap();
 
         let (static1, signing1) = (
             StaticPrivateKey::random(MockRuntime::rng()),
@@ -528,7 +725,8 @@ mod tests {
             &Default::default(),
             None,
             None,
-            address1.clone(),
+            address1_ipv4,
+            address1_ipv6,
             &static1,
             &signing1,
             false,
@@ -537,7 +735,8 @@ mod tests {
             &Default::default(),
             None,
             None,
-            address2.clone(),
+            address2_ipv4,
+            address2_ipv6,
             &static2,
             &signing2,
             false,
@@ -546,7 +745,8 @@ mod tests {
             &Default::default(),
             None,
             None,
-            address3.clone(),
+            address3_ipv4,
+            address3_ipv6,
             &static3,
             &signing3,
             false,
@@ -605,7 +805,7 @@ mod tests {
                 router_info2.identity.id(),
                 Bytes::from(router_info2.serialize(&signing2)),
                 static2,
-                signing2,
+                signing2.clone(),
                 5u8,
                 event_handle.clone(),
             ),
@@ -626,12 +826,17 @@ mod tests {
             ),
             event3_tx,
         );
+        let router_info2 =
+            RouterInfo::parse::<MockRuntime>(router_info2.serialize(&signing2)).unwrap();
 
         // spawn the first router in the background
         tokio::spawn(async move {
             while let Some(event) = transport2.next().await {
                 match event {
-                    TransportEvent::ConnectionEstablished { router_id, .. } => {
+                    TransportEvent::ConnectionEstablished {
+                        router_id, address, ..
+                    } => {
+                        assert_eq!(address.is_ipv4(), ipv4);
                         transport2.accept(&router_id);
                     }
                     _ => {}
@@ -644,7 +849,10 @@ mod tests {
         let future = async {
             loop {
                 match transport1.next().await.unwrap() {
-                    TransportEvent::ConnectionEstablished { router_id, .. } => {
+                    TransportEvent::ConnectionEstablished {
+                        router_id, address, ..
+                    } => {
+                        assert_eq!(address.is_ipv4(), ipv4);
                         transport1.accept(&router_id);
                         break;
                     }
@@ -662,7 +870,10 @@ mod tests {
         tokio::spawn(async move {
             while let Some(event) = transport1.next().await {
                 match event {
-                    TransportEvent::ConnectionEstablished { router_id, .. } => {
+                    TransportEvent::ConnectionEstablished {
+                        router_id, address, ..
+                    } => {
+                        assert_eq!(address.is_ipv4(), ipv4);
                         transport1.accept(&router_id);
                     }
                     _ => {}
@@ -675,7 +886,10 @@ mod tests {
         let future = async {
             loop {
                 match transport3.next().await.unwrap() {
-                    TransportEvent::ConnectionEstablished { router_id, .. } => {
+                    TransportEvent::ConnectionEstablished {
+                        router_id, address, ..
+                    } => {
+                        assert_eq!(address.is_ipv4(), ipv4);
                         transport3.accept(&router_id);
                         break;
                     }
@@ -692,8 +906,12 @@ mod tests {
         let future = async move {
             loop {
                 match transport3.next().await.unwrap() {
-                    TransportEvent::FirewallStatus { status } => {
+                    TransportEvent::FirewallStatus {
+                        status,
+                        ipv4: transport,
+                    } => {
                         assert_eq!(status, FirewallStatus::Ok);
+                        assert_eq!(transport, ipv4);
                         break;
                     }
                     _ => {}
@@ -707,35 +925,56 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn relay_works() {
+    async fn relay_works_ipv4() {
+        relay_works(true).await;
+    }
+
+    #[tokio::test]
+    async fn relay_works_ipv6() {
+        relay_works(false).await;
+    }
+
+    async fn relay_works(ipv4: bool) {
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
 
         // router that is behind firewall
-        let (ctx1, address1) = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
-            port: 0u16,
-            host: Some("127.0.0.1".parse().unwrap()),
-            publish: false,
-            static_key: [0xaa; 32],
-            intro_key: [0xbb; 32],
-        }))
-        .await
-        .unwrap();
+        let (ctx1, address1_ipv4, address1_ipv6) =
+            Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                port: 0u16,
+                ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
+                ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
+                ipv4,
+                ipv6: !ipv4,
+                publish: false,
+                static_key: [0xaa; 32],
+                intro_key: [0xbb; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
+            }))
+            .await
+            .unwrap();
 
         // set ssu2 as firewalled, causing router1 to request relay tag from router2
         let mut ctx1 = ctx1.unwrap();
         ctx1.firewalled = true;
 
         // introducer for router1
-        let (ctx2, address2) = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
-            port: 0u16,
-            host: Some("127.0.0.1".parse().unwrap()),
-            publish: true,
-            static_key: [0xcc; 32],
-            intro_key: [0xdd; 32],
-        }))
-        .await
-        .unwrap();
+        let (ctx2, address2_ipv4, address2_ipv6) =
+            Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                port: 0u16,
+                ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
+                ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
+                ipv4,
+                ipv6: !ipv4,
+                publish: true,
+                static_key: [0xcc; 32],
+                intro_key: [0xdd; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
+            }))
+            .await
+            .unwrap();
 
         let (static1, signing1) = (
             StaticPrivateKey::random(MockRuntime::rng()),
@@ -749,7 +988,8 @@ mod tests {
             &Default::default(),
             None,
             None,
-            address1,
+            address1_ipv4,
+            address1_ipv6,
             &static1,
             &signing1,
             false,
@@ -758,7 +998,8 @@ mod tests {
             &Default::default(),
             None,
             None,
-            address2,
+            address2_ipv4,
+            address2_ipv6,
             &static2,
             &signing2,
             false,
@@ -794,17 +1035,24 @@ mod tests {
                 router_info2.identity.id(),
                 Bytes::from(router_info2.serialize(&signing2)),
                 static2,
-                signing2,
+                signing2.clone(),
                 2u8,
                 event_handle.clone(),
             ),
             event2_tx,
         );
+        let router_info2 =
+            RouterInfo::parse::<MockRuntime>(router_info2.serialize(&signing2)).unwrap();
+
         tokio::spawn(async move {
             loop {
                 match transport2.next().await.unwrap() {
-                    TransportEvent::ConnectionEstablished { router_id, .. } =>
-                        transport2.accept(&router_id),
+                    TransportEvent::ConnectionEstablished {
+                        router_id, address, ..
+                    } => {
+                        assert_eq!(address.is_ipv4(), ipv4);
+                        transport2.accept(&router_id);
+                    }
                     _ => {}
                 }
             }
@@ -815,10 +1063,14 @@ mod tests {
         let (relay_tag, introducer, expires) = loop {
             tokio::select! {
                 event = transport1.next() => match event {
-                    Some(TransportEvent::ConnectionEstablished { router_id, .. }) =>
-                        transport1.accept(&router_id),
-                    Some(TransportEvent::IntroducerAdded { relay_tag, router_id, expires }) =>
-                        break (relay_tag, router_id, expires),
+                    Some(TransportEvent::ConnectionEstablished { router_id, address, .. }) => {
+                        assert_eq!(address.is_ipv4(), ipv4);
+                        transport1.accept(&router_id);
+                    }
+                    Some(TransportEvent::IntroducerAdded { relay_tag, router_id, expires,ipv4: transport }) => {
+                        assert_eq!(transport, ipv4);
+                        break (relay_tag, router_id, expires)
+                    }
                     _ => {}
                 },
                 _ = tokio::time::sleep(Duration::from_secs(5)) => panic!("timeout"),
@@ -833,7 +1085,8 @@ mod tests {
             loop {
                 tokio::select! {
                     event = transport1.next() => match event.unwrap() {
-                        TransportEvent::ConnectionEstablished { router_id, .. } => {
+                        TransportEvent::ConnectionEstablished { router_id, address, .. } => {
+                        assert_eq!(address.is_ipv4(), ipv4);
                             transport1.accept(&router_id);
                         }
                         _ => {}
@@ -859,14 +1112,38 @@ mod tests {
 
         // modify router1's info to contain router2 as an introducer
         let router_info1 = {
-            let Some(RouterAddress::Ssu2 {
-                introducers,
-                options,
-                ..
-            }) = router_info1.ssu2_ipv4_mut()
-            else {
-                panic!("ssu2 to exist");
+            let (introducers, options) = if ipv4 {
+                let Some(RouterAddress::Ssu2 {
+                    introducers,
+                    options,
+                    ..
+                }) = router_info1.ssu2_ipv4_mut()
+                else {
+                    panic!("should exist");
+                };
+
+                (introducers, options)
+            } else {
+                let Some(RouterAddress::Ssu2 {
+                    introducers,
+                    options,
+                    ..
+                }) = router_info1.ssu2_ipv6_mut()
+                else {
+                    panic!("should exist");
+                };
+
+                (introducers, options)
             };
+
+            // let Some(RouterAddress::Ssu2 {
+            //     introducers,
+            //     options,
+            //     ..
+            // }) = router_info1.ssu2_ipv4_mut()
+            // else {
+            //     panic!("ssu2 to exist");
+            // };
             introducers.push((introducer.clone(), relay_tag));
             options.insert(Str::from("iexp0"), Str::from(expires.as_secs().to_string()));
             options.insert(Str::from("itag0"), Str::from(relay_tag.to_string()));
@@ -880,15 +1157,21 @@ mod tests {
         };
 
         // create third router which connects to router1 with the help of router2
-        let (ctx3, address3) = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
-            port: 0u16,
-            host: Some("127.0.0.1".parse().unwrap()),
-            publish: true,
-            static_key: [0xee; 32],
-            intro_key: [0xff; 32],
-        }))
-        .await
-        .unwrap();
+        let (ctx3, address3_ipv4, address3_ipv6) =
+            Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                port: 0u16,
+                ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
+                ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
+                ipv4,
+                ipv6: !ipv4,
+                publish: true,
+                static_key: [0xee; 32],
+                intro_key: [0xff; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
+            }))
+            .await
+            .unwrap();
 
         let (static3, signing3) = (
             StaticPrivateKey::random(MockRuntime::rng()),
@@ -898,7 +1181,8 @@ mod tests {
             &Default::default(),
             None,
             None,
-            address3,
+            address3_ipv4,
+            address3_ipv6,
             &static3,
             &signing3,
             false,
@@ -929,7 +1213,8 @@ mod tests {
         loop {
             tokio::select! {
                 event = transport3.next() => match event {
-                    Some(TransportEvent::ConnectionEstablished { router_id, .. }) => {
+                    Some(TransportEvent::ConnectionEstablished { router_id, address, .. }) => {
+                        assert_eq!(address.is_ipv4(), ipv4);
                         transport3.accept(&router_id);
                         break;
                     }
@@ -955,7 +1240,10 @@ mod tests {
 
         while let Some(event) = transport3.next().await {
             match event {
-                TransportEvent::ConnectionEstablished { router_id, .. } => {
+                TransportEvent::ConnectionEstablished {
+                    router_id, address, ..
+                } => {
+                    assert_eq!(address.is_ipv4(), ipv4);
                     transport3.accept(&router_id);
                     break;
                 }
@@ -989,27 +1277,48 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fragmented_router_info() {
+    async fn fragmented_router_info_ipv4() {
+        fragmented_router_info(true).await;
+    }
+
+    #[tokio::test]
+    async fn fragmented_router_info_ipv6() {
+        fragmented_router_info(false).await;
+    }
+
+    async fn fragmented_router_info(ipv4: bool) {
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
-        let (ctx1, address1) = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
-            port: 0u16,
-            host: Some("127.0.0.1".parse().unwrap()),
-            publish: true,
-            static_key: [0xaa; 32],
-            intro_key: [0xbb; 32],
-        }))
-        .await
-        .unwrap();
-        let (ctx2, address2) = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
-            port: 0u16,
-            host: Some("127.0.0.1".parse().unwrap()),
-            publish: true,
-            static_key: [0xcc; 32],
-            intro_key: [0xdd; 32],
-        }))
-        .await
-        .unwrap();
+        let (ctx1, address1_ipv4, address1_ipv6) =
+            Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                port: 0u16,
+                ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
+                ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
+                ipv4,
+                ipv6: !ipv4,
+                publish: true,
+                static_key: [0xaa; 32],
+                intro_key: [0xbb; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
+            }))
+            .await
+            .unwrap();
+        let (ctx2, address2_ipv4, address2_ipv6) =
+            Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                port: 0u16,
+                ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
+                ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
+                ipv4,
+                ipv6: !ipv4,
+                publish: true,
+                static_key: [0xcc; 32],
+                intro_key: [0xdd; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
+            }))
+            .await
+            .unwrap();
 
         let (static1, signing1) = (
             StaticPrivateKey::random(MockRuntime::rng()),
@@ -1023,7 +1332,8 @@ mod tests {
             &Default::default(),
             None,
             None,
-            address1,
+            address1_ipv4,
+            address1_ipv6,
             &static1,
             &signing1,
             false,
@@ -1042,7 +1352,8 @@ mod tests {
             &Default::default(),
             None,
             None,
-            address2,
+            address2_ipv4,
+            address2_ipv6,
             &static2,
             &signing2,
             false,
@@ -1074,17 +1385,23 @@ mod tests {
                 router_info2.identity.id(),
                 Bytes::from(router_info2.serialize(&signing2)),
                 static2,
-                signing2,
+                signing2.clone(),
                 2u8,
                 event_handle.clone(),
             ),
             event2_tx,
         );
+        let router_info2 =
+            RouterInfo::parse::<MockRuntime>(router_info2.serialize(&signing2)).unwrap();
         tokio::spawn(async move {
             loop {
                 match transport2.next().await.unwrap() {
-                    TransportEvent::ConnectionEstablished { router_id, .. } =>
-                        transport2.accept(&router_id),
+                    TransportEvent::ConnectionEstablished {
+                        router_id, address, ..
+                    } => {
+                        assert_eq!(address.is_ipv4(), ipv4);
+                        transport2.accept(&router_id)
+                    }
                     _ => {}
                 }
             }
@@ -1094,7 +1411,10 @@ mod tests {
         let future = async move {
             loop {
                 match transport1.next().await.unwrap() {
-                    TransportEvent::ConnectionEstablished { router_id, .. } => {
+                    TransportEvent::ConnectionEstablished {
+                        router_id, address, ..
+                    } => {
+                        assert_eq!(address.is_ipv4(), ipv4);
                         transport1.accept(&router_id);
                         break;
                     }
@@ -1107,5 +1427,74 @@ mod tests {
             Err(_) => panic!("timeout"),
             Ok(()) => {}
         }
+    }
+
+    #[tokio::test]
+    async fn too_small_ipv4_mtu() {
+        let (ctx, address_ipv4, address_ipv6) =
+            Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                port: 0u16,
+                ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                ipv6_host: Some("::1".parse().unwrap()),
+                ipv4: true,
+                ipv6: true,
+                publish: true,
+                static_key: [0xaa; 32],
+                intro_key: [0xbb; 32],
+                ipv4_mtu: Some(512),
+                ipv6_mtu: Some(1500),
+            }))
+            .await
+            .unwrap();
+
+        assert!(ctx.is_some());
+        assert!(address_ipv4.is_none());
+        assert!(address_ipv6.is_some());
+    }
+
+    #[tokio::test]
+    async fn too_small_ipv6_mtu() {
+        let (ctx, address_ipv4, address_ipv6) =
+            Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                port: 0u16,
+                ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                ipv6_host: Some("::1".parse().unwrap()),
+                ipv4: true,
+                ipv6: true,
+                publish: true,
+                static_key: [0xaa; 32],
+                intro_key: [0xbb; 32],
+                ipv4_mtu: Some(1500),
+                ipv6_mtu: Some(512),
+            }))
+            .await
+            .unwrap();
+
+        assert!(ctx.is_some());
+        assert!(address_ipv4.is_some());
+        assert!(address_ipv6.is_none());
+    }
+
+    #[tokio::test]
+    async fn too_small_ipv4_and_ipv6_mtu() {
+        let (ctx, address_ipv4, address_ipv6) =
+            Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                port: 0u16,
+                ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                ipv6_host: Some("::1".parse().unwrap()),
+                ipv4: true,
+                ipv6: true,
+                publish: true,
+                static_key: [0xaa; 32],
+                intro_key: [0xbb; 32],
+                ipv4_mtu: Some(1024),
+                ipv6_mtu: Some(512),
+            }))
+            .await
+            .unwrap();
+
+        assert!(ctx.is_none());
+        assert!(address_ipv4.is_none());
+        assert!(address_ipv6.is_none());
     }
 }

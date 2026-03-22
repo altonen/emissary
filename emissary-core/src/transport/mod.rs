@@ -21,7 +21,7 @@ use crate::{
     error::QueryError,
     events::EventHandle,
     netdb::NetDbHandle,
-    primitives::{Date, RouterAddress, RouterId, RouterInfo, Str, TransportKind},
+    primitives::{Date, Mapping, RouterAddress, RouterId, RouterInfo, Str, TransportKind},
     router::context::RouterContext,
     runtime::{Counter, Gauge, JoinSet, MetricType, MetricsHandle, Runtime},
     subsystem::SubsystemEvent,
@@ -43,7 +43,7 @@ use alloc::{
 };
 use core::{
     future::Future,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
     task::{Context, Poll},
     time::Duration,
@@ -258,9 +258,10 @@ impl TerminationReason {
 }
 
 /// Firewall status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum FirewallStatus {
     /// Router's firewall status is unknown.
+    #[default]
     Unknown,
 
     /// SSU2 has detected that the router is firewalled.
@@ -320,6 +321,9 @@ pub enum TransportEvent {
     FirewallStatus {
         /// Firewall status.
         status: FirewallStatus,
+
+        /// Is this a firewall result for IPv4.
+        ipv4: bool,
     },
 
     /// External address discovered.
@@ -338,12 +342,18 @@ pub enum TransportEvent {
 
         /// When does the introducer expire.
         expires: Duration,
+
+        /// Is this an IPv4 introducer.
+        ipv4: bool,
     },
 
     /// Introducer removed.
     IntroducerRemoved {
         /// Router ID of Bob.
         router_id: RouterId,
+
+        /// Was this an IPv4 introducer.
+        ipv4: bool,
     },
 }
 
@@ -438,7 +448,7 @@ impl<R: Runtime> TransportManagerBuilder<R> {
 
     /// Register SSU2 as an active transport.
     pub fn register_ssu2(&mut self, context: Ssu2Context<R>) {
-        self.supported_transports.insert(context.classify());
+        self.supported_transports.extend(context.classify());
         self.ssu2_config = Some(context.config());
         self.transports.push(Box::new(Ssu2Transport::new(
             context,
@@ -471,9 +481,8 @@ impl<R: Runtime> TransportManagerBuilder<R> {
             caps: self.caps,
             dial_rx: self.dial_rx,
             event_handle: self.router_ctx.event_handle().clone(),
-            external_address: None,
-            firewall_status: FirewallStatus::Unknown,
-            introducers: Vec::new(),
+            ipv4_info: TransportInfo::default(),
+            ipv6_info: TransportInfo::default(),
             local_router_info: self.local_router_info,
             netdb_handle: self.netdb_handle.expect("to exist"),
             ntcp2_config: self.ntcp2_config,
@@ -526,6 +535,30 @@ struct IntroducerConnection {
     pending_queries: HashSet<RouterId>,
 }
 
+/// Transport information for IPv4/IPv6.
+struct TransportInfo<T> {
+    /// External address, if known.
+    external_address: Option<T>,
+
+    /// Firewall status.
+    firewall_status: FirewallStatus,
+
+    /// Introducers.
+    ///
+    /// Linear scans are OK since there are only 1-3 introducers.
+    introducers: Vec<(RouterId, u32, Duration)>,
+}
+
+impl<T> Default for TransportInfo<T> {
+    fn default() -> Self {
+        Self {
+            external_address: None,
+            firewall_status: FirewallStatus::Unknown,
+            introducers: Vec::new(),
+        }
+    }
+}
+
 /// Transport manager.
 ///
 /// Transport manager is responsible for connecting the higher-level subsystems
@@ -541,16 +574,11 @@ pub struct TransportManager<R: Runtime> {
     /// Event handle.
     event_handle: EventHandle<R>,
 
-    /// External address, if any.
-    external_address: Option<Ipv4Addr>,
+    /// IPv4 transport info.
+    ipv4_info: TransportInfo<Ipv4Addr>,
 
-    /// Firewall status.
-    firewall_status: FirewallStatus,
-
-    /// Introducers.
-    ///
-    /// Linear scans are OK since there are only 1-3 introducers.
-    introducers: Vec<(RouterId, u32, Duration)>,
+    /// IPv6 transport info.
+    ipv6_info: TransportInfo<Ipv6Addr>,
 
     /// Local router info.
     local_router_info: RouterInfo,
@@ -614,59 +642,86 @@ impl<R: Runtime> TransportManager<R> {
         Ssu2Transport::<R>::metrics(metrics)
     }
 
-    /// Add external address for the router.
-    pub fn add_external_address(&mut self, address: Ipv4Addr) {
-        tracing::info!(
-            target: LOG_TARGET,
-            ?address,
-            "external address discovered",
-        );
-
-        match (self.external_address, address) {
-            (None, address) => {
-                tracing::info!(
-                    target: LOG_TARGET,
-                    ?address,
-                    "external address discovered, publishing new router info",
-                );
-
-                self.external_address = Some(address);
-            }
-            (Some(old_address), new_address) if old_address != new_address => {
-                tracing::info!(
-                    target: LOG_TARGET,
-                    ?old_address,
-                    ?new_address,
-                    "new external address discovered, publishing new router info",
-                );
-
-                self.external_address = Some(address);
-            }
-            _ => return,
-        };
-
+    /// Update local router's external addresses to `address`, if published.
+    fn update_router_addresses(&mut self, address: IpAddr) {
         match &self.ntcp2_config {
             Some(Ntcp2Config {
                 port,
+                ipv4,
                 ipv4_host,
+                ipv6,
+                ipv6_host,
                 publish: true,
                 iv,
                 ..
-            }) => match (ipv4_host, address) {
-                (None, address) => match self.local_router_info.ntcp2_ipv4_mut() {
-                    Some(ntcp2) => ntcp2.into_reachable_ntcp2(*iv, *port, IpAddr::V4(address)),
-                    None => tracing::warn!(
+            }) => match address {
+                // discovered address was ipv4, check if ntcp2 can be modified
+                IpAddr::V4(host) => match (ipv4, ipv4_host) {
+                    // ipv4 enabled and user didn't specify an external address for the router
+                    (true, None) =>
+                        if let Some(ntcp2) = self.local_router_info.ntcp2_ipv4_mut() {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                address = ?SocketAddr::new(address, *port),
+                                "creating published ntcp2 ipv4 address",
+                            );
+                            ntcp2.into_reachable_ntcp2(*iv, *port, IpAddr::V4(host));
+                        },
+
+                    // ipv4 disabled for ntcp2, might be enabled for ssu2
+                    (false, _) => tracing::trace!(
                         target: LOG_TARGET,
-                        "unable to make ntcp2 address reachable, transport not enabled",
+                        ?address,
+                        "not updating external address for ntcp2, ipv4 disabled",
+                    ),
+
+                    // discovered address matches the address specified by the user
+                    (true, Some(specified)) if *specified == IpAddr::V4(host) => {}
+
+                    // discovered address doesn't match the address specified by the user
+                    //
+                    // log a warning so the user may fix the address but don't update the address
+                    (true, Some(specified)) => tracing::warn!(
+                        target: LOG_TARGET,
+                        ?specified,
+                        ?host,
+                        "specified external address doesn't match discovered external address",
                     ),
                 },
-                (Some(published), address) if published == &address => {}
-                (Some(published), address) => tracing::warn!(
-                    target: LOG_TARGET,
-                    ?published,
-                    ?address,
-                    "external address doesn't match published address, router address not updated",
-                ),
+                IpAddr::V6(host) => match (ipv6, ipv6_host) {
+                    // ipv6 enabled and user didn't specify an external address for the router
+                    //
+                    // update the host in `RouterAddress`
+                    (true, None) =>
+                        if let Some(ntcp2) = self.local_router_info.ntcp2_ipv6_mut() {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                address = ?SocketAddr::new(address, *port),
+                                "creating published ntcp2 ipv6 address",
+                            );
+                            ntcp2.into_reachable_ntcp2(*iv, *port, IpAddr::V6(host));
+                        },
+
+                    // ipv6 disabled for ntcp2, might be enabled for ssu2
+                    (false, _) => tracing::trace!(
+                        target: LOG_TARGET,
+                        ?address,
+                        "not updating external address for ntcp2, ipv6 disabled",
+                    ),
+
+                    // discovered address matches the address specified by the user
+                    (true, Some(specified)) if *specified == IpAddr::V6(host) => {}
+
+                    // discovered address doesn't match the address specified by the user
+                    //
+                    // log a warning so the user may fix the address but don't update the address
+                    (true, Some(specified)) => tracing::warn!(
+                        target: LOG_TARGET,
+                        ?specified,
+                        ?host,
+                        "specified external address doesn't match discovered external address",
+                    ),
+                },
             },
             _ => tracing::trace!(
                 target: LOG_TARGET,
@@ -677,31 +732,138 @@ impl<R: Runtime> TransportManager<R> {
         match &self.ssu2_config {
             Some(Ssu2Config {
                 port,
-                host,
+                ipv4,
+                ipv4_host,
+                ipv6,
+                ipv6_host,
                 publish: true,
-                static_key,
-                intro_key,
-            }) => match (host, address) {
-                (None, address) => {
-                    self.local_router_info.addresses.push(RouterAddress::new_published_ssu2(
-                        *static_key,
-                        *intro_key,
-                        *port,
-                        address,
-                    ));
-                }
-                (Some(published), address) if published == &address => {}
-                (Some(published), address) => tracing::warn!(
-                    target: LOG_TARGET,
-                    ?published,
-                    ?address,
-                    "external address doesn't match published ssu2 address, router address not updated",
-                ),
+                ..
+            }) => match address {
+                // discovered address was ipv4, check if ssu2 can be modified
+                IpAddr::V4(host) => match (ipv4, ipv4_host) {
+                    // ipv4 enabled and user didn't specify an external address for the router
+                    (true, None) =>
+                        if let Some(ssu2) = self.local_router_info.ssu2_ipv4_mut() {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                address = ?SocketAddr::new(address, *port),
+                                "creating published ssu2 ipv4 address",
+                            );
+                            ssu2.into_reachable_ssu2(*port, IpAddr::V4(host));
+                        },
+
+                    // ipv4 disabled for ssu2, might be enabled for ssu2
+                    (false, _) => tracing::trace!(
+                        target: LOG_TARGET,
+                        ?address,
+                        "not updating external address for ssu2, ipv4 disabled",
+                    ),
+
+                    // discovered address matches the address specified by the user
+                    (true, Some(specified)) if *specified == IpAddr::V4(host) => {}
+
+                    // discovered address doesn't match the address specified by the user
+                    //
+                    // log a warning so the user may fix the address but don't update the address
+                    (true, Some(specified)) => tracing::warn!(
+                        target: LOG_TARGET,
+                        ?specified,
+                        ?host,
+                        "specified external address doesn't match discovered external address",
+                    ),
+                },
+                IpAddr::V6(host) => match (ipv6, ipv6_host) {
+                    // ipv6 enabled and user didn't specify an external address for the router
+                    //
+                    // update the host in `RouterAddress`
+                    (true, None) =>
+                        if let Some(ssu2) = self.local_router_info.ssu2_ipv6_mut() {
+                            tracing::trace!(
+                                target: LOG_TARGET,
+                                address = ?SocketAddr::new(address, *port),
+                                "creating published ssu2 ipv6 address",
+                            );
+                            ssu2.into_reachable_ssu2(*port, IpAddr::V6(host));
+                        },
+
+                    // ipv6 disabled for ssu2, might be enabled for ssu2
+                    (false, _) => tracing::trace!(
+                        target: LOG_TARGET,
+                        ?address,
+                        "not updating external address for ssu2, ipv6 disabled",
+                    ),
+
+                    // discovered address matches the address specified by the user
+                    (true, Some(specified)) if *specified == IpAddr::V6(host) => {}
+
+                    // discovered address doesn't match the address specified by the user
+                    //
+                    // log a warning so the user may fix the address but don't update the address
+                    (true, Some(specified)) => tracing::warn!(
+                        target: LOG_TARGET,
+                        ?specified,
+                        ?host,
+                        "specified external address doesn't match discovered external address",
+                    ),
+                },
             },
             _ => tracing::trace!(
                 target: LOG_TARGET,
                 "ssu2 not active or unpublished, router address not updated",
             ),
+        }
+    }
+
+    /// Add external address for the router.
+    pub fn add_external_address(&mut self, address: IpAddr) {
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?address,
+            "external address discovered",
+        );
+
+        let previous_address = match address {
+            IpAddr::V4(address) => (self.ipv4_info.external_address != Some(address)).then(|| {
+                let previous = self.ipv4_info.external_address;
+
+                self.ipv4_info.external_address = Some(address);
+
+                match self.ipv4_info.firewall_status {
+                    FirewallStatus::Ok => self.update_router_addresses(IpAddr::V4(address)),
+                    status => tracing::debug!(
+                        target: LOG_TARGET,
+                        ?status,
+                        "incompatible firewall status, unable to update router ipv4 address",
+                    ),
+                }
+
+                previous.map(IpAddr::V4)
+            }),
+            IpAddr::V6(address) => (self.ipv6_info.external_address != Some(address)).then(|| {
+                let previous = self.ipv6_info.external_address;
+
+                self.ipv6_info.external_address = Some(address);
+
+                match self.ipv6_info.firewall_status {
+                    FirewallStatus::Ok => self.update_router_addresses(IpAddr::V6(address)),
+                    status => tracing::debug!(
+                        target: LOG_TARGET,
+                        ?status,
+                        "incompatible firewall status, unable to update router ipv6 address",
+                    ),
+                }
+
+                previous.map(IpAddr::V6)
+            }),
+        };
+
+        if let Some(previous) = previous_address {
+            tracing::info!(
+                target: LOG_TARGET,
+                old_address = ?previous,
+                ?address,
+                "external address discovered",
+            );
         }
     }
 
@@ -817,7 +979,7 @@ impl<R: Runtime> TransportManager<R> {
                         target: LOG_TARGET,
                         %router_id,
                         caps = %router_info.capabilities,
-                        "cannot dial router, no reachable transport",
+                        "cannot dial router, no compatible transport",
                     );
 
                     self.router_ctx.metrics_handle().counter(NUM_DIAL_FAILURES).increment(1);
@@ -924,6 +1086,27 @@ impl<R: Runtime> TransportManager<R> {
                                     continue;
                                 }
 
+                                // ensure we support the same transports as the introducer
+                                if introducer_router_info
+                                    .select_transport_with_filter(|address| match address {
+                                        RouterAddress::Ntcp2 { .. } => false,
+                                        address @ RouterAddress::Ssu2 { socket_address, .. } =>
+                                            address.classify().is_some_and(|address| {
+                                                self.supported_transports.contains(&address)
+                                                    && socket_address.is_some()
+                                            }),
+                                    })
+                                    .is_none()
+                                {
+                                    tracing::warn!(
+                                        target: LOG_TARGET,
+                                        %introducer,
+                                        supported = ?self.supported_transports,
+                                        "no compatible transport found for introducer",
+                                    );
+                                    continue;
+                                }
+
                                 tracing::trace!(
                                     target: LOG_TARGET,
                                     %router_id,
@@ -980,6 +1163,14 @@ impl<R: Runtime> TransportManager<R> {
                     }
                 }
 
+                if pending_connections.is_empty() && pending_queries.is_empty() {
+                    tracing::debug!(
+                        target: LOG_TARGET,
+                        "unable to dial router, failed to dial and/or query all introducers",
+                    );
+                    return self.report_dial_failure(router_id);
+                }
+
                 self.pending_connections.insert(router_id.clone(), clients);
                 self.pending_introducers.insert(
                     router_id.clone(),
@@ -1012,56 +1203,59 @@ impl<R: Runtime> TransportManager<R> {
     }
 
     /// Handle firewall status update received from SSU2.
-    fn on_firewall_status(&mut self, status: FirewallStatus) {
+    fn on_firewall_status(&mut self, status: FirewallStatus, ipv4: bool) {
         tracing::debug!(
             target: LOG_TARGET,
             ?status,
+            ?ipv4,
             "firewall status update",
         );
 
-        self.firewall_status = status;
-    }
-
-    /// Handle discovered external address.
-    ///
-    /// This address is discovered through SSU2 and our router addresses should be converted
-    /// to reachable only if peer testing has confirmed us to be reachable.
-    fn on_external_address(&mut self, address: SocketAddr) {
-        match address.ip() {
-            IpAddr::V4(address)
-                if Some(address) != self.external_address
-                    && self.firewall_status == FirewallStatus::Ok =>
-                self.add_external_address(address),
-            _ => tracing::trace!(
-                target: LOG_TARGET,
-                ?address,
-                "ignoring discovered external address",
-            ),
+        if ipv4 {
+            self.ipv4_info.firewall_status = status;
+        } else {
+            self.ipv6_info.firewall_status = status;
         }
     }
 
     /// Handle new introducer.
-    fn on_introducer_added(&mut self, router_id: RouterId, relay_tag: u32, expires: Duration) {
+    fn on_introducer_added(
+        &mut self,
+        router_id: RouterId,
+        relay_tag: u32,
+        expires: Duration,
+        ipv4: bool,
+    ) {
         tracing::debug!(
             target: LOG_TARGET,
             %router_id,
             ?relay_tag,
             ?expires,
+            ?ipv4,
             "add new introducer",
         );
 
-        self.introducers.push((router_id, relay_tag, expires));
+        if ipv4 {
+            self.ipv4_info.introducers.push((router_id, relay_tag, expires));
+        } else {
+            self.ipv6_info.introducers.push((router_id, relay_tag, expires));
+        }
     }
 
     /// Handle removed introducer.
-    fn on_introducer_removed(&mut self, router_id: &RouterId) {
+    fn on_introducer_removed(&mut self, router_id: &RouterId, ipv4: bool) {
         tracing::debug!(
             target: LOG_TARGET,
             %router_id,
+            ?ipv4,
             "remove introducer",
         );
 
-        self.introducers.retain(|(r, _, _)| r != router_id);
+        if ipv4 {
+            self.ipv4_info.introducers.retain(|(r, _, _)| r != router_id);
+        } else {
+            self.ipv6_info.introducers.retain(|(r, _, _)| r != router_id);
+        }
     }
 
     /// Attempt to publish our router info.
@@ -1082,61 +1276,82 @@ impl<R: Runtime> TransportManager<R> {
             caps += "G";
         }
 
-        // update ssu2's address if we have any active introducers
-        if let Some(RouterAddress::Ssu2 { options, .. }) = self.local_router_info.ssu2_ipv4_mut() {
-            // remove old introducers
-            for i in 0..3 {
-                options.remove(&Str::from(format!("iexp{i}")));
-                options.remove(&Str::from(format!("ih{i}")));
-                options.remove(&Str::from(format!("itag{i}")));
-            }
-
-            // add introducers to our router info, skipping any expired introducers
-            let now = R::time_since_epoch();
-
-            for (i, (router_id, relay_tag, expires)) in self.introducers.iter().enumerate() {
-                if expires > &(now + INTRODUCER_EXPIRATION) {
-                    tracing::debug!(
-                        target: LOG_TARGET,
-                        %router_id,
-                        ?relay_tag,
-                        expired = ?(*expires - now - INTRODUCER_EXPIRATION),
-                        "skip expired introducer"
-                    );
-                    continue;
+        let update_introducers =
+            |options: &mut Mapping, introducers: &[(RouterId, u32, Duration)]| {
+                // remove old introducers
+                for i in 0..3 {
+                    options.remove(&Str::from(format!("iexp{i}")));
+                    options.remove(&Str::from(format!("ih{i}")));
+                    options.remove(&Str::from(format!("itag{i}")));
                 }
 
-                options.insert(
-                    Str::from(format!("iexp{i}")),
-                    Str::from(expires.as_secs().to_string()),
-                );
-                options.insert(
-                    Str::from(format!("ih{i}")),
-                    Str::from(base64_encode(router_id.to_vec())),
-                );
-                options.insert(
-                    Str::from(format!("itag{i}")),
-                    Str::from(relay_tag.to_string()),
-                );
-            }
+                // add introducers to our router info, skipping any expired introducers
+                let now = R::time_since_epoch();
+
+                for (i, (router_id, relay_tag, expires)) in introducers.iter().enumerate() {
+                    if expires > &(now + INTRODUCER_EXPIRATION) {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            %router_id,
+                            ?relay_tag,
+                            expired = ?(*expires - now - INTRODUCER_EXPIRATION),
+                            "skipping expired introducer"
+                        );
+                        continue;
+                    }
+
+                    options.insert(
+                        Str::from(format!("iexp{i}")),
+                        Str::from(expires.as_secs().to_string()),
+                    );
+                    options.insert(
+                        Str::from(format!("ih{i}")),
+                        Str::from(base64_encode(router_id.to_vec())),
+                    );
+                    options.insert(
+                        Str::from(format!("itag{i}")),
+                        Str::from(relay_tag.to_string()),
+                    );
+                }
+            };
+
+        // update ssu2's ipv4 address if we have any active introducers
+        if let Some(RouterAddress::Ssu2 { options, .. }) = self.local_router_info.ssu2_ipv4_mut() {
+            update_introducers(options, &self.ipv4_info.introducers);
         }
 
-        match self.firewall_status {
-            FirewallStatus::Unknown => tracing::info!(
-                target: LOG_TARGET,
-                "firewall status unknown, not publishing reachability caps",
-            ),
-            FirewallStatus::Ok => {
+        // update ssu2's ipv6 address if we have any active introducers
+        if let Some(RouterAddress::Ssu2 { options, .. }) = self.local_router_info.ssu2_ipv6_mut() {
+            update_introducers(options, &self.ipv6_info.introducers);
+        }
+
+        match (
+            self.ipv4_info.firewall_status,
+            self.ipv6_info.firewall_status,
+        ) {
+            (FirewallStatus::Ok, _) => {
                 tracing::info!(
                     target: LOG_TARGET,
-                    "router is not firewalled, publishing R",
+                    "router is not firewalled over ipv4, publishing R",
                 );
                 caps += "R";
             }
-            status => {
+            (_, FirewallStatus::Ok) => {
                 tracing::info!(
                     target: LOG_TARGET,
-                    ?status,
+                    "router is not firewalled over ipv6, publishing R",
+                );
+                caps += "R";
+            }
+            (FirewallStatus::Unknown, FirewallStatus::Unknown) => tracing::info!(
+                target: LOG_TARGET,
+                "firewall status unknown, not publishing reachability caps",
+            ),
+            (ipv4_status, ipv6_status) => {
+                tracing::info!(
+                    target: LOG_TARGET,
+                    ?ipv4_status,
+                    ?ipv6_status,
                     "router is firewalled, publishing U",
                 );
                 caps += "U";
@@ -1381,17 +1596,20 @@ impl<R: Runtime> Future for TransportManager<R> {
                             }
                         }
                     }
-                    Poll::Ready(Some(TransportEvent::FirewallStatus { status })) =>
-                        this.on_firewall_status(status),
-                    Poll::Ready(Some(TransportEvent::ExternalAddress { address })) =>
-                        this.on_external_address(address),
+                    Poll::Ready(Some(TransportEvent::FirewallStatus { status, ipv4 })) => {
+                        this.on_firewall_status(status, ipv4);
+                    }
+                    Poll::Ready(Some(TransportEvent::ExternalAddress { address })) => {
+                        this.add_external_address(address.ip());
+                    }
                     Poll::Ready(Some(TransportEvent::IntroducerAdded {
                         relay_tag,
                         router_id,
                         expires,
-                    })) => this.on_introducer_added(router_id, relay_tag, expires),
-                    Poll::Ready(Some(TransportEvent::IntroducerRemoved { router_id })) =>
-                        this.on_introducer_removed(&router_id),
+                        ipv4,
+                    })) => this.on_introducer_added(router_id, relay_tag, expires, ipv4),
+                    Poll::Ready(Some(TransportEvent::IntroducerRemoved { router_id, ipv4 })) =>
+                        this.on_introducer_removed(&router_id, ipv4),
                 }
             }
 
@@ -1604,16 +1822,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn external_address_discovered_ntcp2() {
+    async fn external_address_discovered_ntcp2_ipv4() {
+        external_address_discovered_ntcp2(true).await
+    }
+
+    #[tokio::test]
+    async fn external_address_discovered_ntcp2_ipv6() {
+        external_address_discovered_ntcp2(false).await
+    }
+
+    async fn external_address_discovered_ntcp2(ipv4: bool) {
         let context = Ntcp2Transport::<MockRuntime>::initialize(Some(Ntcp2Config {
             port: 0,
-            ipv4_host: Some("192.168.0.1".parse().unwrap()),
-            ipv6_host: None,
+            ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
+            ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
+            ipv4,
+            ipv6: !ipv4,
             publish: true,
             key: [0u8; 32],
             iv: [0u8; 16],
-            ipv4: true,
-            ipv6: false,
         }))
         .await
         .unwrap()
@@ -1629,21 +1856,37 @@ mod tests {
         assert!(
             manager.local_router_info.addresses().any(|address| match address {
                 RouterAddress::Ntcp2 { options, .. } => {
-                    options.get(&Str::from("host")) == Some(&Str::from("192.168.0.1"))
-                        && options.get(&Str::from("s")).is_some()
+                    if ipv4 {
+                        options.get(&Str::from("host")) == Some(&Str::from("127.0.0.1"))
+                            && options.get(&Str::from("s")).is_some()
+                    } else {
+                        options.get(&Str::from("host")) == Some(&Str::from("::1"))
+                            && options.get(&Str::from("s")).is_some()
+                    }
                 }
                 _ => false,
             })
         );
 
-        manager.add_external_address("192.168.0.1".parse().unwrap());
+        if ipv4 {
+            manager.ipv4_info.firewall_status = FirewallStatus::Ok;
+            manager.add_external_address("127.0.0.1".parse().unwrap());
+        } else {
+            manager.ipv6_info.firewall_status = FirewallStatus::Ok;
+            manager.add_external_address("::1".parse().unwrap());
+        }
 
         // verify that the address is still published and that host is the same
         assert!(
             manager.local_router_info.addresses().any(|address| match address {
                 RouterAddress::Ntcp2 { options, .. } => {
-                    options.get(&Str::from("host")) == Some(&Str::from("192.168.0.1"))
-                        && options.get(&Str::from("s")).is_some()
+                    if ipv4 {
+                        options.get(&Str::from("host")) == Some(&Str::from("127.0.0.1"))
+                            && options.get(&Str::from("s")).is_some()
+                    } else {
+                        options.get(&Str::from("host")) == Some(&Str::from("::1"))
+                            && options.get(&Str::from("s")).is_some()
+                    }
                 }
                 _ => false,
             })
@@ -1651,16 +1894,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn external_address_discovered_ntcp2_unpublished() {
+    async fn external_address_discovered_ntcp2_unpublished_ipv4() {
+        external_address_discovered_ntcp2_unpublished(true).await;
+    }
+
+    #[tokio::test]
+    async fn external_address_discovered_ntcp2_unpublished_ipv6() {
+        external_address_discovered_ntcp2_unpublished(false).await;
+    }
+
+    async fn external_address_discovered_ntcp2_unpublished(ipv4: bool) {
         let context = Ntcp2Transport::<MockRuntime>::initialize(Some(Ntcp2Config {
             port: 0,
             ipv4_host: None,
             ipv6_host: None,
+            ipv4,
+            ipv6: !ipv4,
             publish: false,
             key: [0u8; 32],
             iv: [0u8; 16],
-            ipv4: true,
-            ipv6: false,
         }))
         .await
         .unwrap()
@@ -1684,7 +1936,13 @@ mod tests {
             })
         );
 
-        manager.add_external_address("192.168.0.1".parse().unwrap());
+        if ipv4 {
+            manager.ipv4_info.firewall_status = FirewallStatus::Ok;
+            manager.add_external_address("127.0.0.1".parse().unwrap());
+        } else {
+            manager.ipv6_info.firewall_status = FirewallStatus::Ok;
+            manager.add_external_address("::1".parse().unwrap());
+        }
 
         // verify that the address is still unpublished
         assert!(
@@ -1699,13 +1957,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn external_address_discovered_ssu2() {
+    async fn external_address_discovered_ssu2_ipv4() {
+        external_address_discovered_ssu2(true).await;
+    }
+
+    #[tokio::test]
+    async fn external_address_discovered_ssu2_ipv6() {
+        external_address_discovered_ssu2(false).await;
+    }
+
+    async fn external_address_discovered_ssu2(ipv4: bool) {
         let ssu2 = Ssu2Config {
             port: 0,
-            host: Some("192.168.0.1".parse().unwrap()),
+            ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
+            ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
+            ipv4,
+            ipv6: !ipv4,
             publish: true,
             static_key: [0u8; 32],
             intro_key: [1u8; 32],
+            ipv4_mtu: None,
+            ipv6_mtu: None,
         };
         let context =
             Ssu2Transport::<MockRuntime>::initialize(Some(ssu2)).await.unwrap().0.unwrap();
@@ -1719,19 +1991,33 @@ mod tests {
         assert!(
             manager.local_router_info.addresses().any(|address| match address {
                 RouterAddress::Ssu2 { options, .. } => {
-                    options.get(&Str::from("host")) == Some(&Str::from("192.168.0.1"))
+                    if ipv4 {
+                        options.get(&Str::from("host")) == Some(&Str::from("127.0.0.1"))
+                    } else {
+                        options.get(&Str::from("host")) == Some(&Str::from("::1"))
+                    }
                 }
                 _ => false,
             })
         );
 
-        manager.add_external_address("192.168.0.1".parse().unwrap());
+        if ipv4 {
+            manager.ipv4_info.firewall_status = FirewallStatus::Ok;
+            manager.add_external_address("127.0.0.1".parse().unwrap());
+        } else {
+            manager.ipv6_info.firewall_status = FirewallStatus::Ok;
+            manager.add_external_address("::1".parse().unwrap());
+        }
 
         // verify that the address is still published and that host is the same
         assert!(
             manager.local_router_info.addresses().any(|address| match address {
                 RouterAddress::Ssu2 { options, .. } => {
-                    options.get(&Str::from("host")) == Some(&Str::from("192.168.0.1"))
+                    if ipv4 {
+                        options.get(&Str::from("host")) == Some(&Str::from("127.0.0.1"))
+                    } else {
+                        options.get(&Str::from("host")) == Some(&Str::from("::1"))
+                    }
                 }
                 _ => false,
             })
@@ -1739,13 +2025,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn external_address_discovered_ssu2_unpublished() {
+    async fn external_address_discovered_ssu2_unpublished_ipv4() {
+        external_address_discovered_ssu2_unpublished(true).await
+    }
+
+    #[tokio::test]
+    async fn external_address_discovered_ssu2_unpublished_ipv6() {
+        external_address_discovered_ssu2_unpublished(false).await
+    }
+
+    async fn external_address_discovered_ssu2_unpublished(ipv4: bool) {
         let context = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
             port: 0,
-            host: None,
+            ipv4_host: None,
+            ipv6_host: None,
+            ipv4,
+            ipv6: !ipv4,
             publish: false,
             static_key: [0u8; 32],
             intro_key: [1u8; 32],
+            ipv4_mtu: None,
+            ipv6_mtu: None,
         }))
         .await
         .unwrap()
@@ -1768,7 +2068,13 @@ mod tests {
             })
         );
 
-        manager.add_external_address("192.168.0.1".parse().unwrap());
+        if ipv4 {
+            manager.ipv4_info.firewall_status = FirewallStatus::Ok;
+            manager.add_external_address("127.0.0.1".parse().unwrap());
+        } else {
+            manager.ipv6_info.firewall_status = FirewallStatus::Ok;
+            manager.add_external_address("::1".parse().unwrap());
+        }
 
         // verify that the address is still unpublished
         assert!(
@@ -1782,13 +2088,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn new_external_address_discovered() {
+    async fn new_external_address_discovered_ipv4() {
+        new_external_address_discovered(true).await
+    }
+
+    #[tokio::test]
+    async fn new_external_address_discovered_ipv6() {
+        new_external_address_discovered(false).await
+    }
+
+    async fn new_external_address_discovered(ipv4: bool) {
         let ssu2_context = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
             port: 0,
-            host: None,
+            ipv4_host: None,
+            ipv6_host: None,
+            ipv4,
+            ipv6: !ipv4,
             publish: true,
             static_key: [0u8; 32],
             intro_key: [1u8; 32],
+            ipv4_mtu: None,
+            ipv6_mtu: None,
         }))
         .await
         .unwrap()
@@ -1801,8 +2121,8 @@ mod tests {
             publish: true,
             key: [0u8; 32],
             iv: [0u8; 16],
-            ipv4: true,
-            ipv6: false,
+            ipv4,
+            ipv6: !ipv4,
         }))
         .await
         .unwrap()
@@ -1836,13 +2156,23 @@ mod tests {
             })
         );
 
-        manager.add_external_address("192.168.0.1".parse().unwrap());
+        if ipv4 {
+            manager.ipv4_info.firewall_status = FirewallStatus::Ok;
+            manager.add_external_address("127.0.0.1".parse().unwrap());
+        } else {
+            manager.ipv6_info.firewall_status = FirewallStatus::Ok;
+            manager.add_external_address("::1".parse().unwrap());
+        }
 
         // verify the addresses have been published
         assert!(
             manager.local_router_info.addresses().any(|address| match address {
                 RouterAddress::Ssu2 { options, .. } => {
-                    options.get(&Str::from("host")) == Some(&Str::from("192.168.0.1"))
+                    if ipv4 {
+                        options.get(&Str::from("host")) == Some(&Str::from("127.0.0.1"))
+                    } else {
+                        options.get(&Str::from("host")) == Some(&Str::from("::1"))
+                    }
                 }
                 _ => false,
             })
@@ -1850,8 +2180,13 @@ mod tests {
         assert!(
             manager.local_router_info.addresses().any(|address| match address {
                 RouterAddress::Ntcp2 { options, .. } => {
-                    options.get(&Str::from("host")) == Some(&Str::from("192.168.0.1"))
-                        && options.get(&Str::from("i")).is_some()
+                    if ipv4 {
+                        options.get(&Str::from("host")) == Some(&Str::from("127.0.0.1"))
+                            && options.get(&Str::from("i")).is_some()
+                    } else {
+                        options.get(&Str::from("host")) == Some(&Str::from("::1"))
+                            && options.get(&Str::from("i")).is_some()
+                    }
                 }
                 _ => false,
             })
@@ -1859,16 +2194,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn discovered_address_doesnt_match_published_address_ntcp2() {
+    async fn discovered_address_doesnt_match_published_address_ntcp2_ipv4() {
+        discovered_address_doesnt_match_published_address_ntcp2(true).await;
+    }
+
+    #[tokio::test]
+    async fn discovered_address_doesnt_match_published_address_ntcp2_ipv6() {
+        discovered_address_doesnt_match_published_address_ntcp2(false).await;
+    }
+
+    async fn discovered_address_doesnt_match_published_address_ntcp2(ipv4: bool) {
         let context = Ntcp2Transport::<MockRuntime>::initialize(Some(Ntcp2Config {
             port: 0,
-            ipv4_host: Some("192.168.0.1".parse().unwrap()),
-            ipv6_host: None,
+            ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
+            ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
+            ipv4,
+            ipv6: !ipv4,
             publish: true,
             key: [0u8; 32],
             iv: [0u8; 16],
-            ipv4: true,
-            ipv6: false,
         }))
         .await
         .unwrap()
@@ -1884,21 +2228,38 @@ mod tests {
         assert!(
             manager.local_router_info.addresses().any(|address| match address {
                 RouterAddress::Ntcp2 { options, .. } => {
-                    options.get(&Str::from("host")) == Some(&Str::from("192.168.0.1"))
-                        && options.get(&Str::from("i")).is_some()
+                    if ipv4 {
+                        options.get(&Str::from("host")) == Some(&Str::from("127.0.0.1"))
+                            && options.get(&Str::from("i")).is_some()
+                    } else {
+                        options.get(&Str::from("host")) == Some(&Str::from("::1"))
+                            && options.get(&Str::from("i")).is_some()
+                    }
                 }
                 _ => false,
             })
         );
 
-        manager.add_external_address("192.168.1.1".parse().unwrap());
+        // address doesn't match our current adress
+        if ipv4 {
+            manager.ipv4_info.firewall_status = FirewallStatus::Ok;
+            manager.add_external_address("127.0.0.2".parse().unwrap());
+        } else {
+            manager.ipv6_info.firewall_status = FirewallStatus::Ok;
+            manager.add_external_address("::2".parse().unwrap());
+        }
 
         // verify that the address is still published and that host is the same
         assert!(
             manager.local_router_info.addresses().any(|address| match address {
                 RouterAddress::Ntcp2 { options, .. } => {
-                    options.get(&Str::from("host")) == Some(&Str::from("192.168.0.1"))
-                        && options.get(&Str::from("i")).is_some()
+                    if ipv4 {
+                        options.get(&Str::from("host")) == Some(&Str::from("127.0.0.1"))
+                            && options.get(&Str::from("i")).is_some()
+                    } else {
+                        options.get(&Str::from("host")) == Some(&Str::from("::1"))
+                            && options.get(&Str::from("i")).is_some()
+                    }
                 }
                 _ => false,
             })
@@ -1906,13 +2267,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn discovered_address_doesnt_match_published_address_ssu2() {
+    async fn discovered_address_doesnt_match_published_address_ssu2_ipv4() {
+        discovered_address_doesnt_match_published_address_ssu2(true).await;
+    }
+
+    #[tokio::test]
+    async fn discovered_address_doesnt_match_published_address_ssu2_ipv6() {
+        discovered_address_doesnt_match_published_address_ssu2(false).await;
+    }
+
+    async fn discovered_address_doesnt_match_published_address_ssu2(ipv4: bool) {
         let context = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
             port: 0,
-            host: Some("192.168.1.1".parse().unwrap()),
+            ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
+            ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
+            ipv4,
+            ipv6: !ipv4,
             publish: true,
             static_key: [0u8; 32],
             intro_key: [1u8; 32],
+            ipv4_mtu: None,
+            ipv6_mtu: None,
         }))
         .await
         .unwrap()
@@ -1929,19 +2304,34 @@ mod tests {
         assert!(
             manager.local_router_info.addresses().any(|address| match address {
                 RouterAddress::Ssu2 { options, .. } => {
-                    options.get(&Str::from("host")) == Some(&Str::from("192.168.1.1"))
+                    if ipv4 {
+                        options.get(&Str::from("host")) == Some(&Str::from("127.0.0.1"))
+                    } else {
+                        options.get(&Str::from("host")) == Some(&Str::from("::1"))
+                    }
                 }
                 _ => false,
             })
         );
 
-        manager.add_external_address("192.168.0.1".parse().unwrap());
+        // address doesn't match our current adress
+        if ipv4 {
+            manager.ipv4_info.firewall_status = FirewallStatus::Ok;
+            manager.add_external_address("127.0.0.2".parse().unwrap());
+        } else {
+            manager.ipv6_info.firewall_status = FirewallStatus::Ok;
+            manager.add_external_address("::2".parse().unwrap());
+        }
 
         // verify that the address is still unpublished
         assert!(
             manager.local_router_info.addresses().any(|address| match address {
                 RouterAddress::Ssu2 { options, .. } => {
-                    options.get(&Str::from("host")) == Some(&Str::from("192.168.1.1"))
+                    if ipv4 {
+                        options.get(&Str::from("host")) == Some(&Str::from("127.0.0.1"))
+                    } else {
+                        options.get(&Str::from("host")) == Some(&Str::from("::1"))
+                    }
                 }
                 _ => false,
             })
@@ -2526,10 +2916,15 @@ mod tests {
         let (remote_router_info, _, _) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
                 port: 888u16,
-                host: Some("127.0.0.1".parse().unwrap()),
+                ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                ipv6_host: None,
+                ipv4: true,
+                ipv6: false,
                 publish: true,
                 static_key: [1u8; 32],
                 intro_key: [2u8; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
             })
             .build();
         let remote_router_id = remote_router_info.identity.id();
@@ -2648,20 +3043,30 @@ mod tests {
     async fn simultaneous_outbound_ssu2_connections() {
         let config1 = Ssu2Config {
             port: 0,
-            host: Some("127.0.0.1".parse().unwrap()),
+            ipv4_host: Some("127.0.0.1".parse().unwrap()),
+            ipv6_host: None,
+            ipv4: true,
+            ipv6: false,
             publish: true,
             static_key: [0xaa; 32],
             intro_key: [0xbb; 32],
+            ipv4_mtu: None,
+            ipv6_mtu: None,
         };
-        let (context1, address1) =
+        let (context1, address1, _) =
             Ssu2Transport::<MockRuntime>::initialize(Some(config1)).await.unwrap();
         let (router_info1, static_key1, signing_key1) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
                 port: address1.unwrap().ssu2_ipv4_address().port(),
-                host: Some("127.0.0.1".parse().unwrap()),
+                ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                ipv6_host: None,
+                ipv4: true,
+                ipv6: false,
                 publish: true,
                 static_key: [0xaa; 32],
                 intro_key: [0xbb; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
             })
             .build();
         let serialized1 = Bytes::from(router_info1.serialize(&signing_key1));
@@ -2670,21 +3075,31 @@ mod tests {
 
         let config2 = Ssu2Config {
             port: 0,
-            host: Some("127.0.0.1".parse().unwrap()),
+            ipv4_host: Some("127.0.0.1".parse().unwrap()),
+            ipv6_host: None,
+            ipv4: true,
+            ipv6: false,
             publish: true,
             static_key: [0xcc; 32],
             intro_key: [0xdd; 32],
+            ipv4_mtu: None,
+            ipv6_mtu: None,
         };
-        let (context2, address2) =
+        let (context2, address2, _) =
             Ssu2Transport::<MockRuntime>::initialize(Some(config2)).await.unwrap();
 
         let (router_info2, static_key2, signing_key2) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
                 port: address2.unwrap().ssu2_ipv4_address().port(),
-                host: Some("127.0.0.1".parse().unwrap()),
+                ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                ipv6_host: None,
+                ipv4: true,
+                ipv6: false,
                 publish: true,
                 static_key: [0xcc; 32],
                 intro_key: [0xdd; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
             })
             .build();
         let serialized2 = Bytes::from(router_info2.serialize(&signing_key2));
@@ -2985,10 +3400,15 @@ mod tests {
         let (router_info, static_key, signing_key) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
                 port: 888,
-                host: None,
+                ipv4_host: None,
+                ipv6_host: None,
+                ipv4: true,
+                ipv6: false,
                 publish: false,
                 static_key: [0x33; 32],
                 intro_key: [0x34; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
             })
             .build();
 
@@ -3034,7 +3454,7 @@ mod tests {
         manager.transports.push(Box::new(MockTransport { events: t_event_rx }));
 
         // set lower timeout for publishing router info
-        assert!(manager.introducers.is_empty());
+        assert!(manager.ipv4_info.introducers.is_empty());
         manager.router_info_republish_timer =
             <MockRuntime as Runtime>::timer(Duration::from_secs(0));
 
@@ -3076,6 +3496,7 @@ mod tests {
                 relay_tag: 1337,
                 router_id: introducer1.clone(),
                 expires: MockRuntime::time_since_epoch() + Duration::from_secs(80 * 60),
+                ipv4: true,
             })
             .await
             .unwrap();
@@ -3084,6 +3505,7 @@ mod tests {
                 relay_tag: 1338,
                 router_id: introducer2.clone(),
                 expires: MockRuntime::time_since_epoch() + Duration::from_secs(80 * 60),
+                ipv4: true,
             })
             .await
             .unwrap();
@@ -3094,6 +3516,7 @@ mod tests {
                 relay_tag: 1339,
                 router_id: introducer3.clone(),
                 expires: MockRuntime::time_since_epoch() - Duration::from_secs(1),
+                ipv4: true,
             })
             .await
             .unwrap();
@@ -3165,6 +3588,9 @@ mod tests {
         routers: Vec<RouterInfo>,
         transit_tunnels_disabled: bool,
         caps: Option<String>,
+        ipv6: bool,
+        both: bool,
+        publish: bool,
     }
 
     impl TestContextBuilder {
@@ -3193,6 +3619,21 @@ mod tests {
             self
         }
 
+        fn with_ipv6(mut self, ipv6: bool) -> Self {
+            self.ipv6 = ipv6;
+            self
+        }
+
+        fn with_publish(mut self) -> Self {
+            self.publish = true;
+            self
+        }
+
+        fn with_both(mut self) -> Self {
+            self.both = true;
+            self
+        }
+
         fn build(
             self,
         ) -> (
@@ -3201,30 +3642,43 @@ mod tests {
             Sender<RouterId>,
             Receiver<SubsystemEvent>,
         ) {
-            let mut builder = RouterInfoBuilder::default();
+            let mut builder = if self.ipv6 {
+                RouterInfoBuilder::default().with_ipv6()
+            } else {
+                RouterInfoBuilder::default()
+            };
 
-            if self.ssu2.is_some() {
-                builder = builder.with_ssu2(Ssu2Config {
-                    port: 8888,
-                    host: None,
-                    publish: false,
-                    static_key: [0x33; 32],
-                    intro_key: [0x34; 32],
-                });
+            let ssu2_config = self.ssu2.is_some().then(|| Ssu2Config {
+                port: 8888,
+                ipv4_host: None,
+                ipv6_host: None,
+                ipv6: self.both || self.ipv6,
+                ipv4: self.both || !self.ipv6,
+                publish: self.publish,
+                static_key: [0x33; 32],
+                intro_key: [0x34; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
+            });
+            let ntcp2_config = self.ntcp2.is_some().then(|| Ntcp2Config {
+                port: 8889,
+                ipv4_host: None,
+                ipv6_host: None,
+                ipv6: self.both || self.ipv6,
+                ipv4: self.both || !self.ipv6,
+                publish: self.publish,
+                key: [0xaa; 32],
+                iv: [0xbb; 16],
+            });
+
+            if let Some(ref ssu2) = ssu2_config {
+                builder = builder.with_ssu2(ssu2.clone());
             }
 
-            if self.ntcp2.is_some() {
-                builder = builder.with_ntcp2(Ntcp2Config {
-                    port: 8889,
-                    ipv4_host: None,
-                    ipv6_host: None,
-                    publish: false,
-                    key: [0xaa; 32],
-                    iv: [0xbb; 16],
-                    ipv4: true,
-                    ipv6: false,
-                });
+            if let Some(ref ntcp2) = ntcp2_config {
+                builder = builder.with_ntcp2(ntcp2.clone());
             }
+
             let (router_info, static_key, signing_key) = builder.build();
 
             let profile_storage = if self.routers.is_empty() {
@@ -3268,12 +3722,30 @@ mod tests {
 
             if let Some(ntcp2) = self.ntcp2 {
                 manager.transports.push(ntcp2);
-                manager.supported_transports.insert(TransportKind::Ntcp2V4);
+                manager.ntcp2_config = ntcp2_config;
+
+                if self.both {
+                    manager.supported_transports.insert(TransportKind::Ntcp2V6);
+                    manager.supported_transports.insert(TransportKind::Ntcp2V4);
+                } else if self.ipv6 {
+                    manager.supported_transports.insert(TransportKind::Ntcp2V6);
+                } else {
+                    manager.supported_transports.insert(TransportKind::Ntcp2V4);
+                }
             }
 
             if let Some(ssu2) = self.ssu2 {
                 manager.transports.push(ssu2);
-                manager.supported_transports.insert(TransportKind::Ssu2V4);
+                manager.ssu2_config = ssu2_config;
+
+                if self.both {
+                    manager.supported_transports.insert(TransportKind::Ssu2V6);
+                    manager.supported_transports.insert(TransportKind::Ssu2V4);
+                } else if self.ipv6 {
+                    manager.supported_transports.insert(TransportKind::Ssu2V6);
+                } else {
+                    manager.supported_transports.insert(TransportKind::Ssu2V4);
+                }
             }
 
             (manager, netdb_rx, dial_tx, transport_rx)
@@ -3281,7 +3753,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dial_ntcp2() {
+    async fn dial_ntcp2_ipv4() {
+        dial_ntcp2(true).await;
+    }
+
+    #[tokio::test]
+    async fn dial_ntcp2_ipv6() {
+        dial_ntcp2(false).await;
+    }
+
+    async fn dial_ntcp2(ipv4: bool) {
         pub struct MockTransport {
             tx: tokio::sync::mpsc::Sender<RouterId>,
         }
@@ -3305,13 +3786,13 @@ mod tests {
         let (router_info, ..) = RouterInfoBuilder::default()
             .with_ntcp2(Ntcp2Config {
                 port: 9999,
-                ipv4_host: Some("127.0.0.1".parse().unwrap()),
-                ipv6_host: None,
+                ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
+                ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
+                ipv4,
+                ipv6: !ipv4,
                 publish: true,
                 key: [0x11; 32],
                 iv: [0x22; 16],
-                ipv4: true,
-                ipv6: false,
             })
             .build();
         let router_id = router_info.identity.id();
@@ -3319,6 +3800,7 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
         let (manager, _netdb_rx, dial_tx, _subsys_rx) = TestContextBuilder::default()
             .with_router(router_info)
+            .with_ipv6(!ipv4)
             .with_ntcp2(Box::new(MockTransport { tx }))
             .build();
         tokio::spawn(manager);
@@ -3326,6 +3808,136 @@ mod tests {
         dial_tx.send(router_id.clone()).await.unwrap();
 
         assert_eq!(timeout!(rx.recv()).await.unwrap().unwrap(), router_id);
+    }
+
+    #[tokio::test]
+    async fn dial_ntcp2_ip_not_supported_ipv4() {
+        dial_ntcp2_ip_not_supported(false, true).await;
+    }
+
+    #[tokio::test]
+    async fn dial_ntcp2_ip_not_supported_ipv6() {
+        dial_ntcp2_ip_not_supported(true, false).await;
+    }
+
+    async fn dial_ntcp2_ip_not_supported(local_ipv4: bool, remote_ipv4: bool) {
+        pub struct MockTransport {
+            tx: tokio::sync::mpsc::Sender<RouterId>,
+        }
+
+        impl Transport for MockTransport {
+            fn connect(&mut self, router_info: RouterInfo) {
+                self.tx.try_send(router_info.identity.id()).unwrap();
+            }
+            fn accept(&mut self, _: &RouterId) {}
+            fn reject(&mut self, _: &RouterId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+
+            fn poll_next(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+                Poll::Pending
+            }
+        }
+
+        let (router_info, ..) = RouterInfoBuilder::default()
+            .with_ntcp2(Ntcp2Config {
+                port: 9999,
+                ipv4_host: remote_ipv4.then_some("127.0.0.1".parse().unwrap()),
+                ipv6_host: (!remote_ipv4).then_some("::1".parse().unwrap()),
+                ipv4: remote_ipv4,
+                ipv6: !remote_ipv4,
+                publish: true,
+                key: [0x11; 32],
+                iv: [0x22; 16],
+            })
+            .build();
+        let router_id = router_info.identity.id();
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let (manager, _netdb_rx, dial_tx, subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ipv6(!local_ipv4)
+            .with_ntcp2(Box::new(MockTransport { tx }))
+            .build();
+        tokio::spawn(manager);
+
+        dial_tx.send(router_id.clone()).await.unwrap();
+
+        match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
+            SubsystemEvent::ConnectionFailure { router_id: remote } =>
+                assert_eq!(remote, router_id),
+            _ => panic!("invalid event"),
+        }
+
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn dial_ssu2_ip_not_supported_ipv4() {
+        dial_ssu2_ip_not_supported(false, true).await;
+    }
+
+    #[tokio::test]
+    async fn dial_ssu2_ip_not_supported_ipv6() {
+        dial_ssu2_ip_not_supported(true, false).await;
+    }
+
+    async fn dial_ssu2_ip_not_supported(local_ipv4: bool, remote_ipv4: bool) {
+        pub struct MockTransport {
+            tx: tokio::sync::mpsc::Sender<RouterId>,
+        }
+
+        impl Transport for MockTransport {
+            fn connect(&mut self, router_info: RouterInfo) {
+                self.tx.try_send(router_info.identity.id()).unwrap();
+            }
+            fn accept(&mut self, _: &RouterId) {}
+            fn reject(&mut self, _: &RouterId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+
+            fn poll_next(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+                Poll::Pending
+            }
+        }
+
+        let (router_info, ..) = RouterInfoBuilder::default()
+            .with_ssu2(Ssu2Config {
+                port: 9999,
+                ipv4_host: remote_ipv4.then_some("127.0.0.1".parse().unwrap()),
+                ipv6_host: (!remote_ipv4).then_some("::1".parse().unwrap()),
+                ipv4: remote_ipv4,
+                ipv6: !remote_ipv4,
+                publish: true,
+                intro_key: [0x11; 32],
+                static_key: [0x22; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
+            })
+            .build();
+        let router_id = router_info.identity.id();
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let (manager, _netdb_rx, dial_tx, subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ipv6(!local_ipv4)
+            .with_ssu2(Box::new(MockTransport { tx }))
+            .build();
+        tokio::spawn(manager);
+
+        dial_tx.send(router_id.clone()).await.unwrap();
+
+        match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
+            SubsystemEvent::ConnectionFailure { router_id: remote } =>
+                assert_eq!(remote, router_id),
+            _ => panic!("invalid event"),
+        }
+
+        assert!(rx.try_recv().is_err());
     }
 
     // attempt to dial router over ntcp2 but transport not enabled
@@ -3384,7 +3996,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dial_ssu2() {
+    async fn dial_ssu2_ipv4() {
+        dial_ssu2(true).await;
+    }
+
+    #[tokio::test]
+    async fn dial_ssu2_ipv6() {
+        dial_ssu2(false).await;
+    }
+
+    async fn dial_ssu2(ipv4: bool) {
         pub struct MockTransport {
             tx: tokio::sync::mpsc::Sender<RouterId>,
         }
@@ -3408,10 +4029,15 @@ mod tests {
         let (router_info, ..) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
                 port: 9999,
-                host: Some("127.0.0.1".parse().unwrap()),
+                ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
+                ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
+                ipv4,
+                ipv6: !ipv4,
                 publish: true,
                 static_key: [0x11; 32],
                 intro_key: [0x22; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
             })
             .build();
         let router_id = router_info.identity.id();
@@ -3419,6 +4045,7 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
         let (manager, _netdb_rx, dial_tx, _subsys_rx) = TestContextBuilder::default()
             .with_router(router_info)
+            .with_ipv6(!ipv4)
             .with_ssu2(Box::new(MockTransport { tx }))
             .build();
         tokio::spawn(manager);
@@ -3454,10 +4081,15 @@ mod tests {
         let (router_info, ..) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
                 port: 9999,
-                host: Some("127.0.0.1".parse().unwrap()),
+                ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                ipv6_host: None,
+                ipv4: true,
+                ipv6: false,
                 publish: true,
                 static_key: [0x11; 32],
                 intro_key: [0x22; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
             })
             .build();
         let router_id = router_info.identity.id();
@@ -3510,10 +4142,15 @@ mod tests {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 9999,
-                    host: Some("127.0.0.1".parse().unwrap()),
+                    ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: true,
                     static_key: [0x11; 32],
                     intro_key: [0x22; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
 
@@ -3527,10 +4164,15 @@ mod tests {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 10000,
-                    host: None,
+                    ipv4_host: None,
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
 
@@ -3596,10 +4238,15 @@ mod tests {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 9999,
-                    host: Some("127.0.0.1".parse().unwrap()),
+                    ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: true,
                     static_key: [0x11; 32],
                     intro_key: [0x22; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
 
@@ -3613,10 +4260,15 @@ mod tests {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 10000,
-                    host: None,
+                    ipv4_host: None,
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
 
@@ -3730,10 +4382,15 @@ mod tests {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 9999,
-                    host: Some("127.0.0.1".parse().unwrap()),
+                    ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: true,
                     static_key: [0x11; 32],
                     intro_key: [0x22; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
 
@@ -3747,10 +4404,15 @@ mod tests {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 10000,
-                    host: None,
+                    ipv4_host: None,
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
 
@@ -3857,10 +4519,15 @@ mod tests {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 9999,
-                    host: Some("127.0.0.1".parse().unwrap()),
+                    ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: true,
                     static_key: [0x11; 32],
                     intro_key: [0x22; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
 
@@ -3874,10 +4541,15 @@ mod tests {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 10000,
-                    host: None,
+                    ipv4_host: None,
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
 
@@ -3996,10 +4668,15 @@ mod tests {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 9999,
-                    host: Some("127.0.0.1".parse().unwrap()),
+                    ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: true,
                     static_key: [0x11; 32],
                     intro_key: [0x22; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
 
@@ -4013,10 +4690,15 @@ mod tests {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 10000,
-                    host: None,
+                    ipv4_host: None,
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
 
@@ -4130,10 +4812,15 @@ mod tests {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 9999,
-                    host: Some("127.0.0.1".parse().unwrap()),
+                    ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: true,
                     static_key: [0x11; 32],
                     intro_key: [0x22; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
 
@@ -4147,10 +4834,15 @@ mod tests {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 10000,
-                    host: None,
+                    ipv4_host: None,
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
 
@@ -4287,10 +4979,15 @@ mod tests {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 9999,
-                    host: Some("127.0.0.1".parse().unwrap()),
+                    ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: true,
                     static_key: [0x11; 32],
                     intro_key: [0x22; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
 
@@ -4304,10 +5001,15 @@ mod tests {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 10000,
-                    host: None,
+                    ipv4_host: None,
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
 
@@ -4455,10 +5157,15 @@ mod tests {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 9999,
-                    host: Some("127.0.0.1".parse().unwrap()),
+                    ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: true,
                     static_key: [0x11; 32],
                     intro_key: [0x22; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
 
@@ -4472,10 +5179,15 @@ mod tests {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 10000,
-                    host: None,
+                    ipv4_host: None,
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
 
@@ -4617,10 +5329,15 @@ mod tests {
                 let (introducer, _, sigkey) = RouterInfoBuilder::default()
                     .with_ssu2(Ssu2Config {
                         port: 9999,
-                        host: Some("127.0.0.1".parse().unwrap()),
+                        ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                        ipv6_host: None,
+                        ipv4: true,
+                        ipv6: false,
                         publish: true,
                         static_key: [0x11 + i; 32],
                         intro_key: [0x22 + i; 32],
+                        ipv4_mtu: None,
+                        ipv6_mtu: None,
                     })
                     .build();
 
@@ -4635,10 +5352,15 @@ mod tests {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 10000,
-                    host: None,
+                    ipv4_host: None,
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
 
@@ -4796,10 +5518,15 @@ mod tests {
                 let (introducer, _, sigkey) = RouterInfoBuilder::default()
                     .with_ssu2(Ssu2Config {
                         port: 9999,
-                        host: Some("127.0.0.1".parse().unwrap()),
+                        ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                        ipv6_host: None,
+                        ipv4: true,
+                        ipv6: false,
                         publish: true,
                         static_key: [0x11 + i; 32],
                         intro_key: [0x22 + i; 32],
+                        ipv4_mtu: None,
+                        ipv6_mtu: None,
                     })
                     .build();
 
@@ -4814,10 +5541,15 @@ mod tests {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 10000,
-                    host: None,
+                    ipv4_host: None,
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
 
@@ -4976,10 +5708,15 @@ mod tests {
                 let (introducer, _, sigkey) = RouterInfoBuilder::default()
                     .with_ssu2(Ssu2Config {
                         port: 9999,
-                        host: Some("127.0.0.1".parse().unwrap()),
+                        ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                        ipv6_host: None,
+                        ipv4: true,
+                        ipv6: false,
                         publish: true,
                         static_key: [0x11 + i; 32],
                         intro_key: [0x22 + i; 32],
+                        ipv4_mtu: None,
+                        ipv6_mtu: None,
                     })
                     .build();
 
@@ -4994,10 +5731,15 @@ mod tests {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 10000,
-                    host: None,
+                    ipv4_host: None,
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
 
@@ -5141,10 +5883,15 @@ mod tests {
                 let (introducer, _, sigkey) = RouterInfoBuilder::default()
                     .with_ssu2(Ssu2Config {
                         port: 9999,
-                        host: Some("127.0.0.1".parse().unwrap()),
+                        ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                        ipv6_host: None,
+                        ipv4: true,
+                        ipv6: false,
                         publish: true,
                         static_key: [0x11 + i; 32],
                         intro_key: [0x22 + i; 32],
+                        ipv4_mtu: None,
+                        ipv6_mtu: None,
                     })
                     .build();
 
@@ -5159,10 +5906,15 @@ mod tests {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 10000,
-                    host: None,
+                    ipv4_host: None,
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
 
@@ -5364,10 +6116,15 @@ mod tests {
                 let (introducer, _, sigkey) = RouterInfoBuilder::default()
                     .with_ssu2(Ssu2Config {
                         port: 9999,
-                        host: Some("127.0.0.1".parse().unwrap()),
+                        ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                        ipv6_host: None,
+                        ipv4: true,
+                        ipv6: false,
                         publish: true,
                         static_key: [0x11 + i; 32],
                         intro_key: [0x22 + i; 32],
+                        ipv4_mtu: None,
+                        ipv6_mtu: None,
                     })
                     .build();
 
@@ -5382,10 +6139,15 @@ mod tests {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 10000,
-                    host: None,
+                    ipv4_host: None,
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
 
@@ -5557,10 +6319,15 @@ mod tests {
                 let (introducer, _, sigkey) = RouterInfoBuilder::default()
                     .with_ssu2(Ssu2Config {
                         port: 9999,
-                        host: Some("127.0.0.1".parse().unwrap()),
+                        ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                        ipv6_host: None,
+                        ipv4: true,
+                        ipv6: false,
                         publish: true,
                         static_key: [0x11 + i; 32],
                         intro_key: [0x22 + i; 32],
+                        ipv4_mtu: None,
+                        ipv6_mtu: None,
                     })
                     .build();
 
@@ -5575,10 +6342,15 @@ mod tests {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: 10000,
-                    host: None,
+                    ipv4_host: None,
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
 
@@ -5731,7 +6503,7 @@ mod tests {
             .with_transit_tunnels_disabled()
             .build();
 
-        manager.on_firewall_status(FirewallStatus::Ok);
+        manager.on_firewall_status(FirewallStatus::Ok, true);
         manager.publish_router_info();
 
         match netdb_rx.try_recv().unwrap() {
@@ -5755,7 +6527,7 @@ mod tests {
             .with_transit_tunnels_disabled()
             .build();
 
-        manager.on_firewall_status(FirewallStatus::SymmetricNat);
+        manager.on_firewall_status(FirewallStatus::SymmetricNat, true);
         manager.publish_router_info();
 
         match netdb_rx.try_recv().unwrap() {
@@ -5794,13 +6566,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn publish_router_info_unknown_firewall_status() {
+    async fn publish_router_info_unknown_firewall_status_ipv4() {
+        publish_router_info_unknown_firewall_status(true).await
+    }
+
+    #[tokio::test]
+    async fn publish_router_info_unknown_firewall_status_ipv6() {
+        publish_router_info_unknown_firewall_status(false).await
+    }
+
+    async fn publish_router_info_unknown_firewall_status(ipv4: bool) {
         let (router_info, ..) = RouterInfoBuilder::default().build();
         let (mut manager, netdb_rx, _dial_tx, _subsys_rx) = TestContextBuilder::default()
             .with_router(router_info)
             .with_ntcp2(Box::new(NoopTransport {}))
+            .with_publish()
             .build();
 
+        // since firewall status is unknown so the address is not published
+        if ipv4 {
+            manager.add_external_address("127.0.0.1".parse().unwrap());
+        } else {
+            manager.add_external_address("::1".parse().unwrap());
+        }
         manager.publish_router_info();
 
         match netdb_rx.try_recv().unwrap() {
@@ -5810,20 +6598,53 @@ mod tests {
                     router_info.options.get(&Str::from("caps")),
                     Some(&Str::from("L"))
                 );
+                assert!(router_info.addresses.iter().all(|address| match address {
+                    RouterAddress::Ntcp2 {
+                        socket_address,
+                        options,
+                        ..
+                    }
+                    | RouterAddress::Ssu2 {
+                        options,
+                        socket_address,
+                        ..
+                    } =>
+                        socket_address.is_none()
+                            && options.get(&Str::from("host")).is_none()
+                            && options.get(&Str::from("port")).is_none(),
+                }));
             }
             _ => panic!("unexpected action"),
         }
     }
 
     #[tokio::test]
-    async fn publish_router_info_symnat() {
+    async fn publish_router_info_symnat_ipv4() {
+        publish_router_info_symnat(true).await;
+    }
+
+    #[tokio::test]
+    async fn publish_router_info_symnat_ipv6() {
+        publish_router_info_symnat(false).await;
+    }
+
+    async fn publish_router_info_symnat(ipv4: bool) {
         let (router_info, ..) = RouterInfoBuilder::default().build();
         let (mut manager, netdb_rx, _dial_tx, _subsys_rx) = TestContextBuilder::default()
             .with_router(router_info)
             .with_ntcp2(Box::new(NoopTransport {}))
+            .with_publish()
             .build();
 
-        manager.on_firewall_status(FirewallStatus::SymmetricNat);
+        // since firewall status is symnat so the address is not published
+        manager.on_firewall_status(FirewallStatus::SymmetricNat, ipv4);
+
+        if ipv4 {
+            manager.add_external_address("127.0.0.1".parse().unwrap());
+        } else {
+            manager.add_external_address("::1".parse().unwrap());
+        }
+
         manager.publish_router_info();
 
         match netdb_rx.try_recv().unwrap() {
@@ -5833,20 +6654,53 @@ mod tests {
                     router_info.options.get(&Str::from("caps")),
                     Some(&Str::from("LU"))
                 );
+                assert!(router_info.addresses.iter().all(|address| match address {
+                    RouterAddress::Ntcp2 {
+                        socket_address,
+                        options,
+                        ..
+                    }
+                    | RouterAddress::Ssu2 {
+                        options,
+                        socket_address,
+                        ..
+                    } =>
+                        socket_address.is_none()
+                            && options.get(&Str::from("host")).is_none()
+                            && options.get(&Str::from("port")).is_none(),
+                }));
             }
             _ => panic!("unexpected action"),
         }
     }
 
     #[tokio::test]
-    async fn publish_router_info_firewalled() {
+    async fn publish_router_info_firewalled_ipv4() {
+        publish_router_info_firewalled(true).await;
+    }
+
+    #[tokio::test]
+    async fn publish_router_info_firewalled_ipv6() {
+        publish_router_info_firewalled(false).await;
+    }
+
+    async fn publish_router_info_firewalled(ipv4: bool) {
         let (router_info, ..) = RouterInfoBuilder::default().build();
         let (mut manager, netdb_rx, _dial_tx, _subsys_rx) = TestContextBuilder::default()
             .with_router(router_info)
             .with_ntcp2(Box::new(NoopTransport {}))
+            .with_publish()
             .build();
 
-        manager.on_firewall_status(FirewallStatus::Firewalled);
+        // since firewall status is firewalled so the address is not published
+        manager.on_firewall_status(FirewallStatus::Firewalled, ipv4);
+
+        if ipv4 {
+            manager.add_external_address("127.0.0.1".parse().unwrap());
+        } else {
+            manager.add_external_address("::1".parse().unwrap());
+        }
+
         manager.publish_router_info();
 
         match netdb_rx.try_recv().unwrap() {
@@ -5856,20 +6710,54 @@ mod tests {
                     router_info.options.get(&Str::from("caps")),
                     Some(&Str::from("LU"))
                 );
+                assert!(router_info.addresses.iter().all(|address| match address {
+                    RouterAddress::Ntcp2 {
+                        socket_address,
+                        options,
+                        ..
+                    }
+                    | RouterAddress::Ssu2 {
+                        options,
+                        socket_address,
+                        ..
+                    } =>
+                        socket_address.is_none()
+                            && options.get(&Str::from("host")).is_none()
+                            && options.get(&Str::from("port")).is_none(),
+                }));
             }
             _ => panic!("unexpected action"),
         }
     }
 
     #[tokio::test]
-    async fn publish_router_info_not_firewalled() {
+    async fn publish_router_info_not_firewalled_ipv4() {
+        publish_router_info_not_firewalled(true).await;
+    }
+
+    #[tokio::test]
+    async fn publish_router_info_not_firewalled_ipv6() {
+        publish_router_info_not_firewalled(false).await;
+    }
+
+    async fn publish_router_info_not_firewalled(ipv4: bool) {
         let (router_info, ..) = RouterInfoBuilder::default().build();
         let (mut manager, netdb_rx, _dial_tx, _subsys_rx) = TestContextBuilder::default()
             .with_router(router_info)
             .with_ntcp2(Box::new(NoopTransport {}))
+            .with_publish()
+            .with_ipv6(!ipv4)
             .build();
 
-        manager.on_firewall_status(FirewallStatus::Ok);
+        // since firewall status is ok so the addresses are published
+        manager.on_firewall_status(FirewallStatus::Ok, ipv4);
+
+        if ipv4 {
+            manager.add_external_address("127.0.0.1".parse().unwrap());
+        } else {
+            manager.add_external_address("::1".parse().unwrap());
+        }
+
         manager.publish_router_info();
 
         match netdb_rx.try_recv().unwrap() {
@@ -5879,6 +6767,22 @@ mod tests {
                     router_info.options.get(&Str::from("caps")),
                     Some(&Str::from("LR"))
                 );
+
+                assert!(router_info.addresses.iter().all(|address| match address {
+                    RouterAddress::Ntcp2 {
+                        socket_address,
+                        options,
+                        ..
+                    }
+                    | RouterAddress::Ssu2 {
+                        options,
+                        socket_address,
+                        ..
+                    } =>
+                        socket_address.is_some()
+                            && options.get(&Str::from("host")).is_some()
+                            && options.get(&Str::from("port")).is_some(),
+                }));
             }
             _ => panic!("unexpected action"),
         }
@@ -5894,7 +6798,7 @@ mod tests {
             .with_caps("XfR".to_string())
             .build();
 
-        manager.on_firewall_status(FirewallStatus::SymmetricNat);
+        manager.on_firewall_status(FirewallStatus::SymmetricNat, true);
         manager.publish_router_info();
 
         match netdb_rx.try_recv().unwrap() {
@@ -5909,5 +6813,443 @@ mod tests {
             }
             _ => panic!("unexpected action"),
         }
+    }
+
+    #[tokio::test]
+    async fn address_discovered_and_modified_ipv4() {
+        address_discovered_and_modified(true).await;
+    }
+
+    #[tokio::test]
+    async fn address_discovered_and_modified_ipv6() {
+        address_discovered_and_modified(false).await;
+    }
+
+    async fn address_discovered_and_modified(ipv4: bool) {
+        let (router_info, ..) = RouterInfoBuilder::default().build();
+        let (mut manager, netdb_rx, _dial_tx, _subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ntcp2(Box::new(NoopTransport {}))
+            .with_publish()
+            .with_both()
+            .build();
+
+        // since firewall status is ok so the addresses are published
+        //
+        // but only one of ipv4/ipv6 external address is added and the other
+        // address will remain unpublished
+        manager.on_firewall_status(FirewallStatus::Ok, ipv4);
+
+        if ipv4 {
+            manager.add_external_address("127.0.0.1".parse().unwrap());
+        } else {
+            manager.add_external_address("::1".parse().unwrap());
+        }
+
+        manager.publish_router_info();
+
+        match netdb_rx.try_recv().unwrap() {
+            NetDbAction::PublishRouterInfo { router_info, .. } => {
+                let router_info = RouterInfo::parse::<MockRuntime>(&router_info).unwrap();
+                assert_eq!(
+                    router_info.options.get(&Str::from("caps")),
+                    Some(&Str::from("LR"))
+                );
+
+                // verify there's 1 published ipv4 address and 1 unpublished ipv6 address
+                if ipv4 {
+                    assert_eq!(
+                        router_info
+                            .addresses
+                            .iter()
+                            .filter(|address| match address {
+                                RouterAddress::Ntcp2 { socket_address, .. } =>
+                                    socket_address.map_or(false, |address| address.is_ipv4()),
+                                RouterAddress::Ssu2 { .. } => unreachable!(),
+                            })
+                            .count(),
+                        1
+                    );
+                    assert_eq!(
+                        router_info
+                            .addresses
+                            .iter()
+                            .filter(|address| match address {
+                                RouterAddress::Ntcp2 { socket_address, .. } =>
+                                    socket_address.map_or(false, |address| address.is_ipv6()),
+                                RouterAddress::Ssu2 { .. } => unreachable!(),
+                            })
+                            .count(),
+                        0
+                    );
+                } else {
+                    // verify there's 1 published ipv6 address and 1 unpublished ipv4 address
+                    assert_eq!(
+                        router_info
+                            .addresses
+                            .iter()
+                            .filter(|address| match address {
+                                RouterAddress::Ntcp2 { socket_address, .. } =>
+                                    socket_address.map_or(false, |address| address.is_ipv6()),
+                                RouterAddress::Ssu2 { .. } => unreachable!(),
+                            })
+                            .count(),
+                        1
+                    );
+                    assert_eq!(
+                        router_info
+                            .addresses
+                            .iter()
+                            .filter(|address| match address {
+                                RouterAddress::Ntcp2 { socket_address, .. } =>
+                                    socket_address.map_or(false, |address| address.is_ipv4()),
+                                RouterAddress::Ssu2 { .. } => unreachable!(),
+                            })
+                            .count(),
+                        0
+                    );
+                }
+
+                assert!(router_info.addresses.iter().all(|address| match address {
+                    RouterAddress::Ssu2 { .. } => unreachable!(),
+                    RouterAddress::Ntcp2 {
+                        socket_address,
+                        options,
+                        ..
+                    } => {
+                        if ipv4 {
+                            match socket_address {
+                                Some(address) =>
+                                    address.is_ipv4()
+                                        && options.get(&Str::from("host")).is_some()
+                                        && options.get(&Str::from("port")).is_some(),
+                                _ =>
+                                    options.get(&Str::from("host")).is_none()
+                                        && options.get(&Str::from("port")).is_none(),
+                            }
+                        } else {
+                            match socket_address {
+                                Some(address) =>
+                                    address.is_ipv6()
+                                        && options.get(&Str::from("host")).is_some()
+                                        && options.get(&Str::from("port")).is_some(),
+                                _ =>
+                                    options.get(&Str::from("host")).is_none()
+                                        && options.get(&Str::from("port")).is_none(),
+                            }
+                        }
+                    }
+                }));
+            }
+            _ => panic!("unexpected action"),
+        }
+    }
+
+    #[tokio::test]
+    async fn introducer_transport_mismatch_ipv4() {
+        introducer_transport_mismatch(true).await
+    }
+
+    #[tokio::test]
+    async fn introducer_transport_mismatch_ipv6() {
+        introducer_transport_mismatch(false).await
+    }
+
+    async fn introducer_transport_mismatch(ipv4: bool) {
+        pub struct MockTransport {}
+
+        impl Transport for MockTransport {
+            fn connect(&mut self, _: RouterInfo) {}
+            fn accept(&mut self, _: &RouterId) {}
+            fn reject(&mut self, _: &RouterId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+
+            fn poll_next(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+                Poll::Pending
+            }
+        }
+
+        // introducers support only either ipv4 or ipv6
+        let introducers = (0..3)
+            .map(|i| {
+                let (introducer, _, sigkey) = RouterInfoBuilder::default()
+                    .with_ssu2(Ssu2Config {
+                        port: 8888 + i,
+                        ipv4_host: (!ipv4).then_some("127.0.0.1".parse().unwrap()),
+                        ipv6_host: ipv4.then_some("::1".parse().unwrap()),
+                        ipv4: !ipv4,
+                        ipv6: ipv4,
+                        publish: true,
+                        static_key: [0x11 + i as u8; 32],
+                        intro_key: [0x22 + i as u8; 32],
+                        ipv4_mtu: None,
+                        ipv6_mtu: None,
+                    })
+                    .build();
+
+                (
+                    introducer.identity.id(),
+                    RouterInfo::parse::<MockRuntime>(introducer.serialize(&sigkey)).unwrap(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        // the router we're attempting to dial support both ipv4 and ipv6
+        let (mut router_info, router_id) = {
+            let (router_info, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 10000,
+                    ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                    ipv6_host: Some("::1".parse().unwrap()),
+                    ipv4: true,
+                    ipv6: true,
+                    publish: false,
+                    static_key: [0x33; 32],
+                    intro_key: [0x44; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(router_info.serialize(&sigkey)).unwrap(),
+                router_info.identity.id(),
+            )
+        };
+
+        // add introducer for `router_info`
+        match router_info.addresses.get_mut(0).unwrap() {
+            RouterAddress::Ssu2 {
+                introducers: router_introducers,
+                ..
+            } =>
+                for (i, (introducer_router_id, _)) in introducers.iter().enumerate() {
+                    router_introducers.push((introducer_router_id.clone(), 1337 + i as u32));
+                },
+            _ => panic!("expected ssu2"),
+        }
+
+        let mut builder = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ipv6(!ipv4)
+            .with_ssu2(Box::new(MockTransport {}));
+
+        // add all introducers to profile storage
+        for (_, introducer) in &introducers {
+            builder = builder.with_router(introducer.clone());
+        }
+
+        let (mut manager, _netdb_rx, dial_tx, subsys_rx) = builder.build();
+
+        // send dial request for router that needs relay
+        dial_tx.send(router_id.clone()).await.unwrap();
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
+            SubsystemEvent::ConnectionFailure { router_id: remote } =>
+                assert_eq!(remote, router_id),
+            _ => panic!("invalid event"),
+        }
+    }
+
+    #[tokio::test]
+    async fn introducer_transport_mixed_ipv4() {
+        introducer_transport_mixed(true).await
+    }
+
+    #[tokio::test]
+    async fn introducer_transport_mixed_ipv6() {
+        introducer_transport_mixed(false).await
+    }
+
+    async fn introducer_transport_mixed(ipv4: bool) {
+        pub struct MockTransport {
+            conn_tx: tokio::sync::mpsc::Sender<RouterId>,
+        }
+
+        impl Transport for MockTransport {
+            fn connect(&mut self, router_info: RouterInfo) {
+                self.conn_tx.try_send(router_info.identity.id()).unwrap();
+            }
+            fn accept(&mut self, _: &RouterId) {}
+            fn reject(&mut self, _: &RouterId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+
+            fn poll_next(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+                Poll::Pending
+            }
+        }
+
+        // first introducer is over ipv4 and the second is over ipv6
+        let ipv4_introducer = ipv4.then(|| {
+            let (introducer, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 9999,
+                    ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
+                    publish: true,
+                    static_key: [0x11; 32],
+                    intro_key: [0x22; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
+                })
+                .build();
+
+            (
+                introducer.identity.id(),
+                RouterInfo::parse::<MockRuntime>(introducer.serialize(&sigkey)).unwrap(),
+            )
+        });
+        let ipv6_introducer = (!ipv4).then(|| {
+            let (introducer, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 9999,
+                    ipv4_host: None,
+                    ipv6_host: Some("::1".parse().unwrap()),
+                    ipv4: false,
+                    ipv6: true,
+                    publish: true,
+                    static_key: [0x33; 32],
+                    intro_key: [0x44; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
+                })
+                .build();
+
+            (
+                introducer.identity.id(),
+                RouterInfo::parse::<MockRuntime>(introducer.serialize(&sigkey)).unwrap(),
+            )
+        });
+
+        // the router that's being dialed supports both ipv4 and ipv6
+        let (mut router_info, router_id) = {
+            let (router_info, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 10000,
+                    ipv4_host: None,
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: true,
+                    publish: false,
+                    static_key: [0x33; 32],
+                    intro_key: [0x44; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(router_info.serialize(&sigkey)).unwrap(),
+                router_info.identity.id(),
+            )
+        };
+
+        let mut introducer_router_infos = vec![];
+
+        if let Some((introducer, introducer_router_info)) = &ipv4_introducer {
+            match router_info.addresses.get_mut(0).unwrap() {
+                RouterAddress::Ssu2 {
+                    introducers: router_introducers,
+                    ..
+                } => {
+                    router_introducers.push((introducer.clone(), 1337));
+                    introducer_router_infos.push(introducer_router_info.clone());
+                }
+                _ => panic!("expected ssu2"),
+            }
+        }
+
+        if let Some((introducer, introducer_router_info)) = &ipv6_introducer {
+            match router_info.addresses.get_mut(1).unwrap() {
+                RouterAddress::Ssu2 {
+                    introducers: router_introducers,
+                    ..
+                } => {
+                    router_introducers.push((introducer.clone(), 1338));
+                    introducer_router_infos.push(introducer_router_info.clone());
+                }
+                _ => panic!("expected ssu2"),
+            }
+        }
+
+        let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel(16);
+
+        let mut builder = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ssu2(Box::new(MockTransport { conn_tx }));
+
+        builder = match ipv4 {
+            true => builder,
+            false => builder.with_ipv6(true),
+        };
+
+        // add all introducers to profile storage
+        for introducer in introducer_router_infos {
+            builder = builder.with_router(introducer);
+        }
+
+        let (mut manager, _netdb_rx, dial_tx, _subsys_rx) = builder.build();
+
+        // send dial request for router that needs relay
+        dial_tx.send(router_id.clone()).await.unwrap();
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        let introducer_ids = match ipv4 {
+            // ipv4, only the first introducer is dialed
+            true => {
+                let introducer_router_id = conn_rx.try_recv().unwrap();
+                assert_eq!(introducer_router_id, ipv4_introducer.unwrap().0);
+                assert!(conn_rx.try_recv().is_err());
+
+                vec![introducer_router_id]
+            }
+
+            // ipv6 only the second introducer is dialed
+            false => {
+                let introducer_router_id = conn_rx.try_recv().unwrap();
+                assert_eq!(introducer_router_id, ipv6_introducer.unwrap().0);
+                assert!(conn_rx.try_recv().is_err());
+
+                vec![introducer_router_id]
+            }
+        };
+
+        // verify that all introducers are being dialed and that the router
+        // is tracked in their dial context
+        assert!(introducer_ids.iter().all(|introducer_id| {
+            match manager.pending_connections.get(introducer_id) {
+                Some(routers) => routers.iter().any(|client| client == &router_id),
+                None => false,
+            }
+        }));
+
+        // verify that all introducers are in the pending introducer context
+        assert!(manager
+            .pending_introducers
+            .get(&router_id)
+            .unwrap()
+            .pending_connections
+            .iter()
+            .all(|key| introducer_ids.contains(key)));
+        assert!(manager.pending_introducers.get(&router_id).unwrap().pending_queries.is_empty());
     }
 }

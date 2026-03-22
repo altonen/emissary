@@ -86,11 +86,23 @@ pub struct Ntcp2Config {
 /// SSU2 configuration.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Ssu2Config {
+    /// SSU2 introduction key.
+    pub intro_key: [u8; 32],
+
+    /// Is IPv4 enabled.
+    pub ipv4: bool,
+
+    /// SSU2 listen address for IPv4.
+    pub ipv4_host: Option<Ipv4Addr>,
+
+    /// Is IPv6 enabled.
+    pub ipv6: bool,
+
+    /// SSU2 listen address for IPv6.
+    pub ipv6_host: Option<Ipv6Addr>,
+
     /// SSU2 port.
     pub port: u16,
-
-    /// SSU2 listen address.
-    pub host: Option<Ipv4Addr>,
 
     /// Should SSU2 be published in router info.
     pub publish: bool,
@@ -98,8 +110,11 @@ pub struct Ssu2Config {
     /// SSU2 static key.
     pub static_key: [u8; 32],
 
-    /// SSU2 introduction key.
-    pub intro_key: [u8; 32],
+    /// IPv4 MTU.
+    pub ipv4_mtu: Option<usize>,
+
+    /// IPv6 MTU.
+    pub ipv6_mtu: Option<usize>,
 }
 
 /// I2CP configuration.

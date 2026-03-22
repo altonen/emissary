@@ -83,6 +83,9 @@ pub enum RelayManagerEvent {
     IntroducerExpired {
         /// Router ID of the expired introducer.
         router_id: RouterId,
+
+        /// Was this introducer over IPv4.
+        ipv4: bool,
     },
 
     /// Relay connection succeeded.
@@ -116,6 +119,9 @@ pub struct RelayConnection {
     /// Intro key if Charlie.
     pub intro_key: [u8; 32],
 
+    /// MTU of remote router.
+    pub mtu: usize,
+
     /// Source connection ID.
     ///
     /// Derived from random nonce.
@@ -140,8 +146,10 @@ struct RelayClient {
 /// Relay server.
 struct RelayServer<R: Runtime> {
     /// Router ID of Bob.
-    #[allow(unused)]
     router_id: RouterId,
+
+    /// Is the introducer over IPv4.
+    ipv4: bool,
 
     /// When was the server created.
     created: R::Instant,
@@ -200,6 +208,12 @@ pub struct RelayManager<R: Runtime> {
     /// Our intro key.
     intro_key: [u8; 32],
 
+    /// IPv4 UDP socket.
+    ipv4_socket: Option<R::UdpSocket>,
+
+    /// IPv6 UDP socket.
+    ipv6_socket: Option<R::UdpSocket>,
+
     /// Maintenance timer
     maintenance_timer: R::Timer,
 
@@ -218,10 +232,7 @@ pub struct RelayManager<R: Runtime> {
     servers: HashMap<u32, RelayServer<R>>,
 
     /// Active sessions to routers which support the relay protocol.
-    sessions: HashMap<RouterId, Sender<RelayCommand>>,
-
-    /// UDP socket.
-    socket: R::UdpSocket,
+    sessions: HashMap<RouterId, (Sender<RelayCommand>, bool)>,
 
     /// Write buffer.
     write_buffer: VecDeque<(BytesMut, SocketAddr)>,
@@ -229,7 +240,12 @@ pub struct RelayManager<R: Runtime> {
 
 impl<R: Runtime> RelayManager<R> {
     /// Create new `RelayManager`.
-    pub fn new(intro_key: [u8; 32], router_ctx: RouterContext<R>, socket: R::UdpSocket) -> Self {
+    pub fn new(
+        intro_key: [u8; 32],
+        router_ctx: RouterContext<R>,
+        ipv4_socket: Option<R::UdpSocket>,
+        ipv6_socket: Option<R::UdpSocket>,
+    ) -> Self {
         let (event_tx, event_rx) = channel(128);
 
         Self {
@@ -247,7 +263,8 @@ impl<R: Runtime> RelayManager<R> {
             router_ctx,
             servers: HashMap::new(),
             sessions: HashMap::new(),
-            socket,
+            ipv4_socket,
+            ipv6_socket,
             write_buffer: VecDeque::new(),
         }
     }
@@ -285,14 +302,14 @@ impl<R: Runtime> RelayManager<R> {
 
     /// Register active session with a router that supports the relay protocol
     /// and is capable of acting as an introducer.
-    pub fn add_session(&mut self, router_id: &RouterId, sender: Sender<RelayCommand>) {
+    pub fn add_session(&mut self, router_id: &RouterId, sender: Sender<RelayCommand>, ipv4: bool) {
         tracing::trace!(
             target: LOG_TARGET,
             %router_id,
             "register session to router that supports relay",
         );
 
-        self.sessions.insert(router_id.clone(), sender);
+        self.sessions.insert(router_id.clone(), (sender, ipv4));
     }
 
     /// Register relay client
@@ -319,7 +336,7 @@ impl<R: Runtime> RelayManager<R> {
     /// Register relay server.
     ///
     /// Relay servers are routers who are willing to act as relay for us.
-    pub fn register_relay_server(&mut self, router_id: RouterId, relay_tag: u32) {
+    pub fn register_relay_server(&mut self, router_id: RouterId, relay_tag: u32, ipv4: bool) {
         tracing::debug!(
             target: LOG_TARGET,
             %router_id,
@@ -333,6 +350,7 @@ impl<R: Runtime> RelayManager<R> {
             relay_tag,
             RelayServer {
                 router_id,
+                ipv4,
                 created: R::now(),
             },
         );
@@ -359,26 +377,29 @@ impl<R: Runtime> RelayManager<R> {
         let charlie_router_id = router_info.identity.id();
         let charlie_verifying_key = router_info.identity.signing_key();
 
-        let (introducers, intro_key, static_key) = match router_info
+        let (introducers, intro_key, static_key, mtu) = match router_info
             .addresses()
             .find(|address| core::matches!(address, RouterAddress::Ssu2 { .. }))
         {
             Some(RouterAddress::Ssu2 {
-                introducers,
                 cost: _,
-                static_key,
+                introducers,
                 intro_key,
+                mtu,
                 options: _,
                 socket_address: _,
-            }) => (introducers, intro_key, static_key),
+                static_key,
+            }) => (introducers, intro_key, static_key, *mtu),
             _ => return Err(RelayError::NoAddress),
         };
 
         // find an introducer with have an active connection with
-        let (bob_router_id, relay_tag, sender) = introducers
+        let (bob_router_id, relay_tag, sender, ipv4) = introducers
             .iter()
             .find_map(|(router_id, relay_tag)| {
-                self.sessions.get(router_id).map(|sender| (router_id, relay_tag, sender))
+                self.sessions
+                    .get(router_id)
+                    .map(|(sender, ipv4)| (router_id, relay_tag, sender, ipv4))
             })
             .ok_or(RelayError::NoIntroducer)?;
 
@@ -394,7 +415,14 @@ impl<R: Runtime> RelayManager<R> {
             message.put_u32(R::time_since_epoch().as_secs() as u32);
             message.put_u8(2); // version
 
-            match self.socket.local_address().expect("address to exist") {
+            // the sockets must exist since they were checked above
+            let local_address = ipv4
+                .then(|| self.ipv4_socket.as_ref().expect("ipv4 socket to exist").local_address())
+                .or_else(|| {
+                    Some(self.ipv6_socket.as_ref().expect("ipv6 socket to exist").local_address())
+                });
+
+            match local_address.flatten().expect("address to exist") {
                 SocketAddr::V4(address) => {
                     message.put_u8(6); // address size
                     message.put_u16(address.port());
@@ -402,7 +430,6 @@ impl<R: Runtime> RelayManager<R> {
                 }
                 SocketAddr::V6(address) => {
                     message.put_u8(18); // address size
-
                     message.put_u16(address.port());
                     message.put_slice(&address.ip().octets());
                 }
@@ -450,6 +477,7 @@ impl<R: Runtime> RelayManager<R> {
                 Ok(RelayConnection {
                     dst_id,
                     intro_key: *intro_key,
+                    mtu,
                     src_id,
                     static_key: static_key.clone(),
                     verifying_key: charlie_verifying_key.clone(),
@@ -817,20 +845,39 @@ impl<R: Runtime> RelayManager<R> {
             },
         };
 
-        let Some(RouterAddress::Ssu2 {
-            intro_key,
-            socket_address: Some(alice_address),
-            ..
-        }) = router_info.ssu2_ipv4()
-        else {
-            tracing::warn!(
-                target: LOG_TARGET,
-                ?relay_tag,
-                ?nonce,
-                "alice doesn't have a published ssu2 address",
-            );
-            debug_assert!(false);
-            return;
+        let (intro_key, alice_address) = match address.is_ipv4() {
+            true => match router_info.ssu2_ipv4() {
+                Some(RouterAddress::Ssu2 {
+                    intro_key,
+                    socket_address: Some(socket_address),
+                    ..
+                }) => (*intro_key, *socket_address),
+                None => {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        "charlie doesnt have a dialable ipv4 address",
+                    );
+                    debug_assert!(false);
+                    return;
+                }
+                _ => unreachable!(),
+            },
+            false => match router_info.ssu2_ipv6() {
+                None => {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        "charlie doesnt have a dialable ipv6 address",
+                    );
+                    debug_assert!(false);
+                    return;
+                }
+                Some(RouterAddress::Ssu2 {
+                    intro_key,
+                    socket_address: Some(socket_address),
+                    ..
+                }) => (*intro_key, *socket_address),
+                _ => unreachable!(),
+            },
         };
 
         // verify signature
@@ -923,8 +970,8 @@ impl<R: Runtime> RelayManager<R> {
             .with_src_id(src_id)
             .with_token(token)
             .with_dst_id(dst_id)
-            .with_intro_key(*intro_key)
-            .with_addres(*alice_address)
+            .with_intro_key(intro_key)
+            .with_addres(alice_address)
             .build::<R>();
 
         self.write_buffer.push_back((pkt, address));
@@ -1076,9 +1123,22 @@ impl<R: Runtime> RelayManager<R> {
         let expired = self
             .servers
             .iter()
-            .filter_map(|(tag, RelayServer { router_id, created })| {
-                (created.elapsed() > INTRODUCER_EXPIRATION).then_some((*tag, router_id.clone()))
-            })
+            .filter_map(
+                |(
+                    tag,
+                    RelayServer {
+                        router_id,
+                        created,
+                        ipv4,
+                    },
+                )| {
+                    (created.elapsed() > INTRODUCER_EXPIRATION).then_some((
+                        *tag,
+                        router_id.clone(),
+                        *ipv4,
+                    ))
+                },
+            )
             .collect::<Vec<_>>();
 
         if !expired.is_empty() {
@@ -1088,11 +1148,11 @@ impl<R: Runtime> RelayManager<R> {
                 "one or more introducers have expired",
             );
 
-            expired.into_iter().for_each(|(relay_tag, router_id)| {
+            expired.into_iter().for_each(|(relay_tag, router_id, ipv4)| {
                 self.id_mappings.remove(&router_id);
                 self.servers.remove(&relay_tag);
                 self.pending_events
-                    .push_back(RelayManagerEvent::IntroducerExpired { router_id });
+                    .push_back(RelayManagerEvent::IntroducerExpired { router_id, ipv4 });
             });
         }
 
@@ -1197,7 +1257,12 @@ impl<R: Runtime> Stream for RelayManager<R> {
         }
 
         while let Some((pkt, address)) = self.write_buffer.pop_front() {
-            match Pin::new(&mut self.socket).poll_send_to(cx, &pkt, address) {
+            let socket = match address.is_ipv4() {
+                true => self.ipv4_socket.as_mut().expect("to exist"),
+                false => self.ipv6_socket.as_mut().expect("to exist"),
+            };
+
+            match Pin::new(socket).poll_send_to(cx, &pkt, address) {
                 Poll::Pending => {
                     self.write_buffer.push_front((pkt, address));
                     break;
@@ -1249,10 +1314,15 @@ mod tests {
             let (mut router_info, static_key, signing_key) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: socket.local_address().unwrap().port(),
-                    host: Some("127.0.0.1".parse().unwrap()),
+                    ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: false,
                     static_key: [seed; 32],
                     intro_key: [seed + 1; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
 
@@ -1302,10 +1372,15 @@ mod tests {
             let (router_info, static_key, signing_key) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
                     port: socket.local_address().unwrap().port(),
-                    host: Some("127.0.0.1".parse().unwrap()),
+                    ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
                     publish: true,
                     static_key: [seed; 32],
                     intro_key: [seed + 1; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
                 })
                 .build();
             let serialized = router_info.serialize(&signing_key);
@@ -1347,7 +1422,8 @@ mod tests {
                     storage
                 })
                 .build(),
-            bob.socket.clone(),
+            Some(bob.socket.clone()),
+            None,
         );
 
         // add session for charlie
@@ -1438,7 +1514,8 @@ mod tests {
                     storage
                 })
                 .build(),
-            bob.socket.clone(),
+            Some(bob.socket.clone()),
+            None,
         );
 
         // do not create session for charlie
@@ -1535,7 +1612,8 @@ mod tests {
                     bob.signing_key.clone(),
                 )
                 .build(),
-            bob.socket.clone(),
+            Some(bob.socket.clone()),
+            None,
         );
 
         // add session for charlie
@@ -1642,7 +1720,8 @@ mod tests {
                     bob.signing_key.clone(),
                 )
                 .build(),
-            bob.socket.clone(),
+            Some(bob.socket.clone()),
+            None,
         );
 
         // add session for charlie
@@ -1750,7 +1829,8 @@ mod tests {
                     storage
                 })
                 .build(),
-            charlie.socket.clone(),
+            Some(charlie.socket.clone()),
+            None,
         );
 
         // create context for the test
@@ -1762,7 +1842,7 @@ mod tests {
         relay.add_external_address(charlie.socket.local_address().unwrap());
 
         // register bob as relay server
-        relay.register_relay_server(bob.router_id.clone(), relay_tag);
+        relay.register_relay_server(bob.router_id.clone(), relay_tag, true);
 
         // create message + signature
         //
@@ -1880,7 +1960,8 @@ mod tests {
                     charlie.signing_key.clone(),
                 )
                 .build(),
-            charlie.socket.clone(),
+            Some(charlie.socket.clone()),
+            None,
         );
 
         // create context for the test
@@ -1892,7 +1973,7 @@ mod tests {
         relay.add_external_address(charlie.socket.local_address().unwrap());
 
         // register bob as relay server
-        relay.register_relay_server(bob.router_id.clone(), relay_tag);
+        relay.register_relay_server(bob.router_id.clone(), relay_tag, true);
 
         // create message + signature
         //
@@ -2007,7 +2088,8 @@ mod tests {
                     charlie.signing_key.clone(),
                 )
                 .build(),
-            charlie.socket.clone(),
+            Some(charlie.socket.clone()),
+            None,
         );
 
         // create context for the test
@@ -2100,7 +2182,8 @@ mod tests {
                     charlie.signing_key.clone(),
                 )
                 .build(),
-            charlie.socket.clone(),
+            Some(charlie.socket.clone()),
+            None,
         );
 
         // create context for the test
@@ -2112,7 +2195,7 @@ mod tests {
         relay.add_external_address(charlie.socket.local_address().unwrap());
 
         // register bob as relay server
-        relay.register_relay_server(bob.router_id.clone(), relay_tag);
+        relay.register_relay_server(bob.router_id.clone(), relay_tag, true);
 
         // create message + signature
         //
@@ -2195,7 +2278,8 @@ mod tests {
                     charlie.signing_key.clone(),
                 )
                 .build(),
-            charlie.socket.clone(),
+            Some(charlie.socket.clone()),
+            None,
         );
 
         // create context for the test
@@ -2207,7 +2291,7 @@ mod tests {
         relay.add_external_address(charlie.socket.local_address().unwrap());
 
         // register bob as relay server
-        relay.register_relay_server(bob.router_id.clone(), relay_tag);
+        relay.register_relay_server(bob.router_id.clone(), relay_tag, true);
 
         // create message + signature
         //
@@ -2288,7 +2372,8 @@ mod tests {
                     charlie.signing_key.clone(),
                 )
                 .build(),
-            charlie.socket.clone(),
+            Some(charlie.socket.clone()),
+            None,
         );
 
         // create context for the test
@@ -2299,7 +2384,7 @@ mod tests {
         // charlie doesn't have external address so the intro gets rejected
 
         // register bob as relay server
-        relay.register_relay_server(bob.router_id.clone(), relay_tag);
+        relay.register_relay_server(bob.router_id.clone(), relay_tag, true);
 
         // create message + signature
         //
@@ -2377,7 +2462,8 @@ mod tests {
                     bob.signing_key.clone(),
                 )
                 .build(),
-            bob.socket.clone(),
+            Some(bob.socket.clone()),
+            None,
         );
 
         // create context for the test
@@ -2438,7 +2524,8 @@ mod tests {
                     bob.signing_key.clone(),
                 )
                 .build(),
-            bob.socket.clone(),
+            Some(bob.socket.clone()),
+            None,
         );
 
         // create context for the test
@@ -2476,12 +2563,13 @@ mod tests {
                     alice.signing_key.clone(),
                 )
                 .build(),
-            alice.socket.clone(),
+            Some(alice.socket.clone()),
+            None,
         );
 
         // add bob as a router that supports relay
         let (alice_bob_tx, alice_bob_rx) = channel(16);
-        alice_relay.add_session(&bob.router_id, alice_bob_tx);
+        alice_relay.add_session(&bob.router_id, alice_bob_tx, true);
 
         // create relay manager for bob
         let mut bob_relay = RelayManager::<MockRuntime>::new(
@@ -2493,7 +2581,8 @@ mod tests {
                     bob.signing_key.clone(),
                 )
                 .build(),
-            bob.socket.clone(),
+            Some(bob.socket.clone()),
+            None,
         );
 
         // add alice to bob's profile storage so bob can forward
@@ -2517,11 +2606,12 @@ mod tests {
                     charlie.signing_key.clone(),
                 )
                 .build(),
-            charlie.socket.clone(),
+            Some(charlie.socket.clone()),
+            None,
         );
 
         // register bob as relay server
-        charlie_relay.register_relay_server(bob.router_id.clone(), 1337);
+        charlie_relay.register_relay_server(bob.router_id.clone(), 1337, true);
         charlie_relay.add_external_address(charlie.socket.local_address().unwrap());
 
         // send relay request to charlie via bob
@@ -2696,12 +2786,13 @@ mod tests {
                     alice.signing_key.clone(),
                 )
                 .build(),
-            alice.socket.clone(),
+            Some(alice.socket.clone()),
+            None,
         );
 
         // add bob as a router that supports relay
         let (alice_bob_tx, alice_bob_rx) = channel(16);
-        alice_relay.add_session(&bob.router_id, alice_bob_tx);
+        alice_relay.add_session(&bob.router_id, alice_bob_tx, true);
 
         // create relay manager for bob
         let mut bob_relay = RelayManager::<MockRuntime>::new(
@@ -2713,7 +2804,8 @@ mod tests {
                     bob.signing_key.clone(),
                 )
                 .build(),
-            bob.socket.clone(),
+            Some(bob.socket.clone()),
+            None,
         );
 
         // add alice to bob's profile storage so bob can forward
@@ -2793,12 +2885,13 @@ mod tests {
                     alice.signing_key.clone(),
                 )
                 .build(),
-            alice.socket.clone(),
+            Some(alice.socket.clone()),
+            None,
         );
 
         // add bob as a router that supports relay
         let (alice_bob_tx, alice_bob_rx) = channel(16);
-        alice_relay.add_session(&bob.router_id, alice_bob_tx);
+        alice_relay.add_session(&bob.router_id, alice_bob_tx, true);
 
         // create relay manager for bob
         let mut bob_relay = RelayManager::<MockRuntime>::new(
@@ -2810,7 +2903,8 @@ mod tests {
                     bob.signing_key.clone(),
                 )
                 .build(),
-            bob.socket.clone(),
+            Some(bob.socket.clone()),
+            None,
         );
 
         // alice is not added to bob's profile storage so the request is rejected
@@ -2885,12 +2979,13 @@ mod tests {
                     alice.signing_key.clone(),
                 )
                 .build(),
-            alice.socket.clone(),
+            Some(alice.socket.clone()),
+            None,
         );
 
         // add bob as a router that supports relay
         let (alice_bob_tx, alice_bob_rx) = channel(16);
-        alice_relay.add_session(&bob.router_id, alice_bob_tx);
+        alice_relay.add_session(&bob.router_id, alice_bob_tx, true);
 
         // create relay manager for bob
         let mut bob_relay = RelayManager::<MockRuntime>::new(
@@ -2902,7 +2997,8 @@ mod tests {
                     bob.signing_key.clone(),
                 )
                 .build(),
-            bob.socket.clone(),
+            Some(bob.socket.clone()),
+            None,
         );
 
         // add alice to bob's profile storage so bob can forward
@@ -2978,12 +3074,13 @@ mod tests {
                     alice.signing_key.clone(),
                 )
                 .build(),
-            alice.socket.clone(),
+            Some(alice.socket.clone()),
+            None,
         );
 
         // add bob as a router that supports relay
         let (alice_bob_tx, alice_bob_rx) = channel(16);
-        alice_relay.add_session(&bob.router_id, alice_bob_tx);
+        alice_relay.add_session(&bob.router_id, alice_bob_tx, true);
 
         // create relay manager for bob
         let mut bob_relay = RelayManager::<MockRuntime>::new(
@@ -2995,7 +3092,8 @@ mod tests {
                     bob.signing_key.clone(),
                 )
                 .build(),
-            bob.socket.clone(),
+            Some(bob.socket.clone()),
+            None,
         );
 
         // add alice to bob's profile storage so bob can forward
@@ -3019,11 +3117,12 @@ mod tests {
                     charlie.signing_key.clone(),
                 )
                 .build(),
-            charlie.socket.clone(),
+            Some(charlie.socket.clone()),
+            None,
         );
 
         // register bob as relay server
-        charlie_relay.register_relay_server(bob.router_id.clone(), 1337);
+        charlie_relay.register_relay_server(bob.router_id.clone(), 1337, true);
         charlie_relay.add_external_address(charlie.socket.local_address().unwrap());
 
         // send relay request to charlie via bob
@@ -3149,12 +3248,13 @@ mod tests {
                     alice.signing_key.clone(),
                 )
                 .build(),
-            alice.socket.clone(),
+            Some(alice.socket.clone()),
+            None,
         );
 
         // add bob as a router that supports relay
         let (alice_bob_tx, alice_bob_rx) = channel(16);
-        alice_relay.add_session(&bob.router_id, alice_bob_tx);
+        alice_relay.add_session(&bob.router_id, alice_bob_tx, true);
 
         // create relay manager for bob
         let mut bob_relay = RelayManager::<MockRuntime>::new(
@@ -3166,7 +3266,8 @@ mod tests {
                     bob.signing_key.clone(),
                 )
                 .build(),
-            bob.socket.clone(),
+            Some(bob.socket.clone()),
+            None,
         );
 
         // add alice to bob's profile storage so bob can forward
@@ -3190,11 +3291,12 @@ mod tests {
                     charlie.signing_key.clone(),
                 )
                 .build(),
-            charlie.socket.clone(),
+            Some(charlie.socket.clone()),
+            None,
         );
 
         // register bob as relay server
-        charlie_relay.register_relay_server(bob.router_id.clone(), 1337);
+        charlie_relay.register_relay_server(bob.router_id.clone(), 1337, true);
         charlie_relay.add_external_address(charlie.socket.local_address().unwrap());
 
         // send relay request to charlie via bob
@@ -3318,12 +3420,13 @@ mod tests {
                     alice.signing_key.clone(),
                 )
                 .build(),
-            alice.socket.clone(),
+            Some(alice.socket.clone()),
+            None,
         );
 
         // add bob as a router that supports relay
         let (alice_bob_tx, alice_bob_rx) = channel(16);
-        alice_relay.add_session(&bob.router_id, alice_bob_tx);
+        alice_relay.add_session(&bob.router_id, alice_bob_tx, true);
 
         // create relay manager for bob
         let mut bob_relay = RelayManager::<MockRuntime>::new(
@@ -3335,7 +3438,8 @@ mod tests {
                     bob.signing_key.clone(),
                 )
                 .build(),
-            bob.socket.clone(),
+            Some(bob.socket.clone()),
+            None,
         );
 
         // add alice to bob's profile storage so bob can forward
@@ -3359,11 +3463,12 @@ mod tests {
                     charlie.signing_key.clone(),
                 )
                 .build(),
-            charlie.socket.clone(),
+            Some(charlie.socket.clone()),
+            None,
         );
 
         // register bob as relay server
-        charlie_relay.register_relay_server(bob.router_id.clone(), 1337);
+        charlie_relay.register_relay_server(bob.router_id.clone(), 1337, true);
         charlie_relay.add_external_address(charlie.socket.local_address().unwrap());
 
         // send relay request to charlie via bob
@@ -3488,12 +3593,13 @@ mod tests {
                     alice.signing_key.clone(),
                 )
                 .build(),
-            alice.socket.clone(),
+            Some(alice.socket.clone()),
+            None,
         );
 
         // add bob as a router that supports relay
         let (alice_bob_tx, alice_bob_rx) = channel(16);
-        alice_relay.add_session(&bob.router_id, alice_bob_tx);
+        alice_relay.add_session(&bob.router_id, alice_bob_tx, true);
 
         // create relay manager for bob
         let mut bob_relay = RelayManager::<MockRuntime>::new(
@@ -3505,7 +3611,8 @@ mod tests {
                     bob.signing_key.clone(),
                 )
                 .build(),
-            bob.socket.clone(),
+            Some(bob.socket.clone()),
+            None,
         );
 
         // add alice to bob's profile storage so bob can forward
@@ -3529,13 +3636,14 @@ mod tests {
                     charlie.signing_key.clone(),
                 )
                 .build(),
-            charlie.socket.clone(),
+            Some(charlie.socket.clone()),
+            None,
         );
 
         // register bob as relay server
         //
         // charlie has no external address so the relay intro is rejected
-        charlie_relay.register_relay_server(bob.router_id.clone(), 1337);
+        charlie_relay.register_relay_server(bob.router_id.clone(), 1337, true);
 
         // send relay request to charlie via bob
         let RelayConnection { .. } = alice_relay.send_relay_request(charlie.parsed()).unwrap();
@@ -3659,12 +3767,13 @@ mod tests {
                     alice.signing_key.clone(),
                 )
                 .build(),
-            alice.socket.clone(),
+            Some(alice.socket.clone()),
+            None,
         );
 
         // add bob as a router that supports relay
         let (alice_bob_tx, _alice_bob_rx) = channel(16);
-        alice_relay.add_session(&bob.router_id, alice_bob_tx);
+        alice_relay.add_session(&bob.router_id, alice_bob_tx, true);
 
         // charlie doesn't have an ssu2 address
         match alice_relay.send_relay_request(RouterInfoBuilder::default().build().0) {
@@ -3689,7 +3798,8 @@ mod tests {
                     alice.signing_key.clone(),
                 )
                 .build(),
-            alice.socket.clone(),
+            Some(alice.socket.clone()),
+            None,
         );
 
         // bob is not added as active introducer so the request will fail
@@ -3717,14 +3827,15 @@ mod tests {
                     alice.signing_key.clone(),
                 )
                 .build(),
-            alice.socket.clone(),
+            Some(alice.socket.clone()),
+            None,
         );
 
         // add bob as a router that supports relay
         //
         // drop bob's channel so sending the request fails
         let (alice_bob_tx, alice_bob_rx) = channel(16);
-        alice_relay.add_session(&bob.router_id, alice_bob_tx);
+        alice_relay.add_session(&bob.router_id, alice_bob_tx, true);
         drop(alice_bob_rx);
 
         // charlie doesn't have an ssu2 address
@@ -3748,7 +3859,8 @@ mod tests {
                     alice.signing_key.clone(),
                 )
                 .build(),
-            alice.socket.clone(),
+            Some(alice.socket.clone()),
+            None,
         );
 
         let bob_router_id = RouterId::random();
@@ -3820,7 +3932,8 @@ mod tests {
                     alice.signing_key.clone(),
                 )
                 .build(),
-            alice.socket.clone(),
+            Some(alice.socket.clone()),
+            None,
         );
 
         let bob_router_id = RouterId::random();
@@ -3886,7 +3999,8 @@ mod tests {
                     alice.signing_key.clone(),
                 )
                 .build(),
-            alice.socket.clone(),
+            Some(alice.socket.clone()),
+            None,
         );
 
         let bob_router_id = RouterId::random();
@@ -3952,7 +4066,8 @@ mod tests {
                     alice.signing_key.clone(),
                 )
                 .build(),
-            alice.socket.clone(),
+            Some(alice.socket.clone()),
+            None,
         );
 
         let bob_router_id = RouterId::random();
@@ -4017,7 +4132,8 @@ mod tests {
                     alice.signing_key.clone(),
                 )
                 .build(),
-            alice.socket.clone(),
+            Some(alice.socket.clone()),
+            None,
         );
 
         let bob_router_id = RouterId::random();
@@ -4071,7 +4187,8 @@ mod tests {
                     alice.signing_key.clone(),
                 )
                 .build(),
-            alice.socket.clone(),
+            Some(alice.socket.clone()),
+            None,
         );
 
         let bob_router_id = RouterId::random();
@@ -4154,7 +4271,8 @@ mod tests {
                     alice.signing_key.clone(),
                 )
                 .build(),
-            alice.socket.clone(),
+            Some(alice.socket.clone()),
+            None,
         );
 
         let bob_router_id = RouterId::random();
@@ -4195,7 +4313,8 @@ mod tests {
                     alice.signing_key.clone(),
                 )
                 .build(),
-            alice.socket.clone(),
+            Some(alice.socket.clone()),
+            None,
         );
 
         let bob_router_id = RouterId::random();
@@ -4273,7 +4392,8 @@ mod tests {
                     alice.signing_key.clone(),
                 )
                 .build(),
-            alice.socket.clone(),
+            Some(alice.socket.clone()),
+            None,
         );
 
         let bob_router_id = RouterId::random();
@@ -4314,7 +4434,8 @@ mod tests {
                     alice.signing_key.clone(),
                 )
                 .build(),
-            alice.socket.clone(),
+            Some(alice.socket.clone()),
+            None,
         );
 
         let bob_router_id = RouterId::random();
@@ -4373,12 +4494,13 @@ mod tests {
                     alice.signing_key.clone(),
                 )
                 .build(),
-            alice.socket.clone(),
+            Some(alice.socket.clone()),
+            None,
         );
 
         // add bob as a router that supports relay
         let (alice_bob_tx, _alice_bob_rx) = channel(16);
-        alice_relay.add_session(&bob.router_id, alice_bob_tx);
+        alice_relay.add_session(&bob.router_id, alice_bob_tx, true);
 
         // send relay request to charlie via bob
         let RelayConnection { .. } = alice_relay.send_relay_request(charlie.parsed()).unwrap();

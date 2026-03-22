@@ -42,7 +42,7 @@ use alloc::{string::ToString, sync::Arc, vec::Vec};
 use core::{
     future::Future,
     marker::PhantomData,
-    net::{Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     pin::Pin,
     task::{Context, Poll},
     time::Duration,
@@ -173,7 +173,7 @@ impl<R: Runtime> Router<R> {
             Ntcp2Transport::<R>::initialize(config.ntcp2.take()).await?;
 
         // attempt to initialize the ssu2 transport from provided config
-        let (ssu2_context, ssu2_address) =
+        let (ssu2_context, ssu2_ipv4_address, ssu2_ipv6_address) =
             Ssu2Transport::<R>::initialize(config.ssu2.take()).await?;
 
         if ntcp2_context.is_none() && ssu2_context.is_none() {
@@ -202,7 +202,8 @@ impl<R: Runtime> Router<R> {
             &config,
             ntcp2_ipv4_address,
             ntcp2_ipv6_address,
-            ssu2_address,
+            ssu2_ipv4_address,
+            ssu2_ipv6_address,
             &local_static_key,
             &local_signing_key,
             config.transit.is_none(),
@@ -498,7 +499,7 @@ impl<R: Runtime> Router<R> {
     /// If `address` differs from the address that was specified the router configuration,
     /// a warning is logged.
     pub fn add_external_address(&mut self, address: Ipv4Addr) {
-        self.transport_manager.add_external_address(address);
+        self.transport_manager.add_external_address(IpAddr::V4(address));
     }
 }
 

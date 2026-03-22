@@ -17,6 +17,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    constants::ssu2,
     crypto::{sha256::Sha256, StaticPrivateKey},
     error::{ChannelError, Ssu2Error},
     primitives::{RouterAddress, RouterId, RouterInfo},
@@ -180,14 +181,29 @@ pub struct Ssu2Socket<R: Runtime> {
     /// Chaining key.
     chaining_key: Bytes,
 
-    /// Firewall/external address detector.
-    detector: Detector,
-
     /// Inbound state.
     inbound_state: Bytes,
 
     /// Introduction key.
     intro_key: [u8; 32],
+
+    /// Firewall/external address detector.
+    ipv4_detector: Detector,
+
+    /// IPv4 MTU.
+    ipv4_mtu: usize,
+
+    /// IPv4 UDP socket.
+    ipv4_socket: Option<R::UdpSocket>,
+
+    /// Firewall/external address detector.
+    ipv6_detector: Detector,
+
+    /// IPv6 MTU.
+    ipv6_mtu: usize,
+
+    /// IPv4 UDP socket.
+    ipv6_socket: Option<R::UdpSocket>,
 
     /// Outbound state.
     outbound_state: Bytes,
@@ -224,9 +240,6 @@ pub struct Ssu2Socket<R: Runtime> {
     /// SSU2 sessions.
     sessions: HashMap<u64, Sender<Packet>>,
 
-    /// UDP socket.
-    socket: R::UdpSocket,
-
     /// Static key.
     static_key: StaticPrivateKey,
 
@@ -252,7 +265,10 @@ pub struct Ssu2Socket<R: Runtime> {
 impl<R: Runtime> Ssu2Socket<R> {
     /// Create new [`Ssu2Socket`].
     pub fn new(
-        socket: R::UdpSocket,
+        ipv4_socket: Option<R::UdpSocket>,
+        ipv4_mtu: Option<usize>,
+        ipv6_socket: Option<R::UdpSocket>,
+        ipv6_mtu: Option<usize>,
         static_key: StaticPrivateKey,
         intro_key: [u8; 32],
         transport_tx: Sender<SubsystemEvent>,
@@ -270,13 +286,19 @@ impl<R: Runtime> Ssu2Socket<R> {
         Self {
             active_sessions: R::join_set(),
             chaining_key: Bytes::from(chaining_key),
-            detector: Detector::new(firewalled),
             inbound_state: Bytes::from(inbound_state),
             intro_key,
+            ipv4_detector: Detector::new(firewalled),
+            ipv4_mtu: ipv4_mtu.unwrap_or(ssu2::MAX_MTU),
+            ipv4_socket: ipv4_socket.clone(),
+            ipv6_detector: Detector::new(firewalled),
+            ipv6_mtu: ipv6_mtu.unwrap_or(ssu2::MAX_MTU),
+            ipv6_socket: ipv6_socket.clone(),
             outbound_state: Bytes::from(outbound_state),
             peer_test_manager: PeerTestManager::new(
                 intro_key,
-                socket.clone(),
+                ipv4_socket.clone(),
+                ipv6_socket.clone(),
                 router_ctx.clone(),
                 firewalled,
             ),
@@ -286,10 +308,14 @@ impl<R: Runtime> Ssu2Socket<R> {
             pending_relays: HashMap::new(),
             pending_sessions: R::join_set(),
             read_buffer: vec![0u8; DATAGRAM_MAX_SIZE],
-            relay_manager: RelayManager::new(intro_key, router_ctx.clone(), socket.clone()),
+            relay_manager: RelayManager::new(
+                intro_key,
+                router_ctx.clone(),
+                ipv4_socket.clone(),
+                ipv6_socket.clone(),
+            ),
             router_ctx,
             sessions: HashMap::new(),
-            socket,
             static_key,
             terminating_session: R::join_set(),
             tokens: HashSet::new(),
@@ -297,6 +323,23 @@ impl<R: Runtime> Ssu2Socket<R> {
             unvalidated_sessions: HashMap::new(),
             waker: None,
             write_state: WriteState::GetPacket,
+        }
+    }
+
+    /// Get UDP socket for `address`.
+    fn socket_for_address(&self, address: &SocketAddr) -> R::UdpSocket {
+        if address.is_ipv4() {
+            self.ipv4_socket.as_ref().expect("ipv4 socket to exist").clone()
+        } else {
+            self.ipv6_socket.as_ref().expect("ipv6 socket to exist").clone()
+        }
+    }
+
+    /// Get maximum payload size for a connection.
+    fn max_payload_size(&self, address: &SocketAddr, remote_mtu: usize) -> usize {
+        match address {
+            SocketAddr::V4(_) => self.ipv4_mtu.min(remote_mtu) - ssu2::IPV4_OVERHEAD,
+            SocketAddr::V6(_) => self.ipv6_mtu.min(remote_mtu) - ssu2::IPV6_OVERHEAD,
         }
     }
 
@@ -359,12 +402,16 @@ impl<R: Runtime> Ssu2Socket<R> {
                     chaining_key: self.chaining_key.clone(),
                     dst_id: connection_id,
                     intro_key: self.intro_key,
+                    mtu: match address {
+                        SocketAddr::V4(_) => self.ipv4_mtu,
+                        SocketAddr::V6(_) => self.ipv6_mtu,
+                    },
                     net_id: self.router_ctx.net_id(),
                     pkt: datagram,
                     pkt_num,
                     relay_tag,
                     rx,
-                    socket: self.socket.clone(),
+                    socket: self.socket_for_address(&address),
                     src_id,
                     state: self.inbound_state.clone(),
                     static_key: self.static_key.clone(),
@@ -403,22 +450,69 @@ impl<R: Runtime> Ssu2Socket<R> {
                         return Err(error);
                     }
                     Ok(None) => return Ok(None),
-                    Ok(Some(PeerTestManagerEvent::PeerTestResult { results })) =>
-                        return Ok(results
-                            .into_iter()
-                            .fold(None, |prev, result| {
-                                match (
-                                    prev,
-                                    self.detector
-                                        .add_peer_test_result(result.0, result.1, result.2),
-                                ) {
-                                    (None, None) => None,
-                                    (None, Some(event)) => Some(event),
-                                    (Some(_), Some(event)) => Some(event),
-                                    (Some(event), None) => Some(event),
+                    Ok(Some(PeerTestManagerEvent::PeerTestResult { results })) => {
+                        let mut ipv4_status = Option::<FirewallStatus>::None;
+                        let mut ipv6_status = Option::<FirewallStatus>::None;
+
+                        for result in results {
+                            if result.3 {
+                                let status = self
+                                    .ipv4_detector
+                                    .add_peer_test_result(result.0, result.1, result.2);
+
+                                match (ipv4_status, status) {
+                                    (None, None) => {}
+                                    (None, Some(event)) => {
+                                        ipv4_status = Some(event);
+                                    }
+                                    (Some(_), Some(event)) => {
+                                        ipv4_status = Some(event);
+                                    }
+                                    (Some(_), None) => {}
                                 }
-                            })
-                            .map(|status| TransportEvent::FirewallStatus { status })),
+                            } else {
+                                let status = self
+                                    .ipv6_detector
+                                    .add_peer_test_result(result.0, result.1, result.2);
+
+                                match (ipv6_status, status) {
+                                    (None, None) => {}
+                                    (None, Some(event)) => {
+                                        ipv6_status = Some(event);
+                                    }
+                                    (Some(_), Some(event)) => {
+                                        ipv6_status = Some(event);
+                                    }
+                                    (Some(_), None) => {}
+                                }
+                            };
+                        }
+
+                        match (ipv4_status, ipv6_status) {
+                            (None, None) => return Ok(None),
+                            (Some(status), None) =>
+                                return Ok(Some(TransportEvent::FirewallStatus {
+                                    status,
+                                    ipv4: true,
+                                })),
+                            (None, Some(status)) =>
+                                return Ok(Some(TransportEvent::FirewallStatus {
+                                    status,
+                                    ipv4: false,
+                                })),
+                            (Some(ipv4_status), Some(ipv6_status)) => {
+                                self.pending_events.push_back(TransportEvent::FirewallStatus {
+                                    status: ipv6_status,
+                                    ipv4: false,
+                                });
+
+                                return Ok(Some(TransportEvent::FirewallStatus {
+                                    status: ipv4_status,
+                                    ipv4: false,
+                                }));
+                            }
+                        }
+                    }
                 }
             }
             Ok(HeaderKind::HolePunch {
@@ -456,12 +550,16 @@ impl<R: Runtime> Ssu2Socket<R> {
                         chaining_key: self.chaining_key.clone(),
                         dst_id: connection_id,
                         intro_key: self.intro_key,
+                        mtu: match address {
+                            SocketAddr::V4(_) => self.ipv4_mtu,
+                            SocketAddr::V6(_) => self.ipv6_mtu,
+                        },
                         net_id: self.router_ctx.net_id(),
                         pkt: datagram,
                         pkt_num,
                         relay_tag,
                         rx,
-                        socket: self.socket.clone(),
+                        socket: self.socket_for_address(&address),
                         src_id: !connection_id,
                         state: self.inbound_state.clone(),
                         static_key: self.static_key.clone(),
@@ -533,11 +631,12 @@ impl<R: Runtime> Ssu2Socket<R> {
     /// Send `SessionRequest` to router using `token`.
     fn send_session_request(&mut self, router_id: RouterId, address: SocketAddr, token: u64) {
         let Some(RelayConnection {
+            dst_id,
             intro_key,
+            mtu,
+            src_id,
             static_key,
             verifying_key,
-            dst_id,
-            src_id,
         }) = self.pending_relays.remove(&router_id)
         else {
             tracing::trace!(
@@ -553,6 +652,7 @@ impl<R: Runtime> Ssu2Socket<R> {
         let our_router_info = self.router_ctx.router_info();
         let state = Sha256::new().update(&self.outbound_state).update(&static_key).finalize();
         let transport_tx = self.transport_tx.clone();
+        let max_payload_size = self.max_payload_size(&address, mtu);
 
         tracing::debug!(
             target: LOG_TARGET,
@@ -576,13 +676,14 @@ impl<R: Runtime> Ssu2Socket<R> {
                     dst_id,
                     local_intro_key: self.intro_key,
                     local_static_key: self.static_key.clone(),
+                    max_payload_size,
                     net_id: self.router_ctx.net_id(),
                     remote_intro_key: intro_key,
                     request_tag: false,
                     router_id,
                     router_info: our_router_info,
                     rx,
-                    socket: self.socket.clone(),
+                    socket: self.socket_for_address(&address),
                     src_id,
                     state,
                     static_key: static_key.clone(),
@@ -605,18 +706,44 @@ impl<R: Runtime> Ssu2Socket<R> {
         // a valid and reachable ssu2 router address
         let router_id = router_info.identity.id();
         let verifying_key = router_info.identity.signing_key().clone();
-        let Some(
-            ssu2_address @ RouterAddress::Ssu2 {
-                static_key,
-                intro_key,
-                socket_address: Some(address),
-                ..
-            },
-        ) = router_info.ssu2_ipv4()
-        else {
-            return self.send_relay_request(router_info);
-        };
 
+        // attempt to locate a router address with reachable socket address
+        //
+        // if none is found, attempt to dial the router with the help of an introducer
+        let (static_key, intro_key, address, supports_relay, remote_mtu) =
+            match router_info.addresses.iter().find(|address| match address {
+                RouterAddress::Ssu2 {
+                    socket_address: Some(address),
+                    ..
+                } => core::matches!(
+                    (
+                        address.is_ipv4(),
+                        self.ipv4_socket.is_some(),
+                        self.ipv6_socket.is_some(),
+                    ),
+                    (true, true, _) | (false, _, true)
+                ),
+                _ => false,
+            }) {
+                Some(
+                    ssu2_address @ RouterAddress::Ssu2 {
+                        static_key,
+                        intro_key,
+                        socket_address: Some(address),
+                        mtu,
+                        ..
+                    },
+                ) => (
+                    static_key,
+                    intro_key,
+                    address,
+                    ssu2_address.supports_relay(),
+                    *mtu,
+                ),
+                _ => return self.send_relay_request(router_info),
+            };
+
+        let max_payload_size = self.max_payload_size(address, remote_mtu);
         let our_router_info = self.router_ctx.router_info();
         let state = Sha256::new().update(&self.outbound_state).update(static_key).finalize();
         let transport_tx = self.transport_tx.clone();
@@ -636,6 +763,10 @@ impl<R: Runtime> Ssu2Socket<R> {
         self.sessions.insert(src_id, tx);
         self.pending_outbound.insert(*address, *intro_key);
         self.router_ctx.metrics_handle().counter(NUM_OUTBOUND_SSU2).increment(1);
+        let status = match address.is_ipv4() {
+            true => self.ipv4_detector.status(),
+            false => self.ipv4_detector.status(),
+        };
 
         self.pending_sessions.push(
             OutboundSsu2Session::<R>::new(OutboundSsu2Context {
@@ -644,15 +775,16 @@ impl<R: Runtime> Ssu2Socket<R> {
                 dst_id,
                 local_intro_key: self.intro_key,
                 local_static_key: self.static_key.clone(),
+                max_payload_size,
                 net_id: self.router_ctx.net_id(),
                 remote_intro_key: *intro_key,
-                request_tag: core::matches!(self.detector.status(), FirewallStatus::Firewalled)
-                    && ssu2_address.supports_relay()
+                request_tag: core::matches!(status, FirewallStatus::Firewalled)
+                    && supports_relay
                     && self.relay_manager.needs_introducers(),
                 router_id,
                 router_info: our_router_info,
                 rx,
-                socket: self.socket.clone(),
+                socket: self.socket_for_address(address),
                 src_id,
                 state,
                 static_key: static_key.clone(),
@@ -734,11 +866,17 @@ impl<R: Runtime> Ssu2Socket<R> {
 
                 // register relay server to `RelayManager`
                 if let Some(relay_tag) = relay_tag {
-                    self.relay_manager.register_relay_server(context.router_id.clone(), relay_tag);
+                    self.relay_manager.register_relay_server(
+                        context.router_id.clone(),
+                        relay_tag,
+                        address.is_ipv4(),
+                    );
+
                     self.pending_events.push_back(TransportEvent::IntroducerAdded {
                         relay_tag,
                         router_id: context.router_id.clone(),
                         expires: R::time_since_epoch() + INTRODUCER_EXPIRATION,
+                        ipv4: address.is_ipv4(),
                     });
                 }
 
@@ -757,7 +895,11 @@ impl<R: Runtime> Ssu2Socket<R> {
             match reader.router_info(&context.router_id) {
                 Some(router_info) =>
                     if router_info.supports_relay() {
-                        self.relay_manager.add_session(&context.router_id, relay_handle.cmd_tx());
+                        self.relay_manager.add_session(
+                            &context.router_id,
+                            relay_handle.cmd_tx(),
+                            context.address.is_ipv4(),
+                        );
                     },
                 None => tracing::warn!(
                     target: LOG_TARGET,
@@ -767,10 +909,13 @@ impl<R: Runtime> Ssu2Socket<R> {
             }
         }
 
+        // socket for the session
+        let socket = self.socket_for_address(&context.address);
+
         self.active_sessions.push(
             Ssu2Session::<R>::new(
                 context,
-                self.socket.clone(),
+                socket,
                 self.transport_tx.clone(),
                 self.router_ctx.clone(),
                 peer_test_handle,
@@ -835,7 +980,7 @@ impl<R: Runtime> Ssu2Socket<R> {
                         router_id,
                         rx: pkt_rx,
                         send_key_ctx,
-                        socket: self.socket.clone(),
+                        socket: self.socket_for_address(&address),
                     },
                 ))
             }
@@ -871,44 +1016,116 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
             return Poll::Ready(Some(event));
         }
 
-        loop {
-            match Pin::new(&mut this.socket).poll_recv_from(cx, &mut this.read_buffer) {
-                Poll::Pending => break,
-                Poll::Ready(None) => {
-                    tracing::warn!(
-                        target: LOG_TARGET,
-                        "socket closed",
-                    );
-                    return Poll::Ready(None);
-                }
-                Poll::Ready(Some((nread, from))) => {
-                    this.router_ctx.metrics_handle().counter(INBOUND_BANDWIDTH).increment(nread);
-                    this.router_ctx.metrics_handle().counter(INBOUND_PKT_COUNT).increment(1);
-                    this.router_ctx
-                        .metrics_handle()
-                        .histogram(INBOUND_PKT_SIZES)
-                        .record(nread as f64);
+        if this.ipv4_socket.is_some() {
+            loop {
+                let (nread, from) = {
+                    // socket must exist since it was checked above
+                    let socket = this.ipv4_socket.as_mut().expect("ipv4 socket to exist");
 
-                    match this.handle_packet(this.read_buffer[..nread].to_vec(), from) {
-                        Err(Ssu2Error::Channel(ChannelError::Full)) => {
-                            tracing::debug!(
+                    match Pin::new(socket).poll_recv_from(cx, &mut this.read_buffer) {
+                        Poll::Pending => break,
+                        Poll::Ready(None) => {
+                            tracing::warn!(
                                 target: LOG_TARGET,
-                                "cannot process packet, channel is full",
+                                "socket closed",
                             );
+                            return Poll::Ready(None);
+                        }
+                        Poll::Ready(Some((nread, from))) => {
                             this.router_ctx
                                 .metrics_handle()
-                                .counter(NUM_DROPPED_DATAGRAMS)
+                                .counter(INBOUND_BANDWIDTH)
+                                .increment(nread);
+                            this.router_ctx
+                                .metrics_handle()
+                                .counter(INBOUND_PKT_COUNT)
                                 .increment(1);
+                            this.router_ctx
+                                .metrics_handle()
+                                .histogram(INBOUND_PKT_SIZES)
+                                .record(nread as f64);
+
+                            (nread, from)
                         }
-                        Err(error) => tracing::debug!(
-                            target: LOG_TARGET,
-                            ?from,
-                            ?error,
-                            "failed to handle packet",
-                        ),
-                        Ok(None) => {}
-                        Ok(Some(event)) => return Poll::Ready(Some(event)),
                     }
+                };
+
+                match this.handle_packet(this.read_buffer[..nread].to_vec(), from) {
+                    Err(Ssu2Error::Channel(ChannelError::Full)) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            "cannot process packet, channel is full",
+                        );
+                        this.router_ctx
+                            .metrics_handle()
+                            .counter(NUM_DROPPED_DATAGRAMS)
+                            .increment(1);
+                    }
+                    Err(error) => tracing::debug!(
+                        target: LOG_TARGET,
+                        ?from,
+                        ?error,
+                        "failed to handle packet",
+                    ),
+                    Ok(None) => {}
+                    Ok(Some(event)) => return Poll::Ready(Some(event)),
+                }
+            }
+        }
+
+        if this.ipv6_socket.is_some() {
+            loop {
+                let (nread, from) = {
+                    // socket must exist since it was checked above
+                    let socket = this.ipv6_socket.as_mut().expect("ipv6 socket to exist");
+
+                    match Pin::new(socket).poll_recv_from(cx, &mut this.read_buffer) {
+                        Poll::Pending => break,
+                        Poll::Ready(None) => {
+                            tracing::warn!(
+                                target: LOG_TARGET,
+                                "socket closed",
+                            );
+                            return Poll::Ready(None);
+                        }
+                        Poll::Ready(Some((nread, from))) => {
+                            this.router_ctx
+                                .metrics_handle()
+                                .counter(INBOUND_BANDWIDTH)
+                                .increment(nread);
+                            this.router_ctx
+                                .metrics_handle()
+                                .counter(INBOUND_PKT_COUNT)
+                                .increment(1);
+                            this.router_ctx
+                                .metrics_handle()
+                                .histogram(INBOUND_PKT_SIZES)
+                                .record(nread as f64);
+
+                            (nread, from)
+                        }
+                    }
+                };
+
+                match this.handle_packet(this.read_buffer[..nread].to_vec(), from) {
+                    Err(Ssu2Error::Channel(ChannelError::Full)) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            "cannot process packet, channel is full",
+                        );
+                        this.router_ctx
+                            .metrics_handle()
+                            .counter(NUM_DROPPED_DATAGRAMS)
+                            .increment(1);
+                    }
+                    Err(error) => tracing::debug!(
+                        target: LOG_TARGET,
+                        ?from,
+                        ?error,
+                        "failed to handle packet",
+                    ),
+                    Ok(None) => {}
+                    Ok(Some(event)) => return Poll::Ready(Some(event)),
                 }
             }
         }
@@ -919,6 +1136,7 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
             Poll::Ready(Some(termination_ctx)) => {
                 let router_id = termination_ctx.router_id.clone();
                 let reason = termination_ctx.reason;
+                let address = termination_ctx.address;
 
                 tracing::debug!(
                     target: LOG_TARGET,
@@ -932,6 +1150,7 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
                 if this.relay_manager.register_closed_connection(&router_id) {
                     this.pending_events.push_back(TransportEvent::IntroducerRemoved {
                         router_id: router_id.clone(),
+                        ipv4: address.is_ipv4(),
                     })
                 }
                 this.terminating_session.push(TerminatingSsu2Session::<R>::new(termination_ctx));
@@ -1081,7 +1300,12 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
                             //
                             // also report the new address to `TransportManager`
                             if let Some(address) = external_address {
-                                if let Some(address) = this.detector.add_external_address(address) {
+                                if let Some(address) = {
+                                    match address.is_ipv4() {
+                                        true => this.ipv4_detector.add_external_address(address),
+                                        false => this.ipv6_detector.add_external_address(address),
+                                    }
+                                } {
                                     this.peer_test_manager.add_external_address(address);
                                     this.relay_manager.add_external_address(address);
 
@@ -1187,24 +1411,32 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
                         this.write_state = WriteState::SendPacket { pkt, target };
                     }
                 },
-                WriteState::SendPacket { pkt, target } => match Pin::new(&mut this.socket)
-                    .poll_send_to(cx, &pkt, target)
-                {
-                    Poll::Ready(Some(nwritten)) => {
-                        this.router_ctx
-                            .metrics_handle()
-                            .counter(OUTBOUND_BANDWIDTH)
-                            .increment(nwritten);
-                        this.router_ctx.metrics_handle().counter(OUTBOUND_PKT_COUNT).increment(1);
+                WriteState::SendPacket { pkt, target } => {
+                    let socket = match target.is_ipv4() {
+                        true => this.ipv4_socket.as_mut().expect("ipv4 socket to exist"),
+                        false => this.ipv6_socket.as_mut().expect("ipv4 socket to exist"),
+                    };
 
-                        this.write_state = WriteState::GetPacket;
+                    match Pin::new(socket).poll_send_to(cx, &pkt, target) {
+                        Poll::Ready(Some(nwritten)) => {
+                            this.router_ctx
+                                .metrics_handle()
+                                .counter(OUTBOUND_BANDWIDTH)
+                                .increment(nwritten);
+                            this.router_ctx
+                                .metrics_handle()
+                                .counter(OUTBOUND_PKT_COUNT)
+                                .increment(1);
+
+                            this.write_state = WriteState::GetPacket;
+                        }
+                        Poll::Ready(None) => return Poll::Ready(None),
+                        Poll::Pending => {
+                            this.write_state = WriteState::SendPacket { pkt, target };
+                            break;
+                        }
                     }
-                    Poll::Ready(None) => return Poll::Ready(None),
-                    Poll::Pending => {
-                        this.write_state = WriteState::SendPacket { pkt, target };
-                        break;
-                    }
-                },
+                }
                 WriteState::Poisoned => unreachable!(),
             }
         }
@@ -1213,18 +1445,64 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
             Poll::Pending => {}
             Poll::Ready(None) => return Poll::Ready(None),
             Poll::Ready(Some(PeerTestManagerEvent::PeerTestResult { results })) => {
-                if let Some(status) = results.into_iter().fold(None, |prev, result| {
-                    match (
-                        prev,
-                        this.detector.add_peer_test_result(result.0, result.1, result.2),
-                    ) {
-                        (None, None) => None,
-                        (None, Some(event)) => Some(event),
-                        (Some(_), Some(event)) => Some(event),
-                        (Some(event), None) => Some(event),
+                let mut ipv4_status = Option::<FirewallStatus>::None;
+                let mut ipv6_status = Option::<FirewallStatus>::None;
+
+                for result in results {
+                    if result.3 {
+                        let status =
+                            this.ipv4_detector.add_peer_test_result(result.0, result.1, result.2);
+
+                        match (ipv4_status, status) {
+                            (None, None) => {}
+                            (None, Some(event)) => {
+                                ipv4_status = Some(event);
+                            }
+                            (Some(_), Some(event)) => {
+                                ipv4_status = Some(event);
+                            }
+                            (Some(_), None) => {}
+                        }
+                    } else {
+                        let status =
+                            this.ipv6_detector.add_peer_test_result(result.0, result.1, result.2);
+
+                        match (ipv6_status, status) {
+                            (None, None) => {}
+                            (None, Some(event)) => {
+                                ipv6_status = Some(event);
+                            }
+                            (Some(_), Some(event)) => {
+                                ipv6_status = Some(event);
+                            }
+                            (Some(_), None) => {}
+                        }
+                    };
+                }
+
+                match (ipv4_status, ipv6_status) {
+                    (None, None) => {}
+                    (Some(status), None) =>
+                        return Poll::Ready(Some(TransportEvent::FirewallStatus {
+                            status,
+                            ipv4: true,
+                        })),
+                    (None, Some(status)) =>
+                        return Poll::Ready(Some(TransportEvent::FirewallStatus {
+                            status,
+                            ipv4: false,
+                        })),
+                    (Some(ipv4_status), Some(ipv6_status)) => {
+                        this.pending_events.push_back(TransportEvent::FirewallStatus {
+                            status: ipv6_status,
+                            ipv4: false,
+                        });
+
+                        return Poll::Ready(Some(TransportEvent::FirewallStatus {
+                            status: ipv4_status,
+                            ipv4: false,
+                        }));
                     }
-                }) {
-                    return Poll::Ready(Some(TransportEvent::FirewallStatus { status }));
                 }
             }
         }
@@ -1236,8 +1514,8 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
                 Poll::Ready(Some(RelayManagerEvent::SessionRequestToken { token })) => {
                     this.tokens.insert(token);
                 }
-                Poll::Ready(Some(RelayManagerEvent::IntroducerExpired { router_id })) =>
-                    return Poll::Ready(Some(TransportEvent::IntroducerRemoved { router_id })),
+                Poll::Ready(Some(RelayManagerEvent::IntroducerExpired { router_id, ipv4 })) =>
+                    return Poll::Ready(Some(TransportEvent::IntroducerRemoved { router_id, ipv4 })),
                 Poll::Ready(Some(RelayManagerEvent::RelayFailure { router_id })) =>
                     return Poll::Ready(Some(TransportEvent::ConnectionFailure { router_id })),
                 Poll::Ready(Some(RelayManagerEvent::RelaySuccess {
@@ -1286,9 +1564,14 @@ mod tests {
         );
         let (transport_tx, transport_rx) = channel(128);
         let mut socket = Ssu2Socket::<MockRuntime>::new(
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap(),
+            Some(
+                <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
+                    .await
+                    .unwrap(),
+            ),
+            Some(1500),
+            None,
+            None,
             static_key,
             [0xaa; 32],
             transport_tx,
@@ -1308,6 +1591,7 @@ mod tests {
             address: recv_socket.local_address().unwrap(),
             dst_id: 1337u64,
             intro_key: [0xbb; 32],
+            max_payload_size: 1472,
             pkt_rx,
             recv_key_ctx: KeyContext {
                 k_data: [0xcc; 32],

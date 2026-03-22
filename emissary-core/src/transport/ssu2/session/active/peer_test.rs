@@ -575,6 +575,7 @@ mod tests {
         let ctx = Ssu2SessionContext {
             address: recv_socket.local_address().unwrap(),
             dst_id: 1337u64,
+            max_payload_size: 1472,
             intro_key: [1u8; 32],
             pkt_rx: from_socket_rx,
             recv_key_ctx: KeyContext {

@@ -99,6 +99,10 @@ impl UdpSocket for NoopUdpSocket {
         std::future::pending()
     }
 
+    fn bind_with_mtu(_address: SocketAddr, _mtu: usize) -> impl Future<Output = Option<Self>> {
+        std::future::pending()
+    }
+
     fn send_to(&mut self, _buf: &[u8], _target: SocketAddr) -> impl Future<Output = Option<usize>> {
         async move { std::future::pending::<Option<usize>>().await }
     }
@@ -126,6 +130,10 @@ impl UdpSocket for NoopUdpSocket {
 
     fn local_address(&self) -> Option<SocketAddr> {
         None
+    }
+
+    fn mtu(&self) -> usize {
+        0usize
     }
 }
 

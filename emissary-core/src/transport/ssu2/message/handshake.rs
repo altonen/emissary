@@ -31,9 +31,6 @@ use rand::Rng;
 use alloc::{vec, vec::Vec};
 use core::net::SocketAddr;
 
-/// IPv4 MTU size.
-const IPV4_MTU_SHORT: usize = 1500 - 20 - 8 - 16;
-
 /// Static key size.
 const STATIC_KEY_SIZE: usize = 32usize;
 
@@ -347,17 +344,20 @@ impl SessionRequestBuilder {
 
 /// Unserialized `SessionConfirmed` message.
 pub struct SessionConfirmed {
+    /// Destination connection ID.
+    dst_id: u64,
+
     /// Serialized, unencrypted header.
     header: BytesMut,
 
-    /// Serialized, unencrypted static key.
-    static_key: Vec<u8>,
+    /// Maximum payload size.
+    max_payload_size: usize,
 
     /// Serialized, unecrypted payload.
     payload: Vec<u8>,
 
-    /// Destination connection ID.
-    dst_id: u64,
+    /// Serialized, unencrypted static key.
+    static_key: Vec<u8>,
 }
 
 impl SessionConfirmed {
@@ -421,8 +421,10 @@ impl SessionConfirmed {
     ///
     /// <https://i2p.net/en/docs/specs/ssu2/#session-confirmed-fragmentation>
     pub fn build(mut self, k_header_1: [u8; 32], k_header_2: [u8; 32]) -> Vec<Vec<u8>> {
+        let max_pkt_size = self.max_payload_size - SHORT_HEADER_LEN;
+
         // SessionConfirmed fits inside a single datagram
-        if self.payload.len() + self.static_key.len() <= IPV4_MTU_SHORT {
+        if self.payload.len() + self.static_key.len() <= max_pkt_size {
             Self::encrypt_header(k_header_1, k_header_2, &mut self.header, &self.payload);
 
             let mut out = BytesMut::with_capacity(
@@ -443,9 +445,9 @@ impl SessionConfirmed {
 
         // calculate total number of fragments
         let num_fragments = {
-            let num_fragments = out.len() / IPV4_MTU_SHORT;
+            let num_fragments = out.len() / max_pkt_size;
 
-            if num_fragments.is_multiple_of(IPV4_MTU_SHORT) {
+            if num_fragments.is_multiple_of(max_pkt_size) {
                 num_fragments as u8
             } else {
                 num_fragments as u8 + 1
@@ -453,7 +455,7 @@ impl SessionConfirmed {
         };
         debug_assert!(num_fragments <= 15);
 
-        out.chunks(IPV4_MTU_SHORT)
+        out.chunks(max_pkt_size)
             .enumerate()
             .map(|(i, fragment)| {
                 debug_assert!(fragment.len() >= 24);
@@ -476,19 +478,33 @@ impl SessionConfirmed {
 }
 
 /// `SessionConfirmed` builder.
-#[derive(Default)]
 pub struct SessionConfirmedBuilder {
     /// Destination connection ID.
     dst_id: Option<u64>,
 
-    /// Source connection ID.
-    src_id: Option<u64>,
+    /// Maximum payload size.
+    max_payload_size: usize,
 
     /// Serialized local router info.
     router_info: Option<Bytes>,
 
+    /// Source connection ID.
+    src_id: Option<u64>,
+
     /// Local static public key.
     static_key: Option<StaticPublicKey>,
+}
+
+impl Default for SessionConfirmedBuilder {
+    fn default() -> Self {
+        Self {
+            dst_id: None,
+            max_payload_size: 1472,
+            router_info: None,
+            src_id: None,
+            static_key: None,
+        }
+    }
 }
 
 impl SessionConfirmedBuilder {
@@ -501,6 +517,12 @@ impl SessionConfirmedBuilder {
     /// Specify source connection ID.
     pub fn with_src_id(mut self, src_id: u64) -> Self {
         self.src_id = Some(src_id);
+        self
+    }
+
+    /// Specify maximum payload size.
+    pub fn with_max_payload_size(mut self, max_payload_size: usize) -> Self {
+        self.max_payload_size = max_payload_size;
         self
     }
 
@@ -520,6 +542,7 @@ impl SessionConfirmedBuilder {
     pub fn build<R: Runtime>(mut self) -> SessionConfirmed {
         let router_info = self.router_info.expect("to exist");
         let dst_id = self.dst_id.take().expect("to exist");
+        let max_pkt_size = self.max_payload_size - SHORT_HEADER_LEN;
 
         let static_key = self.static_key.expect("to exist").to_vec();
         let mut payload = {
@@ -542,15 +565,15 @@ impl SessionConfirmedBuilder {
         // https://i2p.net/en/docs/specs/ssu2/#session-confirmed-fragmentation
         let pkt_size = router_info.len() + STATIC_KEY_SIZE + 2 * POLY13055_MAC_LEN;
 
-        let num_fragments = if pkt_size > IPV4_MTU_SHORT {
-            let mut num_fragments = pkt_size / IPV4_MTU_SHORT;
+        let num_fragments = if pkt_size > max_pkt_size {
+            let mut num_fragments = pkt_size / max_pkt_size;
 
-            if !num_fragments.is_multiple_of(IPV4_MTU_SHORT) {
+            if !num_fragments.is_multiple_of(max_pkt_size) {
                 num_fragments += 1;
             }
 
             // add padding if necessary
-            if pkt_size % IPV4_MTU_SHORT < PKT_MIN_SIZE {
+            if pkt_size % max_pkt_size < PKT_MIN_SIZE {
                 let padding = {
                     let mut padding =
                         vec![0u8; (R::rng().next_u32() % 64 + PKT_MIN_SIZE as u32) as usize];
@@ -581,10 +604,11 @@ impl SessionConfirmedBuilder {
         };
 
         SessionConfirmed {
-            header,
-            static_key,
-            payload: payload.to_vec(),
             dst_id,
+            header,
+            max_payload_size: self.max_payload_size,
+            payload: payload.to_vec(),
+            static_key,
         }
     }
 }
@@ -1161,7 +1185,16 @@ mod tests {
     }
 
     #[test]
-    fn fragmented_session_confirmed() {
+    fn fragmented_session_confirmed_ipv4() {
+        fragmented_session_confirmed(1472);
+    }
+
+    #[test]
+    fn fragmented_session_confirmed_ipv6() {
+        fragmented_session_confirmed(1452);
+    }
+
+    fn fragmented_session_confirmed(mtu: usize) {
         let local_static_key = StaticPrivateKey::random(&mut MockRuntime::rng());
         let remote_ephemeral_key = EphemeralPrivateKey::random(&mut MockRuntime::rng());
         let mut noise_ctx = NoiseContext::new([0xaa; 32], [0xbb; 32]);
@@ -1179,6 +1212,7 @@ mod tests {
 
         let (encrypted, pubkey_state, payload_state, payload_cipher_key) = {
             let mut message = SessionConfirmedBuilder::default()
+                .with_max_payload_size(mtu)
                 .with_dst_id(1337)
                 .with_src_id(1338)
                 .with_static_key(local_static_key.public())
@@ -1207,7 +1241,7 @@ mod tests {
             )
         };
         assert_eq!(encrypted.len(), 2);
-        assert!(encrypted.iter().all(|pkt| pkt.len() <= IPV4_MTU_SHORT + 16));
+        assert!(encrypted.iter().all(|pkt| pkt.len() <= mtu));
 
         let mut reassembled = Vec::<u8>::new();
 
@@ -1249,7 +1283,16 @@ mod tests {
     }
 
     #[test]
-    fn fragmented_session_confirmed_multiple_fragments() {
+    fn fragmented_session_confirmed_multiple_fragments_ipv4() {
+        fragmented_session_confirmed_multiple_fragments(1472);
+    }
+
+    #[test]
+    fn fragmented_session_confirmed_multiple_fragments_ipv6() {
+        fragmented_session_confirmed_multiple_fragments(1452);
+    }
+
+    fn fragmented_session_confirmed_multiple_fragments(mtu: usize) {
         let local_static_key = StaticPrivateKey::random(&mut MockRuntime::rng());
         let remote_ephemeral_key = EphemeralPrivateKey::random(&mut MockRuntime::rng());
         let mut noise_ctx = NoiseContext::new([0xaa; 32], [0xbb; 32]);
@@ -1267,6 +1310,7 @@ mod tests {
 
         let (encrypted, pubkey_state, payload_state, payload_cipher_key) = {
             let mut message = SessionConfirmedBuilder::default()
+                .with_max_payload_size(mtu)
                 .with_dst_id(1337)
                 .with_src_id(1338)
                 .with_static_key(local_static_key.public())
@@ -1295,7 +1339,7 @@ mod tests {
             )
         };
         assert_eq!(encrypted.len(), 4);
-        assert!(encrypted.iter().all(|pkt| pkt.len() <= IPV4_MTU_SHORT + 16));
+        assert!(encrypted.iter().all(|pkt| pkt.len() <= mtu));
 
         let mut reassembled = Vec::<u8>::new();
 
@@ -1337,7 +1381,16 @@ mod tests {
     }
 
     #[test]
-    fn fragmented_session_confirmed_with_padding() {
+    fn fragmented_session_confirmed_with_padding_ipv4() {
+        fragmented_session_confirmed_with_padding(1472, 25, 2);
+    }
+
+    #[test]
+    fn fragmented_session_confirmed_with_padding_ipv6() {
+        fragmented_session_confirmed_with_padding(1452, 74, 3);
+    }
+
+    fn fragmented_session_confirmed_with_padding(mtu: usize, num_iters: usize, num_frags: usize) {
         let local_static_key = StaticPrivateKey::random(&mut MockRuntime::rng());
         let remote_ephemeral_key = EphemeralPrivateKey::random(&mut MockRuntime::rng());
         let mut noise_ctx = NoiseContext::new([0xaa; 32], [0xbb; 32]);
@@ -1345,7 +1398,7 @@ mod tests {
         let remote_intro_key = [0xdd; 32];
         let k_header_2 = [0xdd; 32];
         let (mut router_info, _, signing_key) = RouterInfoBuilder::default().build();
-        for i in 0..=25 {
+        for i in 0..=num_iters {
             router_info.options.insert(
                 Str::from(format!("garbage{i}")),
                 Str::from(base64_encode(vec![0xaa; 10])),
@@ -1356,12 +1409,13 @@ mod tests {
         // verify that the last fragment is too short
         assert!(
             (STATIC_KEY_SIZE + 2 * POLY13055_MAC_LEN + router_info.serialize(&signing_key).len())
-                % IPV4_MTU_SHORT
+                % (mtu - SHORT_HEADER_LEN)
                 < PKT_MIN_SIZE
         );
 
         let (encrypted, pubkey_state, payload_state, payload_cipher_key) = {
             let mut message = SessionConfirmedBuilder::default()
+                .with_max_payload_size(mtu)
                 .with_dst_id(1337)
                 .with_src_id(1338)
                 .with_static_key(local_static_key.public())
@@ -1389,8 +1443,8 @@ mod tests {
                 payload_cipher_key,
             )
         };
-        assert_eq!(encrypted.len(), 2);
-        assert!(encrypted.iter().all(|pkt| pkt.len() <= IPV4_MTU_SHORT + 16));
+        assert_eq!(encrypted.len(), num_frags);
+        assert!(encrypted.iter().all(|pkt| pkt.len() <= mtu));
 
         let mut reassembled = Vec::<u8>::new();
 
@@ -1405,7 +1459,7 @@ mod tests {
                     ..
                 } => {
                     assert_eq!(fragment, i);
-                    assert_eq!(num_fragments, 2);
+                    assert_eq!(num_fragments, num_frags);
                 }
                 _ => panic!("unexpected message"),
             }

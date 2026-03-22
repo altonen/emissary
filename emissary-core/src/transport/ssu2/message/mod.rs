@@ -46,7 +46,7 @@ use rand::Rng;
 use alloc::{boxed::Box, vec, vec::Vec};
 use core::{
     fmt,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     ops::{Deref, Range},
 };
 
@@ -918,11 +918,21 @@ impl Block {
                 )
             }
             18 => {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    "ipv6 not supported"
-                );
-                return Err(Err::Error(Ssu2ParseError::InvalidBitstream));
+                let (rest, port) = be_u16(rest)?;
+                let (rest, address) = take(16usize)(rest)?;
+
+                // must succeed since `take(16)` took 16 bytes
+                (
+                    rest,
+                    SocketAddr::V6(SocketAddrV6::new(
+                        Ipv6Addr::from_octets(
+                            TryInto::<[u8; 16]>::try_into(address).expect("to succeed"),
+                        ),
+                        port,
+                        0,
+                        0,
+                    )),
+                )
             }
             _ => return Err(Err::Error(Ssu2ParseError::InvalidBitstream)),
         };
@@ -1133,11 +1143,21 @@ impl Block {
                 )
             }
             18 => {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    "ipv6 not supported"
-                );
-                return Err(Err::Error(Ssu2ParseError::InvalidBitstream));
+                let (rest, port) = be_u16(rest)?;
+                let (rest, address) = take(16usize)(rest)?;
+
+                // must succeed since `take(16)` took 16 bytes
+                (
+                    rest,
+                    SocketAddr::V6(SocketAddrV6::new(
+                        Ipv6Addr::from_octets(
+                            TryInto::<[u8; 16]>::try_into(address).expect("to succeed"),
+                        ),
+                        port,
+                        0,
+                        0,
+                    )),
+                )
             }
             _ => return Err(Err::Error(Ssu2ParseError::InvalidBitstream)),
         };
@@ -1192,11 +1212,21 @@ impl Block {
                 )
             }
             18 => {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    "ipv6 not supported"
-                );
-                return Err(Err::Error(Ssu2ParseError::InvalidBitstream));
+                let (rest, port) = be_u16(rest)?;
+                let (rest, address) = take(16usize)(rest)?;
+
+                // must succeed since `take(16)` took 16 bytes
+                (
+                    rest,
+                    SocketAddr::V6(SocketAddrV6::new(
+                        Ipv6Addr::from_octets(
+                            TryInto::<[u8; 16]>::try_into(address).expect("to succeed"),
+                        ),
+                        port,
+                        0,
+                        0,
+                    )),
+                )
             }
             _ => return Err(Err::Error(Ssu2ParseError::InvalidBitstream)),
         };
@@ -1255,11 +1285,21 @@ impl Block {
                 )
             }
             18 => {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    "ipv6 not supported"
-                );
-                return Err(Err::Error(Ssu2ParseError::InvalidBitstream));
+                let (rest, port) = be_u16(rest)?;
+                let (rest, address) = take(16usize)(rest)?;
+
+                // must succeed since `take(16)` took 16 bytes
+                (
+                    rest,
+                    Some(SocketAddr::V6(SocketAddrV6::new(
+                        Ipv6Addr::from_octets(
+                            TryInto::<[u8; 16]>::try_into(address).expect("to succeed"),
+                        ),
+                        port,
+                        0,
+                        0,
+                    ))),
+                )
             }
             _ => return Err(Err::Error(Ssu2ParseError::InvalidBitstream)),
         };
