@@ -18,7 +18,7 @@
 
 use core::{fmt, ops::Deref};
 
-pub use capabilities::Capabilities;
+pub use capabilities::{Bandwidth, Capabilities};
 pub use datagram_flags::DatagramFlags;
 pub use date::Date;
 pub use destination::{Destination, DestinationId};

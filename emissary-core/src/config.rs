@@ -16,11 +16,10 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use core::net::{Ipv4Addr, Ipv6Addr};
-
 use crate::{primitives::Str, profile::Profile, tunnel::TunnelPoolConfig};
 
 use alloc::{string::String, vec::Vec};
+use core::net::{Ipv4Addr, Ipv6Addr};
 
 /// Exploratory tunnel pool config.
 #[derive(Clone, PartialEq, Eq)]
@@ -156,6 +155,29 @@ pub struct TransitConfig {
     pub max_tunnels: Option<usize>,
 }
 
+/// Bandwidth configuration.
+#[derive(Debug, Clone)]
+pub struct BandwidthConfig {
+    /// Maximum bandwidth, bytes per second.
+    ///
+    /// Default is 1 MB/s.
+    pub bandwidth: usize,
+
+    /// Share ratio, i.e., how much of `bandwidth` is allocated to transit traffic.
+    ///
+    /// Default is 90%.
+    pub share_ratio: f64,
+}
+
+impl Default for BandwidthConfig {
+    fn default() -> Self {
+        Self {
+            bandwidth: 1000 * 1000,
+            share_ratio: 0.9,
+        }
+    }
+}
+
 /// Router configuration.
 #[derive(Default)]
 pub struct Config {
@@ -165,14 +187,14 @@ pub struct Config {
     /// Router capabilities.
     pub caps: Option<String>,
 
-    /// Event refresh interval in seconds.
-    pub refresh_interval: Option<usize>,
-
     /// Exploratory tunnel pool config.
     pub exploratory: Option<ExploratoryConfig>,
 
     /// Should the node be run as a floodfill router.
     pub floodfill: bool,
+
+    /// Bandwidth configuration.
+    pub bandwidth: Option<BandwidthConfig>,
 
     /// I2CP configuration.
     ///
@@ -191,11 +213,11 @@ pub struct Config {
     /// NTCP2 configuration.
     pub ntcp2: Option<Ntcp2Config>,
 
-    /// SSU2 configuration.
-    pub ssu2: Option<Ssu2Config>,
-
     /// Known router profiles.
     pub profiles: Vec<(String, Profile)>,
+
+    /// Event refresh interval in seconds.
+    pub refresh_interval: Option<usize>,
 
     /// Router Info, if it exists.
     pub router_info: Option<Vec<u8>>,
@@ -208,14 +230,17 @@ pub struct Config {
     /// `None` if SAMv3 is disabled.
     pub samv3_config: Option<SamConfig>,
 
+    /// Router signing key.
+    pub signing_key: Option<[u8; 32]>,
+
+    /// SSU2 configuration.
+    pub ssu2: Option<Ssu2Config>,
+
+    /// Router static key.
+    pub static_key: Option<[u8; 32]>,
+
     /// Transit tunnel configuration.
     ///
     /// `None` if transit tunnels are disabled.
     pub transit: Option<TransitConfig>,
-
-    /// Router signing key.
-    pub signing_key: Option<[u8; 32]>,
-
-    /// Router static key.
-    pub static_key: Option<[u8; 32]>,
 }

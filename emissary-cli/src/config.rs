@@ -161,6 +161,12 @@ pub struct MetricsConfig {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct BandwidthConfig {
+    bandwidth: usize,
+    share_ratio: f64,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct PortForwardingConfig {
     pub nat_pmp: bool,
     pub upnp: bool,
@@ -200,6 +206,7 @@ pub struct EmissaryConfig {
     #[serde(default)]
     pub allow_local: bool,
     pub caps: Option<String>,
+    pub bandwidth: Option<BandwidthConfig>,
     pub exploratory: Option<ExploratoryConfig>,
     #[serde(default)]
     pub floodfill: bool,
@@ -237,7 +244,11 @@ impl EmissaryConfig {
                 )),
                 subscriptions: None,
             }),
-            caps: Some(String::from("XR")),
+            caps: None,
+            bandwidth: Some(BandwidthConfig {
+                bandwidth: 1000 * 1000,
+                share_ratio: 0.9f64,
+            }),
             http_proxy: Some(HttpProxyConfig {
                 host: "127.0.0.1".to_string(),
                 port: 4444u16,
@@ -311,6 +322,9 @@ pub struct Config {
 
     /// Base path.
     pub base_path: PathBuf,
+
+    /// Bandwidth configuration.
+    pub bandwidth: Option<emissary_core::BandwidthConfig>,
 
     /// Router capabilities.
     pub caps: Option<String>,
@@ -394,6 +408,7 @@ impl From<Config> for emissary_core::Config {
     fn from(val: Config) -> Self {
         emissary_core::Config {
             allow_local: val.allow_local,
+            bandwidth: val.bandwidth,
             caps: val.caps,
             exploratory: val.exploratory,
             floodfill: val.floodfill,
@@ -585,6 +600,10 @@ impl Config {
             address_book: config.address_book,
             allow_local: config.allow_local,
             base_path,
+            bandwidth: config.bandwidth.map(|config| emissary_core::BandwidthConfig {
+                bandwidth: config.bandwidth,
+                share_ratio: config.share_ratio,
+            }),
             caps: config.caps,
             client_tunnels: config.client_tunnels.unwrap_or(Vec::new()),
             exploratory: config.exploratory.map(|config| emissary_core::ExploratoryConfig {
@@ -864,6 +883,20 @@ impl Config {
             }
         }
 
+        if let Some(emissary_core::BandwidthConfig {
+            bandwidth,
+            share_ratio,
+        }) = &mut self.bandwidth
+        {
+            if let Some(selected) = arguments.bandwidth.bandwidth {
+                *bandwidth = selected;
+            }
+
+            if let Some(selected) = arguments.bandwidth.share_ratio {
+                *share_ratio = selected;
+            }
+        }
+
         self
     }
 }
@@ -871,7 +904,8 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use crate::cli::{
-        MetricsOptions, PortForwardingOptions, ReseedOptions, TransitOptions, TunnelOptions,
+        BandwidthOptions, MetricsOptions, PortForwardingOptions, ReseedOptions, TransitOptions,
+        TunnelOptions,
     };
 
     use super::*;
@@ -930,6 +964,10 @@ mod tests {
                 disable_upnp: None,
                 disable_nat_pmp: None,
                 upnp_name: None,
+            },
+            bandwidth: BandwidthOptions {
+                bandwidth: None,
+                share_ratio: None,
             },
         }
     }

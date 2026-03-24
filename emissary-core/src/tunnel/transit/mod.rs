@@ -33,7 +33,7 @@ use crate::{
     router::context::RouterContext,
     runtime::{Counter, JoinSet, MetricsHandle, Runtime},
     shutdown::ShutdownHandle,
-    subsystem::SubsystemHandle,
+    subsystem::{bandwidth::CongestionLevel, SubsystemHandle},
     tunnel::{
         metrics::*,
         noise::TunnelKeys,
@@ -48,6 +48,7 @@ use futures::{
     FutureExt, StreamExt,
 };
 use futures_channel::oneshot;
+use rand::Rng;
 use thingbuf::mpsc::Receiver;
 
 use alloc::{string::ToString, vec::Vec};
@@ -270,6 +271,24 @@ impl<R: Runtime> TransitTunnelManager<R> {
             "variable tunnel build request",
         );
 
+        // check if the router has bandwidth capacity for this tunnel
+        //
+        // if congestion is at 70% (medium), reject the tunnel with a 50% chance
+        let has_capacity = match self.subsystem_handle.congestion() {
+            CongestionLevel::Low => true,
+            CongestionLevel::Medium => R::rng().next_u64().is_multiple_of(2),
+            CongestionLevel::High => false,
+        };
+
+        if !has_capacity {
+            tracing::trace!(
+                target: LOG_TARGET,
+                %tunnel_id,
+                congestion = ?self.subsystem_handle.congestion(),
+                "rejecting variable tunnel build request due to congestion",
+            );
+        }
+
         // check if the tunnel can be accepted
         //
         // if the router is active and capable of accepting a transit tunnel, check if a new
@@ -280,6 +299,7 @@ impl<R: Runtime> TransitTunnelManager<R> {
         // records) doesn't have aes-cbc support
         let maybe_receiver = if self.can_accept_transit_tunnel()
             && core::matches!(role, HopRole::OutboundEndpoint)
+            && has_capacity
         {
             match self.subsystem_handle.try_insert_tunnel::<TUNNEL_CHANNEL_SIZE>(tunnel_id) {
                 Ok(receiver) => Some(receiver),
@@ -527,12 +547,30 @@ impl<R: Runtime> TransitTunnelManager<R> {
             "short tunnel build request",
         );
 
+        // check if the router has bandwidth capacity for this tunnel
+        //
+        // if congestion is at 70% (medium), reject the tunnel with a 50% chance
+        let has_capacity = match self.subsystem_handle.congestion() {
+            CongestionLevel::Low => true,
+            CongestionLevel::Medium => R::rng().next_u64().is_multiple_of(2),
+            CongestionLevel::High => false,
+        };
+
+        if !has_capacity {
+            tracing::trace!(
+                target: LOG_TARGET,
+                %tunnel_id,
+                congestion = ?self.subsystem_handle.congestion(),
+                "rejecting short tunnel build request due to congestion",
+            );
+        }
+
         // check if the tunnel can be accepted
         //
         // if the router is active and capable of accepting a transit tunnel, check if a new
         // receiver can be added to routing table and if so, create new receiver for the transit
         // tunnel and add it to routing table
-        let maybe_receiver = match self.can_accept_transit_tunnel() {
+        let maybe_receiver = match self.can_accept_transit_tunnel() && has_capacity {
             false => None,
             true => match self.subsystem_handle.try_insert_tunnel::<TUNNEL_CHANNEL_SIZE>(tunnel_id)
             {

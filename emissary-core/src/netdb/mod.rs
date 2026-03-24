@@ -2012,14 +2012,14 @@ mod tests {
             netdb_rx: _netdb_rx,
             transit_rx: _transit_rx,
             transport_tx: _transport_tx,
+            ..
         } = SubsystemManager::<MockRuntime>::new(
-            100,
-            0.,
             router_info.identity.id().clone(),
             NoiseContext::new(
                 static_key.clone(),
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
+            Default::default(),
         );
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
@@ -2636,14 +2636,14 @@ mod tests {
             netdb_rx: _netdb_rx,
             transit_rx: _transit_rx,
             transport_tx: _transport_tx,
+            ..
         } = SubsystemManager::<MockRuntime>::new(
-            100,
-            0.,
             router_info.identity.id().clone(),
             NoiseContext::new(
                 static_key.clone(),
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
+            Default::default(),
         );
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
@@ -3056,14 +3056,14 @@ mod tests {
             netdb_rx: _netdb_rx,
             transit_rx: _transit_rx,
             transport_tx,
+            ..
         } = SubsystemManager::<MockRuntime>::new(
-            100,
-            0.,
             router_info.identity.id().clone(),
             NoiseContext::new(
                 static_key.clone(),
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
+            Default::default(),
         );
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
@@ -3195,14 +3195,14 @@ mod tests {
             netdb_rx: _netdb_rx,
             transit_rx: _transit_rx,
             transport_tx,
+            ..
         } = SubsystemManager::<MockRuntime>::new(
-            100,
-            0.,
             router_info.identity.id().clone(),
             NoiseContext::new(
                 static_key.clone(),
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
+            Default::default(),
         );
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
@@ -3302,14 +3302,14 @@ mod tests {
             netdb_rx: _netdb_rx,
             transit_rx: _transit_rx,
             transport_tx,
+            ..
         } = SubsystemManager::<MockRuntime>::new(
-            100,
-            0.,
             router_info.identity.id().clone(),
             NoiseContext::new(
                 static_key.clone(),
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
+            Default::default(),
         );
         let serialized = Bytes::from(router_info.serialize(&signing_key));
         let (_event_mgr, _event_subscriber, event_handle) =
@@ -3835,14 +3835,14 @@ mod tests {
             netdb_rx: _netdb_rx,
             transit_rx: _transit_rx,
             transport_tx,
+            ..
         } = SubsystemManager::<MockRuntime>::new(
-            100,
-            0.,
             router_info.identity.id().clone(),
             NoiseContext::new(
                 static_key.clone(),
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
+            Default::default(),
         );
         let serialized = Bytes::from(router_info.serialize(&signing_key));
         let (_event_mgr, _event_subscriber, event_handle) =
@@ -4176,14 +4176,14 @@ mod tests {
             netdb_rx: _netdb_rx,
             transit_rx: _transit_rx,
             transport_tx: _transport_tx,
+            ..
         } = SubsystemManager::<MockRuntime>::new(
-            100,
-            0.,
             router_info.identity.id().clone(),
             NoiseContext::new(
                 static_key.clone(),
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
+            Default::default(),
         );
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));

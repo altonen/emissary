@@ -169,6 +169,17 @@ pub struct RouterUiOptions {
     pub web_ui_port: Option<u16>,
 }
 
+#[derive(Args, Default)]
+pub struct BandwidthOptions {
+    /// Bandwidth per second in bytes.
+    #[arg(long, value_name = "BANDWIDTH")]
+    pub bandwidth: Option<usize>,
+
+    /// Share ratio.
+    #[arg(long, value_name = "SHARE_RATIO")]
+    pub share_ratio: Option<f64>,
+}
+
 #[derive(Parser, Default)]
 #[command(version, about)]
 pub struct Arguments {
@@ -242,6 +253,10 @@ pub struct Arguments {
     /// Router UI options.
     #[clap(flatten)]
     pub router_ui: RouterUiOptions,
+
+    /// Bandwidth options.
+    #[clap(flatten)]
+    pub bandwidth: BandwidthOptions,
 
     /// Optional router command.
     ///

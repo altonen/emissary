@@ -29,7 +29,7 @@ use crate::{
     runtime::{AddressBook, Runtime, Storage},
     sam::SamServer,
     shutdown::ShutdownContext,
-    subsystem::{SubsystemManager, SubsystemManagerContext},
+    subsystem::{Source, SubsystemManager, SubsystemManagerContext},
     transport::{Ntcp2Transport, Ssu2Transport, TransportManager, TransportManagerBuilder},
     tunnel::{TunnelManager, TunnelManagerHandle},
 };
@@ -295,17 +295,17 @@ impl<R: Runtime> Router<R> {
 
         // create subsystem manager
         let SubsystemManagerContext {
-            netdb_rx,
-            manager,
+            congestion,
+            dial_rx,
             handle,
+            manager,
+            netdb_rx,
             transit_rx,
             transport_tx,
-            dial_rx,
         } = SubsystemManager::<R>::new(
-            100,
-            0.,
             router_ctx.router_id().clone(),
             router_ctx.noise().clone(),
+            config.bandwidth.unwrap_or_default(),
         );
 
         // spawn subsystem manager in the background
@@ -320,6 +320,7 @@ impl<R: Runtime> Router<R> {
             allow_local,
             dial_rx,
             transport_tx,
+            congestion,
         );
 
         // specify if transit tunnels are disabled
@@ -358,7 +359,7 @@ impl<R: Runtime> Router<R> {
                 floodfill,
                 exploratory_pool_handle,
                 netdb_rx,
-                handle,
+                handle.with_source(Source::NetDb),
             );
             R::spawn(netdb);
 

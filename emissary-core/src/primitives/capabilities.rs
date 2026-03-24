@@ -21,12 +21,13 @@ use crate::primitives::Str;
 use core::fmt;
 
 /// Specified bandwidth of the router.
-#[derive(Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy)]
 pub enum Bandwidth {
     /// Under 12 KBps shared bandwidth.
     K,
 
     /// 12 - 48 KBps shared bandwidth (default).
+    #[default]
     L,
 
     /// 48 - 64 KBps shared bandwidth.
@@ -41,7 +42,7 @@ pub enum Bandwidth {
     /// 256 - 2000 KBps shared bandwidth (as of release 0.9.20).
     P,
 
-    /// Over 2000 KBps shared bandwidth (as of release 0.9.20)}.
+    /// Over 2000 KBps shared bandwidth (as of release 0.9.20).
     X,
 }
 
@@ -77,6 +78,34 @@ impl Bandwidth {
         }
 
         None
+    }
+}
+
+impl From<usize> for Bandwidth {
+    fn from(value: usize) -> Self {
+        match value {
+            0..12_000 => Self::K,
+            12_000..48_000 => Self::L,
+            48_000..64_000 => Self::M,
+            64_000..128_000 => Self::N,
+            128_000..256_000 => Self::O,
+            256_000..2_000_000 => Self::P,
+            _ => Self::X,
+        }
+    }
+}
+
+impl From<Bandwidth> for Str {
+    fn from(value: Bandwidth) -> Self {
+        match value {
+            Bandwidth::K => Str::from("K"),
+            Bandwidth::L => Str::from("L"),
+            Bandwidth::M => Str::from("M"),
+            Bandwidth::N => Str::from("N"),
+            Bandwidth::O => Str::from("O"),
+            Bandwidth::P => Str::from("P"),
+            Bandwidth::X => Str::from("X"),
+        }
     }
 }
 

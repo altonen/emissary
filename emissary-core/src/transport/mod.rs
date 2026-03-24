@@ -24,7 +24,10 @@ use crate::{
     primitives::{Date, Mapping, RouterAddress, RouterId, RouterInfo, Str, TransportKind},
     router::context::RouterContext,
     runtime::{Counter, Gauge, JoinSet, MetricType, MetricsHandle, Runtime},
-    subsystem::SubsystemEvent,
+    subsystem::{
+        bandwidth::{Congestion, CongestionLevel},
+        SubsystemEvent,
+    },
     transport::{metrics::*, ntcp2::Ntcp2Context, ssu2::Ssu2Context},
     Ntcp2Config, Ssu2Config,
 };
@@ -377,6 +380,9 @@ pub struct TransportManagerBuilder<R: Runtime> {
     /// Router capability override.
     caps: Option<Str>,
 
+    /// Router congestion.
+    congestion: Congestion,
+
     /// RX channel for receiving dial requests.
     dial_rx: Receiver<RouterId>,
 
@@ -417,10 +423,12 @@ impl<R: Runtime> TransportManagerBuilder<R> {
         allow_local: bool,
         dial_rx: Receiver<RouterId>,
         transport_tx: Sender<SubsystemEvent>,
+        congestion: Congestion,
     ) -> Self {
         Self {
             allow_local,
             caps: None,
+            congestion,
             dial_rx,
             local_router_info,
             netdb_handle: None,
@@ -479,6 +487,7 @@ impl<R: Runtime> TransportManagerBuilder<R> {
     pub fn build(self) -> TransportManager<R> {
         TransportManager {
             caps: self.caps,
+            congestion: self.congestion,
             dial_rx: self.dial_rx,
             event_handle: self.router_ctx.event_handle().clone(),
             ipv4_info: TransportInfo::default(),
@@ -567,6 +576,9 @@ impl<T> Default for TransportInfo<T> {
 pub struct TransportManager<R: Runtime> {
     /// Router capability override.
     caps: Option<Str>,
+
+    /// Router congestion.
+    congestion: Congestion,
 
     /// RX channel for receiving dial requests.
     dial_rx: Receiver<RouterId>,
@@ -1261,7 +1273,7 @@ impl<R: Runtime> TransportManager<R> {
     /// Attempt to publish our router info.
     fn publish_router_info(&mut self) {
         // current router capabilties
-        let mut caps = Str::from("L");
+        let mut caps = Str::from(self.congestion.bandwidth());
 
         // reset publish time and serialize our new router info
         self.local_router_info.published = Date::new(R::time_since_epoch().as_millis() as u64);
@@ -1356,6 +1368,19 @@ impl<R: Runtime> TransportManager<R> {
                 );
                 caps += "U";
             }
+        }
+
+        // update congestion caps
+        match self.congestion.load() {
+            CongestionLevel::Medium => {
+                tracing::info!(LOG_TARGET, "medium congestion, publishing D");
+                caps += "D";
+            }
+            CongestionLevel::High => {
+                tracing::info!(LOG_TARGET, "high congestion, publishing E");
+                caps += "E";
+            }
+            CongestionLevel::Low => {}
         }
 
         // use user-provided caps if they exist, otherwise use the derived acps
@@ -1759,7 +1784,7 @@ mod tests {
         events::EventManager,
         i2np::{Message, MessageType, I2NP_MESSAGE_EXPIRATION},
         netdb::{NetDbAction, NetDbActionRecycle},
-        primitives::{Capabilities, RouterInfoBuilder, Str},
+        primitives::{Bandwidth, Capabilities, RouterInfoBuilder, Str},
         profile::ProfileStorage,
         router::context::builder::RouterContextBuilder,
         runtime::mock::MockRuntime,
@@ -1815,6 +1840,7 @@ mod tests {
             true,
             dial_rx,
             transport_tx,
+            Default::default(),
         );
         builder.register_netdb_handle(handle);
 
@@ -2364,6 +2390,7 @@ mod tests {
             true,
             dial_rx,
             transport_tx,
+            Default::default(),
         );
         builder.register_netdb_handle(handle);
         let mut manager = builder.build();
@@ -2489,6 +2516,7 @@ mod tests {
             true,
             dial_rx,
             transport_tx,
+            Default::default(),
         );
         builder.register_netdb_handle(handle);
         let mut manager = builder.build();
@@ -2628,6 +2656,7 @@ mod tests {
             true,
             dial_rx,
             transport_tx,
+            Default::default(),
         );
         builder.register_netdb_handle(handle);
         let mut manager = builder.build();
@@ -2780,6 +2809,7 @@ mod tests {
             true,
             dial_rx,
             transport_tx,
+            Default::default(),
         );
         builder.register_netdb_handle(handle);
         builder.register_ntcp2(context);
@@ -2826,6 +2856,7 @@ mod tests {
             true,
             dial_rx,
             transport_tx,
+            Default::default(),
         );
         builder.register_netdb_handle(handle);
         let mut manager = builder.build();
@@ -2952,6 +2983,7 @@ mod tests {
             true,
             dial_rx,
             transport_tx,
+            Default::default(),
         );
         builder.register_netdb_handle(handle);
         let context = Ntcp2Transport::<MockRuntime>::initialize(Some(Ntcp2Config {
@@ -3145,6 +3177,7 @@ mod tests {
             true,
             dial_rx1,
             transport_tx1,
+            Default::default(),
         );
         builder1.register_ssu2(context1.unwrap());
         builder1.register_netdb_handle(handle1);
@@ -3158,6 +3191,7 @@ mod tests {
             true,
             dial_rx2,
             transport_tx2,
+            Default::default(),
         );
         builder2.register_ssu2(context2.unwrap());
         builder2.register_netdb_handle(handle2);
@@ -3300,6 +3334,7 @@ mod tests {
             true,
             dial_rx,
             transport_tx,
+            Default::default(),
         );
         builder.register_netdb_handle(handle);
         let mut manager = builder.build();
@@ -3425,6 +3460,7 @@ mod tests {
             true,
             dial_rx,
             transport_tx,
+            Default::default(),
         );
         builder.register_netdb_handle(handle);
         let mut manager = builder.build();
@@ -3707,6 +3743,7 @@ mod tests {
                 true,
                 dial_rx,
                 transport_tx,
+                Default::default(),
             );
             builder.register_netdb_handle(handle);
 
@@ -7251,5 +7288,114 @@ mod tests {
             .iter()
             .all(|key| introducer_ids.contains(key)));
         assert!(manager.pending_introducers.get(&router_id).unwrap().pending_queries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn publish_router_info_low_congestion() {
+        publish_router_info_with_congestion(CongestionLevel::Low).await;
+    }
+
+    #[tokio::test]
+    async fn publish_router_info_medium_congestion() {
+        publish_router_info_with_congestion(CongestionLevel::Medium).await;
+    }
+
+    #[tokio::test]
+    async fn publish_router_info_high_congestion() {
+        publish_router_info_with_congestion(CongestionLevel::High).await;
+    }
+
+    async fn publish_router_info_with_congestion(congestion: CongestionLevel) {
+        let (router_info, ..) = RouterInfoBuilder::default().build();
+        let (mut manager, netdb_rx, _dial_tx, _subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ntcp2(Box::new(NoopTransport {}))
+            .with_publish()
+            .build();
+
+        manager.on_firewall_status(FirewallStatus::Ok, true);
+        manager.add_external_address("127.0.0.1".parse().unwrap());
+        manager.congestion.store(congestion);
+        manager.publish_router_info();
+
+        match netdb_rx.try_recv().unwrap() {
+            NetDbAction::PublishRouterInfo { router_info, .. } => {
+                let router_info = RouterInfo::parse::<MockRuntime>(&router_info).unwrap();
+
+                match congestion {
+                    CongestionLevel::Low => assert_eq!(
+                        router_info.options.get(&Str::from("caps")),
+                        Some(&Str::from("LR"))
+                    ),
+                    CongestionLevel::Medium => assert_eq!(
+                        router_info.options.get(&Str::from("caps")),
+                        Some(&Str::from("LRD"))
+                    ),
+                    CongestionLevel::High => assert_eq!(
+                        router_info.options.get(&Str::from("caps")),
+                        Some(&Str::from("LRE"))
+                    ),
+                }
+            }
+            _ => panic!("unexpected action"),
+        }
+    }
+
+    #[tokio::test]
+    async fn publish_router_info_class_k() {
+        publish_router_info_with_bandwidth_class(Bandwidth::K).await;
+    }
+
+    #[tokio::test]
+    async fn publish_router_info_class_l() {
+        publish_router_info_with_bandwidth_class(Bandwidth::L).await;
+    }
+
+    #[tokio::test]
+    async fn publish_router_info_class_m() {
+        publish_router_info_with_bandwidth_class(Bandwidth::M).await;
+    }
+
+    #[tokio::test]
+    async fn publish_router_info_class_n() {
+        publish_router_info_with_bandwidth_class(Bandwidth::N).await;
+    }
+
+    #[tokio::test]
+    async fn publish_router_info_class_o() {
+        publish_router_info_with_bandwidth_class(Bandwidth::O).await;
+    }
+
+    #[tokio::test]
+    async fn publish_router_info_class_p() {
+        publish_router_info_with_bandwidth_class(Bandwidth::P).await;
+    }
+
+    #[tokio::test]
+    async fn publish_router_info_class_x() {
+        publish_router_info_with_bandwidth_class(Bandwidth::X).await;
+    }
+
+    async fn publish_router_info_with_bandwidth_class(bandwidth: Bandwidth) {
+        let (router_info, ..) = RouterInfoBuilder::default().build();
+        let (mut manager, netdb_rx, _dial_tx, _subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_ntcp2(Box::new(NoopTransport {}))
+            .with_publish()
+            .build();
+
+        manager.on_firewall_status(FirewallStatus::Ok, true);
+        manager.add_external_address("127.0.0.1".parse().unwrap());
+        manager.congestion = Congestion::new(bandwidth);
+        manager.publish_router_info();
+
+        match netdb_rx.try_recv().unwrap() {
+            NetDbAction::PublishRouterInfo { router_info, .. } => {
+                let router_info = RouterInfo::parse::<MockRuntime>(&router_info).unwrap();
+                let caps: Str = router_info.options.get(&Str::from("caps")).unwrap().clone();
+                assert!((*caps).contains(&*Str::from(bandwidth)));
+            }
+            _ => panic!("unexpected action"),
+        }
     }
 }

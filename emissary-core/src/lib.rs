@@ -36,8 +36,8 @@ extern crate alloc;
 pub type Result<T> = core::result::Result<T, Error>;
 
 pub use config::{
-    Config, ExploratoryConfig, I2cpConfig, MetricsConfig, Ntcp2Config, SamConfig, Ssu2Config,
-    TransitConfig,
+    BandwidthConfig, Config, ExploratoryConfig, I2cpConfig, MetricsConfig, Ntcp2Config, SamConfig,
+    Ssu2Config, TransitConfig,
 };
 pub use error::Error;
 pub use profile::Profile;

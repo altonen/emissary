@@ -23,7 +23,7 @@ use crate::{
     router::context::RouterContext,
     runtime::{MetricType, Runtime},
     shutdown::ShutdownHandle,
-    subsystem::SubsystemHandle,
+    subsystem::{Source, SubsystemHandle},
     tunnel::{
         handle::{CommandRecycle, TunnelManagerCommand},
         pool::{ClientSelector, ExploratorySelector, TunnelPool, TunnelPoolBuildParameters},
@@ -109,7 +109,7 @@ impl<R: Runtime> TunnelManager<R> {
         R::spawn(TransitTunnelManager::<R>::new(
             transit_config,
             router_ctx.clone(),
-            subsystem_handle.clone(),
+            subsystem_handle.clone().with_source(Source::Transit),
             subsys_transit_rx,
             transit_shutdown_handle,
         ));
@@ -127,7 +127,7 @@ impl<R: Runtime> TunnelManager<R> {
             let (tunnel_pool, tunnel_pool_handle) = TunnelPool::<R, _>::new(
                 build_parameters,
                 selector.clone(),
-                subsystem_handle.clone(),
+                subsystem_handle.clone().with_source(Source::Exploratory),
                 router_ctx.clone(),
             );
             R::spawn(tunnel_pool);
@@ -143,7 +143,7 @@ impl<R: Runtime> TunnelManager<R> {
                 command_rx,
                 exploratory_selector,
                 router_ctx,
-                subsystem_handle,
+                subsystem_handle: subsystem_handle.with_source(Source::Client),
             },
             manager_handle,
             pool_handle,

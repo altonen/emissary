@@ -17,6 +17,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    config::BandwidthConfig,
     crypto::{chachapoly::ChaChaPoly, EphemeralPublicKey},
     error::{ChannelError, RoutingError},
     i2np::{
@@ -28,9 +29,11 @@ use crate::{
     },
     primitives::{MessageId, RouterId, TunnelId},
     runtime::Runtime,
+    subsystem::bandwidth::{BandwidthTracker, Congestion, CongestionLevel},
     tunnel::{DeliveryInstructions, NoiseContext},
 };
 
+use futures::FutureExt;
 use futures_channel::oneshot;
 use hashbrown::HashMap;
 use rand::{CryptoRng, Rng};
@@ -42,17 +45,20 @@ use parking_lot::RwLock;
 #[cfg(feature = "no_std")]
 use spin::rwlock::RwLock;
 
-use alloc::{sync::Arc, vec, vec::Vec};
+use alloc::{collections::VecDeque, format, sync::Arc, vec, vec::Vec};
 use core::{
     future::Future,
-    marker::PhantomData,
     pin::Pin,
-    sync::atomic::{AtomicBool, Ordering},
     task::{Context, Poll},
 };
 
+pub mod bandwidth;
+
 /// Logging target for the file.
 const LOG_TARGET: &str = "emissary::subsystem";
+
+/// NetDb event queue maximum size.
+const NETDB_EVENT_QUEUE_LEN: usize = 512usize;
 
 /// Subsystem event.
 #[derive(Default, Debug, Clone)]
@@ -141,6 +147,19 @@ pub enum OutboundMessage {
     Dummy,
 }
 
+impl OutboundMessage {
+    /// Get the total serialized length of `OutboundMessage`.
+    fn len(&self) -> usize {
+        match self {
+            Self::Message(message) => message.serialized_len_short(),
+            Self::MessageWithFeedback(message, _) => message.serialized_len_short(),
+            Self::Messages(messages) =>
+                messages.iter().fold(0, |total, message| total + message.serialized_len_short()),
+            Self::Dummy => unreachable!(),
+        }
+    }
+}
+
 #[derive(Default, Debug, Clone)]
 pub struct OutboundMessageRecycle(());
 
@@ -154,6 +173,33 @@ impl thingbuf::Recycle<OutboundMessage> for OutboundMessageRecycle {
     }
 }
 
+/// Message/tunnel source.
+#[derive(Debug, Default, Clone, Copy)]
+pub enum Source {
+    /// Transit tunnel.
+    Transit,
+
+    /// Local client tunnel.
+    Client,
+
+    /// Exploratory tunnel.
+    Exploratory,
+
+    /// NetDb.
+    NetDb,
+
+    /// Unknown source.
+    #[default]
+    Unknown,
+}
+
+impl Source {
+    /// Returns `true` if this is transit traffic.
+    fn is_transit(&self) -> bool {
+        matches!(self, Source::Transit)
+    }
+}
+
 /// Subsystem event.
 #[derive(Debug, Default)]
 pub enum SubsystemManagerEvent {
@@ -164,6 +210,9 @@ pub enum SubsystemManagerEvent {
 
         /// One or more I2NP messages.
         message: OutboundMessage,
+
+        /// Message source.
+        source: Source,
     },
 
     #[default]
@@ -182,20 +231,25 @@ pub struct SubsystemHandle {
     listeners: Arc<RwLock<HashMap<MessageId, oneshot::Sender<Message>>>>,
 
     /// Should the router throttle itself.
-    #[allow(unused)]
-    throttle: Arc<AtomicBool>,
+    congestion: Congestion,
+
+    /// Source.
+    source: Source,
 
     /// Active tunnels.
-    tunnels: Arc<RwLock<HashMap<TunnelId, Sender<Message>>>>,
+    tunnels: Arc<RwLock<HashMap<TunnelId, (Source, Sender<Message>)>>>,
 }
 
 impl SubsystemHandle {
-    /// Should the subsystem throttle itself.
-    ///
-    /// True if the router is close to its maximum bandwidth usage.
-    #[allow(unused)]
-    pub fn should_throttle(&self) -> bool {
-        self.throttle.load(Ordering::Relaxed)
+    /// Return current short-term congestion of the router.
+    pub fn congestion(&self) -> CongestionLevel {
+        self.congestion.load()
+    }
+
+    /// Set `Source` for the handle.
+    pub fn with_source(mut self, source: Source) -> Self {
+        self.source = source;
+        self
     }
 
     /// Send message to router.
@@ -204,6 +258,7 @@ impl SubsystemHandle {
             .try_send(SubsystemManagerEvent::Message {
                 router_id: router_id.clone(),
                 message: OutboundMessage::Message(message),
+                source: self.source,
             })
             .map_err(From::from)
     }
@@ -219,6 +274,7 @@ impl SubsystemHandle {
             .try_send(SubsystemManagerEvent::Message {
                 router_id: router_id.clone(),
                 message: OutboundMessage::Messages(messages),
+                source: self.source,
             })
             .map_err(From::from)
     }
@@ -238,6 +294,7 @@ impl SubsystemHandle {
             .try_send(SubsystemManagerEvent::Message {
                 router_id: router_id.clone(),
                 message: OutboundMessage::MessageWithFeedback(message, feedback_tx),
+                source: self.source,
             })
             .map_err(From::from)
     }
@@ -274,7 +331,7 @@ impl SubsystemHandle {
             let tunnel_id = TunnelId::from(rng.next_u32());
 
             if !tunnels.contains_key(&tunnel_id) {
-                tunnels.insert(tunnel_id, tx);
+                tunnels.insert(tunnel_id, (self.source, tx));
                 return (tunnel_id, rx);
             }
         }
@@ -304,7 +361,7 @@ impl SubsystemHandle {
             true => Err(RoutingError::TunnelExists(tunnel_id)),
             false => {
                 let (tx, rx) = channel(SIZE);
-                tunnels.insert(tunnel_id, tx);
+                tunnels.insert(tunnel_id, (self.source, tx));
 
                 Ok(rx)
             }
@@ -322,8 +379,9 @@ impl SubsystemHandle {
             Self {
                 event_tx,
                 listeners: Default::default(),
-                throttle: Default::default(),
+                congestion: Default::default(),
                 tunnels: Default::default(),
+                source: Source::Unknown,
             },
             event_rx,
         )
@@ -347,6 +405,11 @@ enum RouterState {
 
 /// Subsystem manager context.
 pub struct SubsystemManagerContext<R: Runtime> {
+    /// Medium-term congestion (5 minutes).
+    ///
+    /// Given to `TransportManager`.
+    pub congestion: Congestion,
+
     /// RX channel for receiving dial requests from `SubsystemManager`.
     pub dial_rx: Receiver<RouterId>,
 
@@ -372,8 +435,14 @@ pub struct SubsystemManagerContext<R: Runtime> {
 
 /// Subsystem manager.
 pub struct SubsystemManager<R: Runtime> {
+    /// Bandwidth tracker.
+    bandwidth_tracker: BandwidthTracker<R>,
+
     /// TX channel for sending dialing requests to `TransportManager`.
     dial_tx: Sender<RouterId>,
+
+    /// Pending NetDb events.
+    pending_netdb_events: VecDeque<NetDbEvent>,
 
     /// RX channel for receiving events from other subsystems.
     ///
@@ -386,29 +455,17 @@ pub struct SubsystemManager<R: Runtime> {
     /// build-related messages.
     listeners: Arc<RwLock<HashMap<MessageId, oneshot::Sender<Message>>>>,
 
-    /// Maximum amount of transit traffic, in bytes.
-    #[allow(unused)]
-    max_transit: usize,
-
     /// TX channel for routing messages to `NetDb`.
     netdb_tx: Sender<NetDbEvent>,
 
     /// Noise context.
     noise: NoiseContext,
 
-    /// Measured outbound traffic, in bytes.
-    #[allow(unused)]
-    outbound: usize,
-
     /// Local router ID.
     router_id: RouterId,
 
     /// Connected routers.
     routers: HashMap<RouterId, RouterState>,
-
-    /// Should the router thorttle itself.
-    #[allow(unused)]
-    throttle: Arc<AtomicBool>,
 
     /// TX channel for routing messages to `TransitTunnelManager`
     transit_tx: Sender<Vec<(RouterId, Message)>>,
@@ -417,57 +474,61 @@ pub struct SubsystemManager<R: Runtime> {
     transport_rx: Receiver<SubsystemEvent>,
 
     /// Active tunnels.
-    tunnels: Arc<RwLock<HashMap<TunnelId, Sender<Message>>>>,
-
-    /// Runtime.
-    _runtime: PhantomData<R>,
+    tunnels: Arc<RwLock<HashMap<TunnelId, (Source, Sender<Message>)>>>,
 }
 
 impl<R: Runtime> SubsystemManager<R> {
     /// Create new [`SubsystemManager`].
     pub fn new(
-        limit: usize,
-        share: f32,
         router_id: RouterId,
         noise: NoiseContext,
+        config: BandwidthConfig,
     ) -> SubsystemManagerContext<R> {
-        assert!(share <= 1.0);
+        assert!(config.share_ratio <= 1.0);
+
+        tracing::info!(
+            target: LOG_TARGET,
+            bandwidth = config.bandwidth,
+            share_ration = %format!("{}%", config.share_ratio * 100.0),
+            "starting SubsystemManager",
+        );
 
         let (event_tx, event_rx) = with_recycle(8192, SubsystemManagerEventRecycle::default());
         let (transit_tx, transit_rx) = channel(256);
         let (netdb_tx, netdb_rx) = channel(256);
         let (dial_tx, dial_rx) = channel(256);
         let (transport_tx, transport_rx) = channel(256);
-        let throttle = Arc::new(AtomicBool::new(false));
         let listeners = Arc::new(RwLock::new(HashMap::new()));
         let tunnels = Arc::new(RwLock::new(HashMap::new()));
+        let (bandwidth_tracker, congestion_short, congestion_medium) =
+            BandwidthTracker::new(config);
 
         SubsystemManagerContext {
+            congestion: congestion_medium,
             netdb_rx,
             transit_rx,
             transport_tx,
             dial_rx,
             manager: Self {
+                bandwidth_tracker,
                 dial_tx,
                 event_rx,
                 listeners: Arc::clone(&listeners),
-                max_transit: (limit as f32 * share) as usize,
                 netdb_tx,
                 noise,
-                outbound: limit,
+                pending_netdb_events: VecDeque::new(),
                 router_id,
                 routers: HashMap::new(),
-                throttle: Arc::clone(&throttle),
                 transit_tx,
                 transport_rx,
                 tunnels: Arc::clone(&tunnels),
-                _runtime: Default::default(),
             },
             handle: SubsystemHandle {
                 event_tx,
                 listeners,
-                throttle,
+                congestion: congestion_short,
                 tunnels,
+                source: Source::Unknown,
             },
         }
     }
@@ -481,7 +542,16 @@ impl<R: Runtime> SubsystemManager<R> {
     /// If router doens't exist, dial the router by sending a message to `TransportManager`
     /// and queue the pending `message`. If connection succeeds, all pending messages are sent
     /// in order to the remote router. If the connection fails, all pending messages are dropped.
-    fn on_outbound_message(&mut self, router_id: RouterId, message: OutboundMessage) {
+    fn on_outbound_message(
+        &mut self,
+        router_id: RouterId,
+        message: OutboundMessage,
+        source: Source,
+    ) {
+        if self.bandwidth_tracker.update_outbound(message.len(), source) {
+            return;
+        }
+
         if router_id == self.router_id {
             tracing::trace!(
                 target: LOG_TARGET,
@@ -562,9 +632,13 @@ impl<R: Runtime> SubsystemManager<R> {
                 MessageType::DatabaseStore
                 | MessageType::DatabaseLookup
                 | MessageType::DatabaseSearchReply
-                | MessageType::DeliveryStatus => {
-                    netdb.push((router_id, message));
-                }
+                | MessageType::DeliveryStatus =>
+                    if !self
+                        .bandwidth_tracker
+                        .update_inbound(message.serialized_len_long(), Source::NetDb)
+                    {
+                        netdb.push((router_id, message));
+                    },
                 MessageType::Garlic =>
                     if let Some(messages) = self.on_garlic_message(message) {
                         let mut inbound = vec![];
@@ -587,7 +661,7 @@ impl<R: Runtime> SubsystemManager<R> {
 
                         self.on_inbound_message(inbound);
                         outbound.into_iter().for_each(|(router_id, message)| {
-                            self.on_outbound_message(router_id, message);
+                            self.on_outbound_message(router_id, message, Source::Unknown);
                         });
                     },
                 MessageType::TunnelData => {
@@ -608,8 +682,13 @@ impl<R: Runtime> SubsystemManager<R> {
                 | MessageType::ShortTunnelBuild
                 | MessageType::OutboundTunnelBuildReply
                 | MessageType::TunnelBuild => {
-                    if let Ok(Some(message)) = self.route_tunnel_build_message(message) {
-                        transit.push((router_id.clone(), message));
+                    if !self
+                        .bandwidth_tracker
+                        .update_inbound(message.serialized_len_short(), Source::Unknown)
+                    {
+                        if let Ok(Some(message)) = self.route_tunnel_build_message(message) {
+                            transit.push((router_id.clone(), message));
+                        }
                     }
                 }
                 MessageType::VariableTunnelBuildReply
@@ -620,18 +699,14 @@ impl<R: Runtime> SubsystemManager<R> {
                         message_type = ?message.message_type,
                         "unhandled message type",
                     );
+                    self.bandwidth_tracker
+                        .update_inbound(message.serialized_len_short(), Source::Unknown);
                 }
             }
         }
 
         if !netdb.is_empty() {
-            if let Err(error) = self.netdb_tx.try_send(NetDbEvent::Message { messages: netdb }) {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    ?error,
-                    "failed to send i2np messages to netdb",
-                );
-            }
+            self.route_netdb_event(NetDbEvent::Message { messages: netdb });
         }
 
         if !transit.is_empty() {
@@ -648,7 +723,7 @@ impl<R: Runtime> SubsystemManager<R> {
             let inner = self.tunnels.read();
 
             for (tunnel_id, messages) in tunnels {
-                let Some(tunnel) = inner.get(&tunnel_id) else {
+                let Some((source, tunnel)) = inner.get(&tunnel_id) else {
                     tracing::debug!(
                         target: LOG_TARGET,
                         %tunnel_id,
@@ -658,6 +733,13 @@ impl<R: Runtime> SubsystemManager<R> {
                 };
 
                 for message in messages {
+                    if self
+                        .bandwidth_tracker
+                        .update_inbound(message.serialized_len_short(), *source)
+                    {
+                        continue;
+                    }
+
                     if let Err(TrySendError::Closed(_)) = tunnel.try_send(message) {
                         tracing::warn!(
                             target: LOG_TARGET,
@@ -694,6 +776,57 @@ impl<R: Runtime> SubsystemManager<R> {
             None => {
                 drop(listeners);
                 Ok(Some(message))
+            }
+        }
+    }
+
+    /// Gracefully route `event` for `NetDb`.
+    ///
+    /// If the queue to NetDb is empty, attempt to send the event right away. If the channel is
+    /// clogged, push the event to a pending queue and if the queue is full, drop message events
+    /// from the head of the queue until there's enough space.
+    fn route_netdb_event(&mut self, event: NetDbEvent) {
+        let event = match self.pending_netdb_events.is_empty() {
+            true => match self.netdb_tx.try_send(event) {
+                Ok(()) => return,
+                Err(TrySendError::Full(event)) => event,
+                Err(error) => {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?error,
+                        "failed to route event to netdb",
+                    );
+                    return;
+                }
+            },
+            false => event,
+        };
+
+        tracing::warn!(
+            target: LOG_TARGET,
+            "event queue to netdb is clogged",
+        );
+
+        // if the event queue has enough space, push the event at the back of the que
+        if self.pending_netdb_events.len() < NETDB_EVENT_QUEUE_LEN {
+            self.pending_netdb_events.push_back(event);
+            return;
+        }
+
+        // otherwise trim messages from the head of the queue which are
+        // less important than connection events.
+        match self
+            .pending_netdb_events
+            .iter()
+            .position(|event| core::matches!(event, NetDbEvent::Message { .. }))
+        {
+            None => tracing::error!(
+                target: LOG_TARGET,
+                "event queue netdb is fully clogged, dropping event",
+            ),
+            Some(index) => {
+                self.pending_netdb_events.remove(index);
+                self.pending_netdb_events.push_back(event);
             }
         }
     }
@@ -838,13 +971,18 @@ impl<R: Runtime> Future for SubsystemManager<R> {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let _ = self.bandwidth_tracker.poll_unpin(cx);
+
         loop {
             match self.event_rx.poll_recv(cx) {
                 Poll::Pending => break,
                 Poll::Ready(None) => return Poll::Ready(()),
                 Poll::Ready(Some(event)) => match event {
-                    SubsystemManagerEvent::Message { router_id, message } =>
-                        self.on_outbound_message(router_id, message),
+                    SubsystemManagerEvent::Message {
+                        router_id,
+                        message,
+                        source,
+                    } => self.on_outbound_message(router_id, message, source),
                     SubsystemManagerEvent::Dummy => unreachable!(),
                 },
             }
@@ -862,21 +1000,9 @@ impl<R: Runtime> Future for SubsystemManager<R> {
                             "connection opened",
                         );
 
-                        // TODO: handle this more gracefully by buffering events
-                        if let Err(error) =
-                            self.netdb_tx.try_send(NetDbEvent::ConnectionEstablished {
-                                router_id: router_id.clone(),
-                            })
-                        {
-                            tracing::warn!(
-                                target: LOG_TARGET,
-                                %router_id,
-                                ?error,
-                                "failed to inform netdb of the connection",
-                            );
-                            self.routers.remove(&router_id);
-                            continue;
-                        }
+                        self.route_netdb_event(NetDbEvent::ConnectionEstablished {
+                            router_id: router_id.clone(),
+                        });
 
                         // send all pending messages to router
                         if let Some(RouterState::Dialing { pending }) =
@@ -918,22 +1044,36 @@ impl<R: Runtime> Future for SubsystemManager<R> {
             }
         }
 
+        // drain netdb's event queue
+        while let Some(event) = self.pending_netdb_events.pop_front() {
+            match self.netdb_tx.try_send(event) {
+                Ok(()) => {}
+                Err(TrySendError::Full(event)) => {
+                    self.pending_netdb_events.push_front(event);
+                    break;
+                }
+                Err(error) => tracing::warn!(
+                    target: LOG_TARGET,
+                    ?error,
+                    "failed to send pending event to netdb",
+                ),
+            }
+        }
+
         Poll::Pending
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use bytes::{BufMut, Bytes, BytesMut};
-    use futures::FutureExt;
-
+    use super::*;
     use crate::{
         crypto::{EphemeralPrivateKey, StaticPrivateKey, StaticPublicKey},
         i2np::{garlic::GarlicMessageBuilder, I2NP_MESSAGE_EXPIRATION},
         runtime::mock::MockRuntime,
     };
-
-    use super::*;
+    use bytes::{BufMut, Bytes, BytesMut};
+    use futures::FutureExt;
 
     macro_rules! poll_manager {
         ($manager:ident) => {
@@ -943,36 +1083,6 @@ mod tests {
             })
             .await;
         };
-    }
-
-    #[test]
-    fn no_bandwidth_shared() {
-        let private_key = StaticPrivateKey::random(MockRuntime::rng());
-        let router_id = RouterId::random();
-        let SubsystemManagerContext { manager, .. } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
-            router_id.clone(),
-            NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
-        );
-
-        assert_eq!(manager.outbound, 100 * 1024);
-        assert_eq!(manager.max_transit, 0);
-    }
-
-    #[test]
-    fn all_bandwidth_shared() {
-        let private_key = StaticPrivateKey::random(MockRuntime::rng());
-        let router_id = RouterId::random();
-        let SubsystemManagerContext { manager, .. } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            1.,
-            router_id.clone(),
-            NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
-        );
-
-        assert_eq!(manager.outbound, 100 * 1024);
-        assert_eq!(manager.max_transit, 100 * 1024);
     }
 
     #[tokio::test]
@@ -987,10 +1097,9 @@ mod tests {
             transport_tx: tx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
         let (msg_tx, _msg_rx) = with_recycle(16, OutboundMessageRecycle::default());
 
@@ -1030,10 +1139,9 @@ mod tests {
             dial_rx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
 
         let router_id = RouterId::random();
@@ -1083,10 +1191,9 @@ mod tests {
             transport_tx: tx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
         let (feedback_tx, feedback_rx) = oneshot::channel();
 
@@ -1136,10 +1243,9 @@ mod tests {
             dial_rx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
 
         let router_id = RouterId::random();
@@ -1186,10 +1292,9 @@ mod tests {
             transport_tx: tx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
         let router_id = RouterId::random();
 
@@ -1302,10 +1407,9 @@ mod tests {
             dial_rx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
         let router_id = RouterId::random();
 
@@ -1418,10 +1522,9 @@ mod tests {
             transport_tx: _tx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
         let handle_clone = handle.clone();
 
@@ -1448,10 +1551,9 @@ mod tests {
             transport_tx: tx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
 
         // create mock `VariableTunnelBuildMessage`
@@ -1484,10 +1586,9 @@ mod tests {
             transport_tx: tx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
 
         // create mock `ShortTunnelBuild`
@@ -1520,10 +1621,9 @@ mod tests {
             transport_tx: tx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
 
         // create mock `OutboundTunnelBuildReply`
@@ -1559,10 +1659,9 @@ mod tests {
             transport_tx: tx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
 
         // register listener through handle
@@ -1604,10 +1703,9 @@ mod tests {
             transport_tx: tx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
 
         // register listener through handle
@@ -1649,10 +1747,9 @@ mod tests {
             transport_tx: _tx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
 
         // register tunnel through handle
@@ -1680,10 +1777,9 @@ mod tests {
             transport_tx: tx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
 
         // register tunnel through handle
@@ -1732,10 +1828,9 @@ mod tests {
             transport_tx: tx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
 
         // register tunnel through handle
@@ -1783,10 +1878,9 @@ mod tests {
             transport_tx: tx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
 
         // generate id for a non-existent tunnel
@@ -1831,10 +1925,9 @@ mod tests {
             transport_tx: tx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
 
         // generate id for the non-existent tunnel
@@ -1880,10 +1973,9 @@ mod tests {
             transport_tx: tx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
 
         // register tunnel through handle
@@ -1980,10 +2072,9 @@ mod tests {
             dial_rx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key.clone(), Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
 
         // create short tunnel build request which gets routed to transit tunnel manager
@@ -2030,10 +2121,9 @@ mod tests {
             dial_rx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key.clone(), Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
 
         // create short tunnel build request which gets routed to transit tunnel manager
@@ -2103,10 +2193,9 @@ mod tests {
             transport_tx: tx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key.clone(), Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
 
         // register remote router as connected
@@ -2172,10 +2261,9 @@ mod tests {
             transport_tx: tx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key.clone(), Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
 
         // register remote router as connected
@@ -2231,10 +2319,9 @@ mod tests {
             transport_tx: tx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key.clone(), Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
 
         // send garlic message for tunnel
@@ -2337,10 +2424,9 @@ mod tests {
             dial_rx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key.clone(), Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
 
         // register remote router as connected
@@ -2482,10 +2568,9 @@ mod tests {
             transport_tx: tx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key.clone(), Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
 
         // create noise context
@@ -2551,10 +2636,9 @@ mod tests {
             transport_tx: _tx,
             ..
         } = SubsystemManager::<MockRuntime>::new(
-            100 * 1024,
-            0.,
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
+            Default::default(),
         );
 
         let (tunnel_id, tunnel_rx) = handle.insert_tunnel::<16>(&mut MockRuntime::rng());

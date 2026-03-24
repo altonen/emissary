@@ -146,7 +146,12 @@ impl TestTransitTunnelManager {
             netdb_rx,
             transit_rx,
             transport_tx,
-        } = SubsystemManager::<MockRuntime>::new(100, 0., router_info.identity.id(), noise.clone());
+            ..
+        } = SubsystemManager::<MockRuntime>::new(
+            router_info.identity.id(),
+            noise.clone(),
+            Default::default(),
+        );
 
         // spawn subsystem manager in the background
         //

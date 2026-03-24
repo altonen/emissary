@@ -1524,14 +1524,14 @@ mod tests {
             netdb_rx: _netdb_rx,
             transit_rx: _transit_rx,
             transport_tx,
+            ..
         } = SubsystemManager::<MockRuntime>::new(
-            100,
-            0.,
             router_info.identity.id(),
             NoiseContext::new(
                 static_key.clone(),
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
+            Default::default(),
         );
         tokio::spawn(manager);
         let parameters = TunnelPoolBuildParameters::new(pool_config);
@@ -1637,14 +1637,14 @@ mod tests {
             netdb_rx: _netdb_rx,
             transit_rx: _transit_rx,
             transport_tx,
+            ..
         } = SubsystemManager::<MockRuntime>::new(
-            100,
-            0.,
             router_info.identity.id(),
             NoiseContext::new(
                 static_key.clone(),
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
+            Default::default(),
         );
         tokio::spawn(manager);
         let parameters = TunnelPoolBuildParameters::new(pool_config);
@@ -1749,14 +1749,14 @@ mod tests {
             netdb_rx: _netdb_rx,
             transit_rx: _transit_rx,
             transport_tx,
+            ..
         } = SubsystemManager::<MockRuntime>::new(
-            100,
-            0.,
             router_info.identity.id(),
             NoiseContext::new(
                 static_key.clone(),
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
+            Default::default(),
         );
         tokio::spawn(manager);
         let parameters = TunnelPoolBuildParameters::new(pool_config);
@@ -1876,14 +1876,14 @@ mod tests {
             netdb_rx: _netdb_rx,
             transit_rx: _transit_rx,
             transport_tx,
+            ..
         } = SubsystemManager::<MockRuntime>::new(
-            100,
-            0.,
             router_info.identity.id(),
             NoiseContext::new(
                 static_key.clone(),
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
+            Default::default(),
         );
         tokio::spawn(manager);
         let parameters = TunnelPoolBuildParameters::new(pool_config);
@@ -2005,14 +2005,14 @@ mod tests {
             netdb_rx: _netdb_rx,
             transit_rx: _transit_rx,
             transport_tx,
+            ..
         } = SubsystemManager::<MockRuntime>::new(
-            100,
-            0.,
             router_info.identity.id(),
             NoiseContext::new(
                 static_key.clone(),
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
+            Default::default(),
         );
 
         // spawn subsystem manager in the background
@@ -2288,14 +2288,14 @@ mod tests {
             netdb_rx: _netdb_rx,
             transit_rx: _transit_rx,
             transport_tx,
+            ..
         } = SubsystemManager::<MockRuntime>::new(
-            100,
-            0.,
             router_info.identity.id(),
             NoiseContext::new(
                 static_key.clone(),
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
+            Default::default(),
         );
 
         // spawn subsystem manager in the background
@@ -2570,14 +2570,14 @@ mod tests {
             netdb_rx: _netdb_rx,
             transit_rx: _transit_rx,
             transport_tx,
+            ..
         } = SubsystemManager::<MockRuntime>::new(
-            100,
-            0.,
             router_info.identity.id(),
             NoiseContext::new(
                 static_key.clone(),
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
+            Default::default(),
         );
         tokio::spawn(manager);
         let parameters = TunnelPoolBuildParameters::new(pool_config);
@@ -2689,14 +2689,14 @@ mod tests {
             netdb_rx: _netdb_rx,
             transit_rx,
             transport_tx,
+            ..
         } = SubsystemManager::<MockRuntime>::new(
-            100,
-            0.,
             router_info.identity.id(),
             NoiseContext::new(
                 static_key.clone(),
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
+            Default::default(),
         );
         tokio::spawn(manager);
         let parameters = TunnelPoolBuildParameters::new(pool_config);
@@ -2823,14 +2823,14 @@ mod tests {
             netdb_rx: _netdb_rx,
             transit_rx: _transport_rx,
             transport_tx,
+            ..
         } = SubsystemManager::<MockRuntime>::new(
-            100,
-            0.,
             router_info.identity.id(),
             NoiseContext::new(
                 static_key.clone(),
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
+            Default::default(),
         );
 
         // spawn subsystem manager in the background
@@ -3049,14 +3049,14 @@ mod tests {
             netdb_rx: _netdb_rx,
             transit_rx: _transport_rx,
             transport_tx,
+            ..
         } = SubsystemManager::<MockRuntime>::new(
-            100,
-            0.,
             router_info.identity.id(),
             NoiseContext::new(
                 static_key.clone(),
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
+            Default::default(),
         );
 
         // spawn subsystem manager in the background
@@ -3241,14 +3241,14 @@ mod tests {
             netdb_rx: _netdb_rx,
             transit_rx: _transport_rx,
             transport_tx,
+            ..
         } = SubsystemManager::<MockRuntime>::new(
-            100,
-            0.,
             router_info.identity.id(),
             NoiseContext::new(
                 static_key.clone(),
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
+            Default::default(),
         );
         tokio::spawn(manager);
         let parameters = TunnelPoolBuildParameters::new(pool_config);
