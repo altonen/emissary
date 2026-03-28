@@ -483,7 +483,7 @@ impl Counter for SmolMetricsCounter {
         label_name: &'static str,
         label_value: &'static str,
     ) {
-        counter!(self.0, label => value).increment(value as u64);
+        counter!(self.0, label_name => label_value).increment(value as u64);
     }
 
     #[cfg(not(feature = "metrics"))]
