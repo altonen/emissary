@@ -18,7 +18,7 @@
 
 use crate::{
     crypto::base64_encode,
-    error::QueryError,
+    error::{DialError, QueryError},
     events::EventHandle,
     netdb::NetDbHandle,
     primitives::{Date, Mapping, RouterAddress, RouterId, RouterInfo, Str, TransportKind},
@@ -33,7 +33,7 @@ use crate::{
 };
 
 use bytes::Bytes;
-use futures::{FutureExt, Stream, StreamExt};
+use futures::{FutureExt, StreamExt};
 use hashbrown::{HashMap, HashSet};
 use thingbuf::mpsc::{errors::TrySendError, Receiver, Sender};
 
@@ -55,9 +55,11 @@ use core::{
 mod metrics;
 mod ntcp2;
 mod ssu2;
+mod types;
 
 pub use ntcp2::Ntcp2Transport;
 pub use ssu2::Ssu2Transport;
+pub use types::*;
 
 #[cfg(feature = "fuzz")]
 pub use {
@@ -75,302 +77,6 @@ const ROUTER_INFO_REPUBLISH_INTERVAL: Duration = Duration::from_secs(15 * 60);
 
 /// Introducer expiration.
 const INTRODUCER_EXPIRATION: Duration = Duration::from_secs(80 * 60);
-
-/// Termination reason.
-#[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
-pub enum TerminationReason {
-    /// Unspecified or normal termination.
-    #[default]
-    Unspecified,
-
-    /// Termination block was received.
-    TerminationReceived,
-
-    /// Idle timeout.
-    IdleTimeout,
-
-    /// Socket was closed (NTCP2 only).
-    IoError,
-
-    /// Router is shutting down.
-    RouterShutdown,
-
-    /// AEAD failure.
-    AeadFailure,
-
-    /// Incompatible options,
-    IncompatibleOptions,
-
-    /// Unsupported signature kind.
-    IncompatibleSignatureKind,
-
-    /// Clock skew.
-    ClockSkew,
-
-    /// Padding violation.
-    PaddinViolation,
-
-    /// Payload format error.
-    PayloadFormatError,
-
-    /// AEAD framing error.
-    AeadFramingError,
-
-    /// NTCP2 handshake error.
-    Ntcp2HandshakeError(u8),
-
-    /// SSU2 handshake error.
-    Ssu2HandshakeError(u8),
-
-    /// Intra frame timeout.
-    IntraFrameReadTimeout,
-
-    /// Invalid router info.
-    InvalidRouterInfo,
-
-    /// Router has been banned.
-    Banned,
-
-    /// Timeout (SSU2 only)
-    Timeout,
-
-    /// Bad token (SSU2 only).
-    BadToken,
-
-    /// Connection limit reached (SSU2 only)
-    ConnectionLimits,
-
-    /// Incompatible version (SSU2 only)
-    IncompatibleVersion,
-
-    /// Wrong network ID (SSU2 only)
-    WrongNetId,
-
-    /// Replaced by new session (SSU2 only)
-    ReplacedByNewSession,
-}
-
-impl TerminationReason {
-    /// Get [`TerminationReason`] from an NTCP2 termination reason.
-    pub fn ntcp2(value: u8) -> Self {
-        match value {
-            0 => TerminationReason::Unspecified,
-            1 => TerminationReason::TerminationReceived,
-            2 => TerminationReason::IdleTimeout,
-            3 => TerminationReason::RouterShutdown,
-            4 => TerminationReason::AeadFailure,
-            5 => TerminationReason::IncompatibleOptions,
-            6 => TerminationReason::IncompatibleSignatureKind,
-            7 => TerminationReason::ClockSkew,
-            8 => TerminationReason::PaddinViolation,
-            9 => TerminationReason::AeadFramingError,
-            10 => TerminationReason::PayloadFormatError,
-            11 => TerminationReason::Ntcp2HandshakeError(1),
-            12 => TerminationReason::Ntcp2HandshakeError(2),
-            13 => TerminationReason::Ntcp2HandshakeError(3),
-            14 => TerminationReason::IntraFrameReadTimeout,
-            15 => TerminationReason::InvalidRouterInfo,
-            16 => TerminationReason::InvalidRouterInfo,
-            17 => TerminationReason::Banned,
-            _ => TerminationReason::Unspecified,
-        }
-    }
-
-    /// Get [`TerminationReason`] from an SSU2 termination reason.
-    pub fn ssu2(value: u8) -> Self {
-        match value {
-            0 => TerminationReason::Unspecified,
-            1 => TerminationReason::TerminationReceived,
-            2 => TerminationReason::IdleTimeout,
-            3 => TerminationReason::RouterShutdown,
-            4 => TerminationReason::AeadFailure,
-            5 => TerminationReason::IncompatibleOptions,
-            6 => TerminationReason::IncompatibleSignatureKind,
-            7 => TerminationReason::ClockSkew,
-            8 => TerminationReason::PaddinViolation,
-            9 => TerminationReason::AeadFramingError,
-            10 => TerminationReason::PayloadFormatError,
-            11 => TerminationReason::Ssu2HandshakeError(1),
-            12 => TerminationReason::Ssu2HandshakeError(2),
-            13 => TerminationReason::Ssu2HandshakeError(3),
-            14 => TerminationReason::IntraFrameReadTimeout,
-            15 => TerminationReason::InvalidRouterInfo,
-            16 => TerminationReason::InvalidRouterInfo,
-            17 => TerminationReason::Banned,
-            18 => TerminationReason::BadToken,
-            19 => TerminationReason::ConnectionLimits,
-            20 => TerminationReason::IncompatibleVersion,
-            21 => TerminationReason::WrongNetId,
-            22 => TerminationReason::ReplacedByNewSession,
-            _ => TerminationReason::Unspecified,
-        }
-    }
-
-    /// Convert NTCP2 termination reason into `u8`.
-    pub fn from_ntcp2(self) -> u8 {
-        match self {
-            TerminationReason::Unspecified => 0,
-            TerminationReason::TerminationReceived => 1,
-            TerminationReason::IdleTimeout => 2,
-            TerminationReason::RouterShutdown => 3,
-            TerminationReason::AeadFailure => 4,
-            TerminationReason::IncompatibleOptions => 5,
-            TerminationReason::IncompatibleSignatureKind => 6,
-            TerminationReason::ClockSkew => 7,
-            TerminationReason::PaddinViolation => 8,
-            TerminationReason::AeadFramingError => 9,
-            TerminationReason::PayloadFormatError => 10,
-            TerminationReason::Ntcp2HandshakeError(1) => 11,
-            TerminationReason::Ntcp2HandshakeError(2) => 12,
-            TerminationReason::Ntcp2HandshakeError(3) => 13,
-            TerminationReason::IntraFrameReadTimeout => 14,
-            TerminationReason::InvalidRouterInfo => 15,
-            TerminationReason::Banned => 17,
-            _ => 0,
-        }
-    }
-
-    /// Convert SSU2 termination reason into `u8`.
-    pub fn from_ssu2(self) -> u8 {
-        match self {
-            TerminationReason::Unspecified => 0,
-            TerminationReason::TerminationReceived => 1,
-            TerminationReason::IdleTimeout => 2,
-            TerminationReason::RouterShutdown => 3,
-            TerminationReason::AeadFailure => 4,
-            TerminationReason::IncompatibleOptions => 5,
-            TerminationReason::IncompatibleSignatureKind => 6,
-            TerminationReason::ClockSkew => 7,
-            TerminationReason::PaddinViolation => 8,
-            TerminationReason::AeadFramingError => 9,
-            TerminationReason::PayloadFormatError => 10,
-            TerminationReason::Ssu2HandshakeError(1) => 11,
-            TerminationReason::Ssu2HandshakeError(2) => 12,
-            TerminationReason::Ssu2HandshakeError(3) => 13,
-            TerminationReason::IntraFrameReadTimeout => 14,
-            TerminationReason::InvalidRouterInfo => 15,
-            TerminationReason::Banned => 17,
-            TerminationReason::BadToken => 18,
-            TerminationReason::ConnectionLimits => 19,
-            TerminationReason::IncompatibleVersion => 20,
-            TerminationReason::WrongNetId => 21,
-            TerminationReason::ReplacedByNewSession => 22,
-            _ => 255,
-        }
-    }
-}
-
-/// Firewall status.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum FirewallStatus {
-    /// Router's firewall status is unknown.
-    #[default]
-    Unknown,
-
-    /// SSU2 has detected that the router is firewalled.
-    Firewalled,
-
-    /// Firewall is open.
-    Ok,
-
-    /// Router is behind a symmetric NAT.
-    SymmetricNat,
-}
-
-/// Direction of the connection.
-#[derive(Debug, Clone, Copy)]
-pub enum Direction {
-    /// Inbound connection.
-    Inbound,
-
-    /// Outbound connection.
-    Outbound,
-}
-
-/// Transport event.
-#[derive(Debug)]
-pub enum TransportEvent {
-    /// Connection successfully established to router.
-    ConnectionEstablished {
-        /// Address of remote router.
-        address: SocketAddr,
-
-        /// Is this an outbound or an inbound connection.
-        direction: Direction,
-
-        /// ID of the connected router.
-        router_id: RouterId,
-    },
-
-    /// Connection closed to router.
-    ConnectionClosed {
-        /// ID of the disconnected router.
-        router_id: RouterId,
-
-        /// Reason for the termination.
-        reason: TerminationReason,
-    },
-
-    /// Failed to dial peer.
-    ///
-    /// The connection is considered failed if we failed to reach the router
-    /// or if there was an error during handshaking.
-    ConnectionFailure {
-        /// ID of the remote router.
-        router_id: RouterId,
-    },
-
-    /// SSU2 has learned something about the router's firewall status.
-    FirewallStatus {
-        /// Firewall status.
-        status: FirewallStatus,
-
-        /// Is this a firewall result for IPv4.
-        ipv4: bool,
-    },
-
-    /// External address discovered.
-    ExternalAddress {
-        /// Our external address.
-        address: SocketAddr,
-    },
-
-    /// New introducer
-    IntroducerAdded {
-        /// Relay tag.
-        relay_tag: u32,
-
-        /// Router ID of Bob.
-        router_id: RouterId,
-
-        /// When does the introducer expire.
-        expires: Duration,
-
-        /// Is this an IPv4 introducer.
-        ipv4: bool,
-    },
-
-    /// Introducer removed.
-    IntroducerRemoved {
-        /// Router ID of Bob.
-        router_id: RouterId,
-
-        /// Was this an IPv4 introducer.
-        ipv4: bool,
-    },
-}
-
-/// Transport interface.
-pub trait Transport: Stream + Unpin + Send {
-    /// Connect to `router`.
-    fn connect(&mut self, router: RouterInfo);
-
-    /// Accept connection and start its event loop.
-    fn accept(&mut self, router: &RouterId);
-
-    /// Reject connection.
-    fn reject(&mut self, router: &RouterId);
-}
 
 /// Builder for [`TransportManager`].
 pub struct TransportManagerBuilder<R: Runtime> {
@@ -826,8 +532,25 @@ impl<R: Runtime> TransportManager<R> {
         }
     }
 
+    /// Add port-mapped, external address for the router.
+    ///
+    /// The address/port pair has been mapped either by NAT-PMP/UPnP and the router can consider
+    /// itself to be unfirewalled over that address.
+    pub fn add_port_mapped_address(&mut self, address: IpAddr) {
+        match address {
+            IpAddr::V4(_) => {
+                self.ipv4_info.firewall_status = FirewallStatus::Ok;
+            }
+            IpAddr::V6(_) => {
+                self.ipv6_info.firewall_status = FirewallStatus::Ok;
+            }
+        }
+
+        self.add_external_address(address);
+    }
+
     /// Add external address for the router.
-    pub fn add_external_address(&mut self, address: IpAddr) {
+    fn add_external_address(&mut self, address: IpAddr) {
         tracing::trace!(
             target: LOG_TARGET,
             ?address,
@@ -994,7 +717,10 @@ impl<R: Runtime> TransportManager<R> {
                         "cannot dial router, no compatible transport",
                     );
 
-                    self.router_ctx.metrics_handle().counter(NUM_DIAL_FAILURES).increment(1);
+                    self.router_ctx
+                        .metrics_handle()
+                        .counter(NUM_DIAL_FAILURES)
+                        .increment_with_label(1, "reason", "no-address");
                     return self.report_dial_failure(router_id);
                 };
 
@@ -1384,10 +1110,15 @@ impl<R: Runtime> TransportManager<R> {
         }
 
         // use user-provided caps if they exist, otherwise use the derived acps
-        self.local_router_info.options.insert(
-            Str::from("caps"),
-            self.caps.as_ref().map_or(caps, |caps| caps.clone()),
+        let caps = self.caps.as_ref().map_or(caps, |caps| caps.clone());
+
+        tracing::info!(
+            target: LOG_TARGET,
+            %caps,
+            "publish local router info",
         );
+
+        self.local_router_info.options.insert(Str::from("caps"), caps);
 
         let serialized =
             Bytes::from(self.local_router_info.serialize(self.router_ctx.signing_key()));
@@ -1513,6 +1244,10 @@ impl<R: Runtime> Future for TransportManager<R> {
                             this.router_ctx.metrics_handle().counter(NUM_ACCEPTED).increment(1);
                             this.router_ctx
                                 .metrics_handle()
+                                .counter(CONNECTIONS_OPENED)
+                                .increment(1);
+                            this.router_ctx
+                                .metrics_handle()
                                 .gauge(if address.is_ipv4() {
                                     NUM_IPV4
                                 } else {
@@ -1555,18 +1290,26 @@ impl<R: Runtime> Future for TransportManager<R> {
                             Some(true) =>
                                 this.router_ctx.metrics_handle().gauge(NUM_IPV4).decrement(1),
                             Some(false) =>
-                                this.router_ctx.metrics_handle().gauge(NUM_IPV4).decrement(1),
+                                this.router_ctx.metrics_handle().gauge(NUM_IPV6).decrement(1),
                         }
                         this.router_ctx.metrics_handle().gauge(NUM_CONNECTIONS).decrement(1);
+                        this.router_ctx
+                            .metrics_handle()
+                            .counter(CONNECTIONS_CLOSED)
+                            .increment_with_label(1, "reason", reason.into());
                     }
-                    Poll::Ready(Some(TransportEvent::ConnectionFailure { router_id })) => {
+                    Poll::Ready(Some(TransportEvent::ConnectionFailure { router_id, reason })) => {
                         tracing::trace!(
                             target: LOG_TARGET,
                             %router_id,
+                            ?reason,
                             "failed to dial router",
                         );
 
-                        this.router_ctx.metrics_handle().counter(NUM_DIAL_FAILURES).increment(1);
+                        this.router_ctx
+                            .metrics_handle()
+                            .counter(NUM_DIAL_FAILURES)
+                            .increment_with_label(1, "reason", reason.into());
                         this.router_ctx.profile_storage().dial_failed(&router_id);
 
                         // if the router for which the dial failed was also a pending introducer,
@@ -1609,7 +1352,7 @@ impl<R: Runtime> Future for TransportManager<R> {
                                     this.router_ctx
                                         .metrics_handle()
                                         .counter(NUM_DIAL_FAILURES)
-                                        .increment(1);
+                                        .increment_with_label(1, "reason", "no-introducers");
                                     this.router_ctx
                                         .metrics_handle()
                                         .counter(NUM_INTRODUCER_DIAL_FAILURES)
@@ -1619,6 +1362,13 @@ impl<R: Runtime> Future for TransportManager<R> {
                                     this.report_dial_failure(client_router_id);
                                 }
                             }
+                        }
+
+                        // if `reason` is `RelayFailure`, it means that an outbound ssu2 session
+                        // was never started for the router and dial failure must be reported
+                        // manually to `SubsystemManager`
+                        if let DialError::RelayFailure = reason {
+                            this.report_dial_failure(router_id);
                         }
                     }
                     Poll::Ready(Some(TransportEvent::FirewallStatus { status, ipv4 })) => {
@@ -1693,7 +1443,10 @@ impl<R: Runtime> Future for TransportManager<R> {
                         "router info query failed",
                     );
 
-                    this.router_ctx.metrics_handle().gauge(NUM_DIAL_FAILURES).increment(1);
+                    this.router_ctx
+                        .metrics_handle()
+                        .counter(NUM_DIAL_FAILURES)
+                        .increment_with_label(1, "reason", "ri-query-failed");
                     this.router_ctx.metrics_handle().counter(NUM_NETDB_QUERY_FAILURES).increment(1);
                     this.pending_queries.remove(&router_id);
 
@@ -1736,7 +1489,7 @@ impl<R: Runtime> Future for TransportManager<R> {
                                 this.router_ctx
                                     .metrics_handle()
                                     .counter(NUM_DIAL_FAILURES)
-                                    .increment(1);
+                                    .increment_with_label(1, "reason", "no-introducers");
                                 this.router_ctx
                                     .metrics_handle()
                                     .counter(NUM_INTRODUCER_DIAL_FAILURES)
@@ -1781,6 +1534,7 @@ impl<R: Runtime> Future for TransportManager<R> {
 mod tests {
     use super::*;
     use crate::{
+        error::DialError,
         events::EventManager,
         i2np::{Message, MessageType, I2NP_MESSAGE_EXPIRATION},
         netdb::{NetDbAction, NetDbActionRecycle},
@@ -1791,6 +1545,7 @@ mod tests {
         subsystem::OutboundMessage,
         timeout,
     };
+    use futures::Stream;
     use std::collections::VecDeque;
     use thingbuf::mpsc::channel;
     use tokio::sync::mpsc;
@@ -2603,6 +2358,7 @@ mod tests {
         event_tx
             .send(TransportEvent::ConnectionFailure {
                 router_id: router_id.clone(),
+                reason: DialError::Timeout,
             })
             .await
             .unwrap();
@@ -4267,7 +4023,10 @@ mod tests {
             ) -> Poll<Option<Self::Item>> {
                 let router_id = futures::ready!(self.rx.poll_recv(cx)).unwrap();
 
-                Poll::Ready(Some(TransportEvent::ConnectionFailure { router_id }))
+                Poll::Ready(Some(TransportEvent::ConnectionFailure {
+                    router_id,
+                    reason: DialError::Timeout,
+                }))
             }
         }
 
@@ -4548,7 +4307,10 @@ mod tests {
             ) -> Poll<Option<Self::Item>> {
                 let router_id = futures::ready!(self.event_rx.poll_recv(cx)).unwrap();
 
-                Poll::Ready(Some(TransportEvent::ConnectionFailure { router_id }))
+                Poll::Ready(Some(TransportEvent::ConnectionFailure {
+                    router_id,
+                    reason: DialError::Timeout,
+                }))
             }
         }
 
@@ -5008,7 +4770,10 @@ mod tests {
             ) -> Poll<Option<Self::Item>> {
                 let router_id = futures::ready!(self.event_rx.poll_recv(cx)).unwrap();
 
-                Poll::Ready(Some(TransportEvent::ConnectionFailure { router_id }))
+                Poll::Ready(Some(TransportEvent::ConnectionFailure {
+                    router_id,
+                    reason: DialError::Timeout,
+                }))
             }
         }
 
@@ -5356,7 +5121,10 @@ mod tests {
             ) -> Poll<Option<Self::Item>> {
                 match futures::ready!(self.event_rx.poll_recv(cx)).unwrap() {
                     Event::Failure(router_id) =>
-                        Poll::Ready(Some(TransportEvent::ConnectionFailure { router_id })),
+                        Poll::Ready(Some(TransportEvent::ConnectionFailure {
+                            router_id,
+                            reason: DialError::Timeout,
+                        })),
                 }
             }
         }
@@ -6143,7 +5911,10 @@ mod tests {
             ) -> Poll<Option<Self::Item>> {
                 match futures::ready!(self.event_rx.poll_recv(cx)).unwrap() {
                     Event::Failure(router_id) =>
-                        Poll::Ready(Some(TransportEvent::ConnectionFailure { router_id })),
+                        Poll::Ready(Some(TransportEvent::ConnectionFailure {
+                            router_id,
+                            reason: DialError::Timeout,
+                        })),
                 }
             }
         }
@@ -7397,5 +7168,171 @@ mod tests {
             }
             _ => panic!("unexpected action"),
         }
+    }
+
+    // dialing the introducer succeeds but then there's relay failure,
+    // preventing a connection to the target router
+    #[tokio::test]
+    async fn dial_ssu2_introducer_client_dial_fails() {
+        pub struct MockTransport {
+            event_rx: tokio::sync::mpsc::Receiver<(RouterId, bool)>,
+            conn_tx: tokio::sync::mpsc::Sender<RouterId>,
+        }
+
+        impl Transport for MockTransport {
+            fn connect(&mut self, router_info: RouterInfo) {
+                self.conn_tx.try_send(router_info.identity.id()).unwrap();
+            }
+            fn accept(&mut self, _: &RouterId) {}
+            fn reject(&mut self, _: &RouterId) {}
+        }
+
+        impl Stream for MockTransport {
+            type Item = TransportEvent;
+
+            fn poll_next(
+                mut self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+            ) -> Poll<Option<Self::Item>> {
+                let (router_id, success) = futures::ready!(self.event_rx.poll_recv(cx)).unwrap();
+
+                if success {
+                    Poll::Ready(Some(TransportEvent::ConnectionEstablished {
+                        address: "127.0.0.1:8888".parse().unwrap(),
+                        direction: Direction::Outbound,
+                        router_id,
+                    }))
+                } else {
+                    Poll::Ready(Some(TransportEvent::ConnectionFailure {
+                        router_id,
+                        reason: DialError::RelayFailure,
+                    }))
+                }
+            }
+        }
+
+        let (introducer, introducer_router_id) = {
+            let (introducer, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 9999,
+                    ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
+                    publish: true,
+                    static_key: [0x11; 32],
+                    intro_key: [0x22; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(introducer.serialize(&sigkey)).unwrap(),
+                introducer.identity.id(),
+            )
+        };
+
+        let (mut router_info, router_id) = {
+            let (router_info, _, sigkey) = RouterInfoBuilder::default()
+                .with_ssu2(Ssu2Config {
+                    port: 10000,
+                    ipv4_host: None,
+                    ipv6_host: None,
+                    ipv4: true,
+                    ipv6: false,
+                    publish: false,
+                    static_key: [0x33; 32],
+                    intro_key: [0x44; 32],
+                    ipv4_mtu: None,
+                    ipv6_mtu: None,
+                })
+                .build();
+
+            (
+                RouterInfo::parse::<MockRuntime>(router_info.serialize(&sigkey)).unwrap(),
+                router_info.identity.id(),
+            )
+        };
+
+        // add introducer for `router_info`
+        match router_info.addresses.get_mut(0).unwrap() {
+            RouterAddress::Ssu2 { introducers, .. } => {
+                introducers.push((introducer_router_id.clone(), 1337));
+            }
+            _ => panic!("expected ssu2"),
+        }
+
+        let (event_tx, event_rx) = tokio::sync::mpsc::channel(16);
+        let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel(16);
+
+        let (mut manager, _netdb_rx, dial_tx, subsys_rx) = TestContextBuilder::default()
+            .with_router(router_info)
+            .with_router(introducer)
+            .with_ssu2(Box::new(MockTransport { event_rx, conn_tx }))
+            .build();
+
+        // send dial request for router that needs relay
+        dial_tx.send(router_id.clone()).await.unwrap();
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify that router is tracked in introducer's pending context
+        //
+        // also verify the router has a pending connection
+        assert!(manager
+            .pending_connections
+            .get(&introducer_router_id)
+            .unwrap()
+            .iter()
+            .any(|client| client == &router_id));
+        assert!(manager.pending_connections.contains_key(&router_id));
+
+        // verify that the introducer is dialed
+        assert_eq!(
+            timeout!(conn_rx.recv()).await.unwrap().unwrap(),
+            introducer_router_id
+        );
+
+        // send dial success for introducer
+        event_tx.send((introducer_router_id.clone(), true)).await.unwrap();
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify that the introducer is no longer pending but connected
+        assert!(!manager.pending_connections.contains_key(&introducer_router_id));
+        assert!(manager.routers.contains_key(&introducer_router_id));
+
+        // and that the router is still pending
+        assert!(manager.pending_connections.contains_key(&router_id));
+        assert!(!manager.routers.contains_key(&router_id));
+
+        // verify the router is dialed now that the introducer is connected
+        assert_eq!(timeout!(conn_rx.recv()).await.unwrap().unwrap(), router_id);
+
+        // send dial failure for the router
+        event_tx.send((router_id.clone(), false)).await.unwrap();
+
+        futures::future::poll_fn(|cx| match manager.poll_unpin(cx) {
+            Poll::Pending => Poll::Ready(()),
+            Poll::Ready(_) => panic!("manager returned"),
+        })
+        .await;
+
+        // verify that subsystem manager is notified of the dial failure
+        match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
+            SubsystemEvent::ConnectionFailure { router_id: remote } =>
+                assert_eq!(remote, router_id),
+            _ => panic!("invalid event"),
+        }
+        assert!(subsys_rx.try_recv().is_err());
     }
 }

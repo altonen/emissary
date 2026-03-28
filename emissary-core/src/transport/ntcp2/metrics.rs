@@ -27,6 +27,10 @@ pub const NUM_HANDSHAKE_FAILURES: &str = "ntcp2_handshake_failure_count";
 pub const NUM_HANDSHAKE_SUCCESSES: &str = "ntcp2_handshake_success_count";
 pub const NUM_INBOUND_NTCP2: &str = "ntcp2_inbound_count";
 pub const NUM_OUTBOUND_NTCP2: &str = "ntcp2_outbound_count";
+pub const INBOUND_BW: &str = "ntcp2_inbound_bw_count";
+pub const OUTBOUND_BW: &str = "ntcp2_outbound_bw_count";
+pub const CONNECTIONS_OPENED: &str = "ntcp2_connections_opened_count";
+pub const CONNECTIONS_CLOSED: &str = "ntcp2_connections_closed_count";
 
 // active connection
 pub const NUM_BLOCKS_PER_MSG: &str = "ntcp2_blocks_per_msg";
@@ -52,6 +56,22 @@ pub fn register_metrics(mut metrics: Vec<MetricType>) -> Vec<MetricType> {
     metrics.push(MetricType::Counter {
         name: NUM_OUTBOUND_MESSAGES,
         description: "how many outbound ntcp2 messages have been sent",
+    });
+    metrics.push(MetricType::Counter {
+        name: INBOUND_BW,
+        description: "inbound bandwidth",
+    });
+    metrics.push(MetricType::Counter {
+        name: OUTBOUND_BW,
+        description: "outbound bandwidth",
+    });
+    metrics.push(MetricType::Counter {
+        name: CONNECTIONS_OPENED,
+        description: "how many connections have been opened",
+    });
+    metrics.push(MetricType::Counter {
+        name: CONNECTIONS_CLOSED,
+        description: "how many connections have been closed",
     });
 
     // gauges

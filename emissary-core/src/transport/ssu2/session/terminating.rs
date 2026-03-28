@@ -60,6 +60,9 @@ pub struct TerminationContext<R: Runtime> {
     /// Destination connection ID.
     pub dst_id: u64,
 
+    /// How long did the active session last.
+    pub duration: Duration,
+
     /// Intro key.
     pub intro_key: [u8; 32],
 
@@ -270,7 +273,7 @@ impl<R: Runtime> Future for TerminatingSsu2Session<R> {
         }
 
         if self.timer.poll_unpin(cx).is_ready() {
-            tracing::info!(
+            tracing::trace!(
                 target: LOG_TARGET,
                 router_id = %self.router_id,
                 dst_id = ?self.dst_id,

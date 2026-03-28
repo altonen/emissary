@@ -17,7 +17,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    error::ChannelError,
+    error::TunnelBuildError,
     i2np::Message,
     primitives::{MessageId, TunnelId},
     profile::ProfileStorage,
@@ -27,7 +27,6 @@ use crate::{
         hop::{pending::PendingTunnel, Tunnel},
         pool::{context::TunnelPoolContextHandle, TUNNEL_BUILD_EXPIRATION},
     },
-    Error,
 };
 
 use futures::{
@@ -69,7 +68,7 @@ pub enum ReceiveKind {
 /// Tunnel build listener.
 pub struct TunnelBuildListener<R: Runtime, T: Tunnel<R> + 'static> {
     /// Pending tunnels.
-    pending: R::JoinSet<(TunnelId, crate::Result<(T, R::Instant)>)>,
+    pending: R::JoinSet<(TunnelId, Result<(T, R::Instant), TunnelBuildError>)>,
 
     /// Profile storage.
     profile: ProfileStorage<R>,
@@ -116,7 +115,7 @@ impl<R: Runtime, T: Tunnel<R>> TunnelBuildListener<R, T> {
                         "failed to dial next hop",
                     );
 
-                    return (*tunnel.tunnel_id(), Err(Error::DialFailure));
+                    return (*tunnel.tunnel_id(), Err(TunnelBuildError::DialFailure));
                 }
                 Either::Right(_) => {
                     tracing::warn!(
@@ -126,7 +125,7 @@ impl<R: Runtime, T: Tunnel<R>> TunnelBuildListener<R, T> {
                         "failed to receive dial result after 2 minutes",
                     );
                     debug_assert!(false);
-                    return (*tunnel.tunnel_id(), Err(Error::DialFailure));
+                    return (*tunnel.tunnel_id(), Err(TunnelBuildError::DialFailure));
                 }
             }
 
@@ -144,7 +143,7 @@ impl<R: Runtime, T: Tunnel<R>> TunnelBuildListener<R, T> {
                         profile.tunnel_not_answered(hop.router_id());
                     });
 
-                    (*tunnel.tunnel_id(), Err(Error::Timeout))
+                    (*tunnel.tunnel_id(), Err(TunnelBuildError::Timeout))
                 }
                 Either::Left((Err(_), _)) => {
                     match receive_kind {
@@ -159,10 +158,7 @@ impl<R: Runtime, T: Tunnel<R>> TunnelBuildListener<R, T> {
                         profile.tunnel_not_answered(hop.router_id());
                     });
 
-                    (
-                        *tunnel.tunnel_id(),
-                        Err(Error::Channel(ChannelError::Closed)),
-                    )
+                    (*tunnel.tunnel_id(), Err(TunnelBuildError::ChannelClosed))
                 }
                 Either::Left((Ok(message), _)) => {
                     let tunnel_id = *tunnel.tunnel_id();
@@ -187,7 +183,7 @@ impl<R: Runtime, T: Tunnel<R>> TunnelBuildListener<R, T> {
                                     // router rejected tunnel or decryption/parsing failed
                                     Some(Err(error)) => {
                                         profile.tunnel_rejected(&router_id);
-                                        Some(Err(Error::Tunnel(error)))
+                                        Some(Err(TunnelBuildError::Tunnel(error)))
                                     }
                                 })
                                 // the error value must exist since an error was returned
@@ -208,7 +204,7 @@ impl<R: Runtime, T: Tunnel<R>> TunnelBuildListener<R, T> {
 }
 
 impl<R: Runtime, T: Tunnel<R>> Stream for TunnelBuildListener<R, T> {
-    type Item = (TunnelId, crate::Result<(T, R::Instant)>);
+    type Item = (TunnelId, Result<(T, R::Instant), TunnelBuildError>);
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.pending.poll_next_unpin(cx)
@@ -283,7 +279,7 @@ mod tests {
             .await
             .expect("no timeout")
         {
-            Some((_, Err(Error::Channel(ChannelError::Closed)))) => {}
+            Some((_, Err(TunnelBuildError::ChannelClosed))) => {}
             _ => panic!("invalid return value"),
         }
     }
@@ -335,7 +331,7 @@ mod tests {
             .await
             .expect("no timeout")
         {
-            Some((_, Err(Error::Channel(ChannelError::Closed)))) => {}
+            Some((_, Err(TunnelBuildError::ChannelClosed))) => {}
             _ => panic!("invalid return value"),
         }
     }
@@ -386,7 +382,7 @@ mod tests {
             .await
             .expect("no timeout")
         {
-            Some((_, Err(Error::DialFailure))) => {}
+            Some((_, Err(TunnelBuildError::DialFailure))) => {}
             _ => panic!("invalid return value"),
         }
     }

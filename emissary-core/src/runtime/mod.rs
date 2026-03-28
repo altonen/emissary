@@ -113,6 +113,12 @@ pub trait Instant: fmt::Debug + Copy + Clone + Send + Unpin + Sync {
 
 pub trait Counter {
     fn increment(&mut self, value: usize);
+    fn increment_with_label(
+        &mut self,
+        value: usize,
+        label_name: &'static str,
+        label_value: &'static str,
+    );
 }
 
 pub trait Gauge {

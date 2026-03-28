@@ -864,7 +864,10 @@ impl<R: Runtime, S: TunnelSelector + HopSelector> Future for TunnelPool<R, S> {
                     );
                     num_failed_builds += 1;
 
-                    self.router_ctx.metrics_handle().counter(NUM_BUILD_FAILURES).increment(1);
+                    self.router_ctx
+                        .metrics_handle()
+                        .counter(NUM_BUILD_FAILURES)
+                        .increment_with_label(1, "reason", error.into());
                     self.router_ctx
                         .metrics_handle()
                         .gauge(NUM_PENDING_OUTBOUND_TUNNELS)
@@ -923,7 +926,10 @@ impl<R: Runtime, S: TunnelSelector + HopSelector> Future for TunnelPool<R, S> {
 
                     self.num_tunnel_build_failures += 1;
                     self.subsystem_handle.remove_tunnel(&tunnel_id);
-                    self.router_ctx.metrics_handle().counter(NUM_BUILD_FAILURES).increment(1);
+                    self.router_ctx
+                        .metrics_handle()
+                        .counter(NUM_BUILD_FAILURES)
+                        .increment_with_label(1, "reason", error.into());
                     self.router_ctx
                         .metrics_handle()
                         .gauge(NUM_PENDING_INBOUND_TUNNELS)
@@ -1532,6 +1538,7 @@ mod tests {
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
         tokio::spawn(manager);
         let parameters = TunnelPoolBuildParameters::new(pool_config);
@@ -1645,6 +1652,7 @@ mod tests {
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
         tokio::spawn(manager);
         let parameters = TunnelPoolBuildParameters::new(pool_config);
@@ -1757,6 +1765,7 @@ mod tests {
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
         tokio::spawn(manager);
         let parameters = TunnelPoolBuildParameters::new(pool_config);
@@ -1884,6 +1893,7 @@ mod tests {
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
         tokio::spawn(manager);
         let parameters = TunnelPoolBuildParameters::new(pool_config);
@@ -2013,6 +2023,7 @@ mod tests {
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         // spawn subsystem manager in the background
@@ -2296,6 +2307,7 @@ mod tests {
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         // spawn subsystem manager in the background
@@ -2578,6 +2590,7 @@ mod tests {
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
         tokio::spawn(manager);
         let parameters = TunnelPoolBuildParameters::new(pool_config);
@@ -2697,6 +2710,7 @@ mod tests {
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
         tokio::spawn(manager);
         let parameters = TunnelPoolBuildParameters::new(pool_config);
@@ -2831,6 +2845,7 @@ mod tests {
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         // spawn subsystem manager in the background
@@ -3057,6 +3072,7 @@ mod tests {
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         // spawn subsystem manager in the background
@@ -3249,6 +3265,7 @@ mod tests {
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
         tokio::spawn(manager);
         let parameters = TunnelPoolBuildParameters::new(pool_config);

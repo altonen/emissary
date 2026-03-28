@@ -65,7 +65,7 @@ mod outbound;
 mod participant;
 
 /// Logging target for the file.
-const LOG_TARGET: &str = "emissary::tunnel::transit";
+const LOG_TARGET: &str = "emissary::tunnel::transit::manager";
 
 /// Short tunnel build request record size.
 const SHORT_RECORD_LEN: usize = 218;

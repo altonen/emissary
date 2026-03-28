@@ -141,13 +141,13 @@ pub struct NoopMetricsCounter {}
 
 impl Counter for NoopMetricsCounter {
     fn increment(&mut self, _value: usize) {}
+    fn increment_with_label(&mut self, _: usize, _: &'static str, _: &'static str) {}
 }
 
 pub struct NoopMetricsGauge {}
 
 impl Gauge for NoopMetricsGauge {
     fn increment(&mut self, _value: usize) {}
-
     fn decrement(&mut self, _value: usize) {}
 }
 

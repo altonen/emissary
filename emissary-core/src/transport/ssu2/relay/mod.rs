@@ -21,9 +21,10 @@ use crate::{
     error::{RelayError, Ssu2Error},
     primitives::{RouterAddress, RouterId, RouterInfo},
     router::context::RouterContext,
-    runtime::{Instant, Runtime, UdpSocket},
+    runtime::{Counter, Instant, MetricsHandle, Runtime, UdpSocket},
     transport::ssu2::{
         message::{Block, HolePunchBuilder},
+        metrics::*,
         relay::types::{
             BobRejectionReason, CharlieRejectionReason, RejectionReason, RelayCommand, RelayEvent,
             RelayHandle,
@@ -787,7 +788,7 @@ impl<R: Runtime> RelayManager<R> {
         }
     }
 
-    /// Handl relay intro from Bob.
+    /// Handle relay intro from Bob.
     fn handle_relay_intro(
         &mut self,
         alice_router_id: RouterId,
@@ -853,9 +854,9 @@ impl<R: Runtime> RelayManager<R> {
                     ..
                 }) => (*intro_key, *socket_address),
                 None => {
-                    tracing::warn!(
+                    tracing::debug!(
                         target: LOG_TARGET,
-                        "charlie doesnt have a dialable ipv4 address",
+                        "charlie does not have a dialable ipv4 address",
                     );
                     debug_assert!(false);
                     return;
@@ -866,7 +867,7 @@ impl<R: Runtime> RelayManager<R> {
                 None => {
                     tracing::warn!(
                         target: LOG_TARGET,
-                        "charlie doesnt have a dialable ipv6 address",
+                        "charlie does not have a dialable ipv6 address",
                     );
                     debug_assert!(false);
                     return;
@@ -1069,6 +1070,11 @@ impl<R: Runtime> RelayManager<R> {
                     ?rejection,
                     "relay request rejected",
                 );
+                self.router_ctx.metrics_handle().counter(RELAY_FAILURE).increment_with_label(
+                    1,
+                    "reason",
+                    rejection.into(),
+                );
 
                 return self.pending_events.push_back(RelayManagerEvent::RelayFailure {
                     router_id: charlie_router_id,
@@ -1081,6 +1087,11 @@ impl<R: Runtime> RelayManager<R> {
                     token_exists = ?token.is_some(),
                     address_exists = ?address.is_some(),
                     "unable to handle relay response, token, address or signature missing",
+                );
+                self.router_ctx.metrics_handle().counter(RELAY_FAILURE).increment_with_label(
+                    1,
+                    "reason",
+                    "invalid-msg",
                 );
 
                 return self.pending_events.push_back(RelayManagerEvent::RelayFailure {
@@ -1102,6 +1113,11 @@ impl<R: Runtime> RelayManager<R> {
                     ?nonce,
                     "invalid signature for relay response",
                 );
+                self.router_ctx.metrics_handle().counter(RELAY_FAILURE).increment_with_label(
+                    1,
+                    "reason",
+                    "invalid-signature",
+                );
 
                 return self.pending_events.push_back(RelayManagerEvent::RelayFailure {
                     router_id: charlie_router_id,
@@ -1109,6 +1125,7 @@ impl<R: Runtime> RelayManager<R> {
             }
         }
 
+        self.router_ctx.metrics_handle().counter(RELAY_SUCCESS).increment(1);
         self.pending_events.push_back(RelayManagerEvent::RelaySuccess {
             address,
             router_id: charlie_router_id,
@@ -1173,6 +1190,10 @@ impl<R: Runtime> RelayManager<R> {
             );
 
             expired.into_iter().for_each(|(src_id, router_id)| {
+                self.router_ctx
+                    .metrics_handle()
+                    .counter(RELAY_FAILURE)
+                    .increment_with_label(1, "reason", "expired");
                 self.active_outbound.remove(&src_id);
                 self.pending_events.push_back(RelayManagerEvent::RelayFailure { router_id });
             });

@@ -18,7 +18,7 @@
 
 use crate::{
     config::Ntcp2Config,
-    error::{ConnectionError, Error},
+    error::{ConnectionError, DialError, Error, Ntcp2Error},
     primitives::{RouterAddress, RouterId, RouterInfo, TransportKind},
     router::context::RouterContext,
     runtime::{
@@ -125,7 +125,7 @@ pub struct Ntcp2Transport<R: Runtime> {
     /// Pending connections.
     ///
     /// `RouterId` is `None` for inbound sessions.
-    pending_handshakes: R::JoinSet<Result<Ntcp2Session<R>, (Option<RouterId>, Error)>>,
+    pending_handshakes: R::JoinSet<Result<Ntcp2Session<R>, (Option<RouterId>, Ntcp2Error)>>,
 
     /// Router context.
     router_ctx: RouterContext<R>,
@@ -356,6 +356,7 @@ impl<R: Runtime> Transport for Ntcp2Transport<R> {
                     "ntcp2 session accepted, starting event loop",
                 );
                 self.router_ctx.metrics_handle().gauge(NUM_CONNECTIONS).increment(1);
+                self.router_ctx.metrics_handle().counter(CONNECTIONS_OPENED).increment(1);
 
                 self.open_connections.push(session.run());
 
@@ -407,6 +408,11 @@ impl<R: Runtime> Stream for Ntcp2Transport<R> {
             Poll::Ready(None) => return Poll::Ready(None),
             Poll::Ready(Some((router_id, reason))) => {
                 this.router_ctx.metrics_handle().gauge(NUM_CONNECTIONS).decrement(1);
+                this.router_ctx
+                    .metrics_handle()
+                    .counter(CONNECTIONS_CLOSED)
+                    .increment_with_label(1, "reason", reason.into());
+
                 return Poll::Ready(Some(TransportEvent::ConnectionClosed { router_id, reason }));
             }
         }
@@ -511,9 +517,12 @@ impl<R: Runtime> Stream for Ntcp2Transport<R> {
                         this.router_ctx
                             .metrics_handle()
                             .counter(NUM_HANDSHAKE_FAILURES)
-                            .increment(1);
+                            .increment_with_label(1, "reason", DialError::from(error).into());
 
-                        return Poll::Ready(Some(TransportEvent::ConnectionFailure { router_id }));
+                        return Poll::Ready(Some(TransportEvent::ConnectionFailure {
+                            router_id,
+                            reason: error.into(),
+                        }));
                     }
                     None => {
                         tracing::trace!(
@@ -524,7 +533,7 @@ impl<R: Runtime> Stream for Ntcp2Transport<R> {
                         this.router_ctx
                             .metrics_handle()
                             .counter(NUM_HANDSHAKE_FAILURES)
-                            .increment(1);
+                            .increment_with_label(1, "reason", DialError::from(error).into());
                     }
                 },
                 Poll::Ready(None) => return Poll::Ready(None),

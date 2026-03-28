@@ -268,6 +268,9 @@ pub enum RouterInfoParseError {
 
     /// Invalid signature.
     InvalidSignature,
+
+    /// No valid addresses.
+    NoAddresses,
 }
 
 impl From<MappingParseError> for RouterInfoParseError {

@@ -475,8 +475,6 @@ impl<R: Runtime> TransmissionManager<R> {
         match message {
             TransmissionMessage::Message(message) => {
                 if self.fits_in_datagram(message.serialized_len_short()) {
-                    self.metrics.histogram(OUTBOUND_FRAGMENT_COUNT).record(1f64);
-
                     return self.pending.push_back(SegmentKind::UnFragmented {
                         message: message.serialize_short(),
                     });
@@ -593,7 +591,7 @@ impl<R: Runtime> TransmissionManager<R> {
             if let Some(Segment { num_sent, sent, .. }) =
                 self.segments.remove(&(ack_through.saturating_sub(i as u32)))
             {
-                // register ack time irrespective of how many the packet was sent
+                // register ack time irrespective of how many times the packet was sent
                 self.metrics
                     .histogram(ACK_RECEIVE_TIME)
                     .record(sent.elapsed().as_millis() as f64);
@@ -720,7 +718,7 @@ impl<R: Runtime> TransmissionManager<R> {
     /// Packets which have not been acknowledged within `times_sent * rto` are selected (respecting
     /// window size), new packet numbers are generated and new `Data` messages are built and
     /// returned.
-    pub fn drain_expired(&mut self) -> Result<Option<Vec<BytesMut>>, ()> {
+    pub fn drain_expired(&mut self) -> Option<Vec<BytesMut>> {
         let expired = self
             .segments
             .iter()
@@ -730,13 +728,13 @@ impl<R: Runtime> TransmissionManager<R> {
             .collect::<Vec<_>>();
 
         if expired.is_empty() {
-            return Ok(None);
+            return None;
         }
 
         // reassign packet number for each segment and reinsert it into `self.segments`
         let pkts_to_resend = expired
             .into_iter()
-            .map(|old_pkt_num| {
+            .filter_map(|old_pkt_num| {
                 // the segment must exist since it was just found in `self.segments`
                 let Segment {
                     num_sent,
@@ -744,15 +742,20 @@ impl<R: Runtime> TransmissionManager<R> {
                     sent,
                 } = self.segments.remove(&old_pkt_num).expect("to exist");
 
+                // drop packets which have been sent too many times
                 if num_sent + 1 > RESEND_TERMINATION_THRESHOLD {
                     tracing::debug!(
                         target: LOG_TARGET,
                         router_id = %self.router_id,
                         pkt_num = ?old_pkt_num,
-                        "packet has been sent over {} times, terminating session",
+                        "packet has been sent over {} times, dropping",
                         RESEND_TERMINATION_THRESHOLD,
                     );
-                    return Err(());
+                    self.metrics
+                        .counter(DROPPED_PKTS)
+                        .increment_with_label(1, "reason", "rt-limit");
+
+                    return None;
                 }
 
                 let pkt_num = self.next_pkt_num();
@@ -774,9 +777,9 @@ impl<R: Runtime> TransmissionManager<R> {
                     },
                 );
 
-                Ok(pkt_num)
+                Some(pkt_num)
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Vec<_>>();
 
         // send only as many packets as the current window can take
         let pkts_to_resend = pkts_to_resend
@@ -790,7 +793,7 @@ impl<R: Runtime> TransmissionManager<R> {
                 router_id = %self.router_id,
                 "one or more packets need to be resent but no window",
             );
-            return Ok(None);
+            return None;
         }
 
         // halve window size because of packet loss
@@ -824,7 +827,7 @@ impl<R: Runtime> TransmissionManager<R> {
             ranges,
         } = self.remote_ack_manager.ack_info();
 
-        Ok(Some(
+        Some(
             pkts_to_resend
                 .into_iter()
                 .map(|pkt_num| {
@@ -840,7 +843,7 @@ impl<R: Runtime> TransmissionManager<R> {
                         .build::<R>()
                 })
                 .collect(),
-        ))
+        )
     }
 
     // Build explicit ACK.
@@ -1348,7 +1351,7 @@ mod tests {
         assert_eq!(mgr.segments.len(), 0);
         assert_eq!(mgr.drain().unwrap().len(), 10);
         assert_eq!(mgr.segments.len(), 10);
-        assert!(mgr.drain_expired().unwrap().is_none());
+        assert!(mgr.drain_expired().is_none());
     }
 
     #[tokio::test]
@@ -1374,14 +1377,13 @@ mod tests {
         assert_eq!(mgr.segments.len(), 0);
         assert_eq!(mgr.drain().unwrap().len(), 10);
         assert_eq!(mgr.segments.len(), 10);
-        assert!(mgr.drain_expired().unwrap().is_none());
+        assert!(mgr.drain_expired().is_none());
 
         tokio::time::sleep(INITIAL_RTO + Duration::from_millis(10)).await;
 
         // verify that all of the packets are sent the second time
         let pkt_nums = mgr
             .drain_expired()
-            .unwrap()
             .unwrap()
             .into_iter()
             .map(|mut pkt| {
@@ -1422,14 +1424,13 @@ mod tests {
         assert_eq!(mgr.segments.len(), 0);
         assert_eq!(mgr.drain().unwrap().len(), 8);
         assert_eq!(mgr.segments.len(), 8);
-        assert!(mgr.drain_expired().unwrap().is_none());
+        assert!(mgr.drain_expired().is_none());
 
         tokio::time::sleep(INITIAL_RTO + Duration::from_millis(10)).await;
 
         // verify that all of the packets are sent the second time
         let pkt_nums = mgr
             .drain_expired()
-            .unwrap()
             .unwrap()
             .into_iter()
             .map(|mut pkt| {
@@ -1452,7 +1453,6 @@ mod tests {
         let pkt_nums = mgr
             .drain_expired()
             .unwrap()
-            .unwrap()
             .into_iter()
             .map(|mut pkt| {
                 let mut reader = HeaderReader::new(mgr.intro_key, &mut pkt).unwrap();
@@ -1472,7 +1472,6 @@ mod tests {
 
         let pkt_nums = mgr
             .drain_expired()
-            .unwrap()
             .unwrap()
             .into_iter()
             .map(|mut pkt| {
@@ -1550,7 +1549,7 @@ mod tests {
         assert_eq!(mgr.segments.len(), 0);
         assert_eq!(mgr.drain().unwrap().len(), MIN_WINDOW_SIZE);
         assert_eq!(mgr.segments.len(), MIN_WINDOW_SIZE);
-        assert!(mgr.drain_expired().unwrap().is_none());
+        assert!(mgr.drain_expired().is_none());
 
         mgr.register_ack(8, 7, &[]);
         assert_eq!(mgr.segments.len(), 8);
@@ -1562,7 +1561,6 @@ mod tests {
         // verify that all of the packets are sent the second time
         let pkt_nums = mgr
             .drain_expired()
-            .unwrap()
             .unwrap()
             .into_iter()
             .map(|mut pkt| {
@@ -1586,7 +1584,6 @@ mod tests {
 
         let pkt_nums = mgr
             .drain_expired()
-            .unwrap()
             .unwrap()
             .into_iter()
             .map(|mut pkt| {
@@ -1628,7 +1625,7 @@ mod tests {
         assert_eq!(mgr.drain().unwrap().len(), MIN_WINDOW_SIZE);
         assert_eq!(mgr.segments.len(), MIN_WINDOW_SIZE);
         assert_eq!(mgr.pending.len(), MIN_WINDOW_SIZE);
-        assert!(mgr.drain_expired().unwrap().is_none());
+        assert!(mgr.drain_expired().is_none());
         assert!(!mgr.has_capacity());
 
         mgr.register_ack(16, 15, &[]);
@@ -1682,7 +1679,7 @@ mod tests {
         assert_eq!(mgr.drain().unwrap().len(), MIN_WINDOW_SIZE);
         assert_eq!(mgr.segments.len(), MIN_WINDOW_SIZE);
         assert_eq!(mgr.pending.len(), 40 - MIN_WINDOW_SIZE);
-        assert!(mgr.drain_expired().unwrap().is_none());
+        assert!(mgr.drain_expired().is_none());
         assert!(!mgr.has_capacity());
 
         mgr.register_ack(16, 5, &[]);
@@ -1713,41 +1710,6 @@ mod tests {
         assert_eq!(mgr.segments.len(), MIN_WINDOW_SIZE + 6);
         assert!(!mgr.pending.is_empty());
         assert!(!mgr.has_capacity());
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn packet_resent_too_many_times() {
-        let mut mgr = TransmissionManager::<MockRuntime>::new(
-            1337u64,
-            RouterId::random(),
-            [0xaa; 32],
-            KeyContext {
-                k_data: [0xbb; 32],
-                k_header_2: [0xcc; 32],
-            },
-            Arc::new(AtomicU32::new(1u32)),
-            MockRuntime::register_metrics(Vec::new(), None),
-            1472,
-        );
-        mgr.schedule(Message {
-            payload: vec![0u8; 1200 * 5],
-            ..Default::default()
-        });
-        assert_eq!(mgr.pending.len(), 5);
-        assert_eq!(mgr.segments.len(), 0);
-        assert_eq!(mgr.drain().unwrap().len(), 5);
-        assert_eq!(mgr.segments.len(), 5);
-
-        let future = async move {
-            while let Ok(_) = mgr.drain_expired() {
-                tokio::time::sleep(INITIAL_RTO + Duration::from_millis(10)).await;
-            }
-        };
-
-        match tokio::time::timeout(Duration::from_secs(15), future).await {
-            Err(_) => panic!("timeout"),
-            Ok(_) => {}
-        }
     }
 
     #[tokio::test]

@@ -28,8 +28,11 @@ use crate::{
         Message, MessageBuilder, MessageType,
     },
     primitives::{MessageId, RouterId, TunnelId},
-    runtime::Runtime,
-    subsystem::bandwidth::{BandwidthTracker, Congestion, CongestionLevel},
+    runtime::{Gauge, MetricType, MetricsHandle, Runtime},
+    subsystem::{
+        bandwidth::{BandwidthTracker, Congestion, CongestionLevel},
+        metrics::*,
+    },
     tunnel::{DeliveryInstructions, NoiseContext},
 };
 
@@ -53,6 +56,7 @@ use core::{
 };
 
 pub mod bandwidth;
+mod metrics;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "emissary::subsystem";
@@ -441,9 +445,6 @@ pub struct SubsystemManager<R: Runtime> {
     /// TX channel for sending dialing requests to `TransportManager`.
     dial_tx: Sender<RouterId>,
 
-    /// Pending NetDb events.
-    pending_netdb_events: VecDeque<NetDbEvent>,
-
     /// RX channel for receiving events from other subsystems.
     ///
     /// This includes tunnel build and expiration events and outbound messages.
@@ -460,6 +461,9 @@ pub struct SubsystemManager<R: Runtime> {
 
     /// Noise context.
     noise: NoiseContext,
+
+    /// Pending NetDb events.
+    pending_netdb_events: VecDeque<NetDbEvent>,
 
     /// Local router ID.
     router_id: RouterId,
@@ -483,15 +487,22 @@ impl<R: Runtime> SubsystemManager<R> {
         router_id: RouterId,
         noise: NoiseContext,
         config: BandwidthConfig,
+        metrics_handle: R::MetricsHandle,
     ) -> SubsystemManagerContext<R> {
         assert!(config.share_ratio <= 1.0);
 
         tracing::info!(
             target: LOG_TARGET,
             bandwidth = config.bandwidth,
-            share_ration = %format!("{}%", config.share_ratio * 100.0),
+            share_ratio = %format!("{}%", config.share_ratio * 100.0),
             "starting SubsystemManager",
         );
+
+        // set gauges for max (transit) bandwidth so they can be used in grafana
+        metrics_handle.gauge(MAX_BANDWIDTH).increment(config.bandwidth);
+        metrics_handle
+            .gauge(MAX_TRANSIT_BANDWIDTH)
+            .increment((config.bandwidth as f64 * config.share_ratio) as usize);
 
         let (event_tx, event_rx) = with_recycle(8192, SubsystemManagerEventRecycle::default());
         let (transit_tx, transit_rx) = channel(256);
@@ -531,6 +542,11 @@ impl<R: Runtime> SubsystemManager<R> {
                 source: Source::Unknown,
             },
         }
+    }
+
+    /// Collect `SubsystemManager`-related metric counters, gauges and histograms.
+    pub fn metrics(metrics: Vec<MetricType>) -> Vec<MetricType> {
+        register_metrics(metrics)
     }
 
     /// Handle outbound `message` to router identified by `router_id`.
@@ -1100,6 +1116,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
         let (msg_tx, _msg_rx) = with_recycle(16, OutboundMessageRecycle::default());
 
@@ -1142,6 +1159,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         let router_id = RouterId::random();
@@ -1194,6 +1212,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
         let (feedback_tx, feedback_rx) = oneshot::channel();
 
@@ -1246,6 +1265,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         let router_id = RouterId::random();
@@ -1295,6 +1315,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
         let router_id = RouterId::random();
 
@@ -1410,6 +1431,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
         let router_id = RouterId::random();
 
@@ -1525,6 +1547,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
         let handle_clone = handle.clone();
 
@@ -1554,6 +1577,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         // create mock `VariableTunnelBuildMessage`
@@ -1589,6 +1613,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         // create mock `ShortTunnelBuild`
@@ -1624,6 +1649,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         // create mock `OutboundTunnelBuildReply`
@@ -1662,6 +1688,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         // register listener through handle
@@ -1706,6 +1733,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         // register listener through handle
@@ -1750,6 +1778,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         // register tunnel through handle
@@ -1780,6 +1809,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         // register tunnel through handle
@@ -1831,6 +1861,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         // register tunnel through handle
@@ -1881,6 +1912,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         // generate id for a non-existent tunnel
@@ -1928,6 +1960,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         // generate id for the non-existent tunnel
@@ -1976,6 +2009,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         // register tunnel through handle
@@ -2075,6 +2109,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key.clone(), Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         // create short tunnel build request which gets routed to transit tunnel manager
@@ -2124,6 +2159,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key.clone(), Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         // create short tunnel build request which gets routed to transit tunnel manager
@@ -2196,6 +2232,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key.clone(), Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         // register remote router as connected
@@ -2264,6 +2301,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key.clone(), Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         // register remote router as connected
@@ -2322,6 +2360,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key.clone(), Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         // send garlic message for tunnel
@@ -2427,6 +2466,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key.clone(), Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         // register remote router as connected
@@ -2571,6 +2611,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key.clone(), Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         // create noise context
@@ -2639,6 +2680,7 @@ mod tests {
             router_id.clone(),
             NoiseContext::new(private_key, Bytes::from(router_id.to_vec())),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         let (tunnel_id, tunnel_rx) = handle.insert_tunnel::<16>(&mut MockRuntime::rng());

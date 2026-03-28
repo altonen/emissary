@@ -19,10 +19,11 @@
 use crate::{
     crypto::{chachapoly::ChaChaPoly, SigningPublicKey},
     error::Ssu2Error,
+    events::EventHandle,
     i2np::Message,
     primitives::{RouterId, RouterInfo},
     router::context::RouterContext,
-    runtime::{Counter, MetricsHandle, Runtime, UdpSocket},
+    runtime::{Counter, Instant, MetricsHandle, Runtime, UdpSocket},
     subsystem::{OutboundMessage, OutboundMessageRecycle, SubsystemEvent},
     transport::{
         ssu2::{
@@ -191,8 +192,14 @@ pub struct Ssu2Session<R: Runtime> {
     /// Duplicate message filter.
     duplicate_filter: DuplicateFilter<R>,
 
+    /// Event handle.
+    event_handle: EventHandle<R>,
+
     /// Fragment handler.
     fragment_handler: FragmentHandler<R>,
+
+    /// Total inbound bandwidth.
+    inbound_bandwidth: usize,
 
     /// Intro key of remote router.
     ///
@@ -205,6 +212,9 @@ pub struct Ssu2Session<R: Runtime> {
     /// TX channel given to `SubsystemManager` which it uses
     /// to send messages to this connection.
     msg_tx: Sender<OutboundMessage, OutboundMessageRecycle>,
+
+    /// Total outbound bandwidth.
+    outbound_bandwidth: usize,
 
     /// Peer test handle.
     peer_test_handle: PeerTestHandle<R>,
@@ -241,6 +251,9 @@ pub struct Ssu2Session<R: Runtime> {
     /// UDP socket.
     socket: R::UdpSocket,
 
+    /// When was the session started.
+    started: R::Instant,
+
     /// Transmission manager.
     transmission: TransmissionManager<R>,
 
@@ -267,6 +280,7 @@ impl<R: Runtime> Ssu2Session<R> {
         let (msg_tx, msg_rx) = with_recycle(CMD_CHANNEL_SIZE, OutboundMessageRecycle::default());
         let metrics = router_ctx.metrics_handle().clone();
         let pkt_num = Arc::new(AtomicU32::new(1u32));
+        let event_handle = router_ctx.event_handle().clone();
 
         tracing::debug!(
             target: LOG_TARGET,
@@ -280,10 +294,13 @@ impl<R: Runtime> Ssu2Session<R> {
             address: context.address,
             dst_id: context.dst_id,
             duplicate_filter: DuplicateFilter::new(),
+            event_handle,
             fragment_handler: FragmentHandler::<R>::new(metrics.clone()),
+            inbound_bandwidth: 0usize,
             intro_key: context.intro_key,
             msg_rx,
             msg_tx,
+            outbound_bandwidth: 0usize,
             peer_test_handle,
             pending_router_info: None,
             pkt_rx: context.pkt_rx,
@@ -294,6 +311,7 @@ impl<R: Runtime> Ssu2Session<R> {
             router_ctx,
             router_id: context.router_id.clone(),
             send_key_ctx: context.send_key_ctx.clone(),
+            started: R::now(),
             transmission: TransmissionManager::<R>::new(
                 context.dst_id,
                 context.router_id,
@@ -324,7 +342,10 @@ impl<R: Runtime> Ssu2Session<R> {
                 expiration = ?message.expiration,
                 "discarding expired message",
             );
-            self.router_ctx.metrics_handle().counter(EXPIRED_PKT_COUNT).increment(1);
+            self.router_ctx
+                .metrics_handle()
+                .counter(DROPPED_PKTS)
+                .increment_with_label(1, "reason", "expired");
             return;
         }
 
@@ -336,7 +357,10 @@ impl<R: Runtime> Ssu2Session<R> {
                 message_type = ?message.message_type,
                 "ignoring duplicate message",
             );
-            self.router_ctx.metrics_handle().counter(DUPLICATE_PKT_COUNT).increment(1);
+            self.router_ctx
+                .metrics_handle()
+                .counter(DUPLICATE_PKTS)
+                .increment_with_label(1, "kind", "i2np");
             return;
         }
 
@@ -528,7 +552,7 @@ impl<R: Runtime> Ssu2Session<R> {
                     );
                 }
                 block => {
-                    tracing::warn!(
+                    tracing::trace!(
                         target: LOG_TARGET,
                         router_id = %self.router_id,
                         ?block,
@@ -584,6 +608,7 @@ impl<R: Runtime> Ssu2Session<R> {
             rx: self.pkt_rx,
             send_key_ctx: self.send_key_ctx,
             socket: self.socket,
+            duration: self.started.elapsed(),
         }
     }
 }
@@ -596,35 +621,34 @@ impl<R: Runtime> Future for Ssu2Session<R> {
             match self.pkt_rx.poll_recv(cx) {
                 Poll::Pending => break,
                 Poll::Ready(None) => return Poll::Ready(TerminationReason::Unspecified),
-                Poll::Ready(Some(pkt)) => match self.handle_packet(pkt) {
-                    Ok(()) => {}
-                    Err(Ssu2Error::Malformed) => {
-                        tracing::warn!(
-                            target: LOG_TARGET,
-                            "failed to parse ssu2 message blocks",
-                        );
-                        debug_assert!(false);
+                Poll::Ready(Some(pkt)) => {
+                    self.inbound_bandwidth += pkt.pkt.len();
+
+                    match self.handle_packet(pkt) {
+                        Ok(()) => {}
+                        Err(Ssu2Error::SessionTerminated(reason)) => return Poll::Ready(reason),
+                        Err(error) => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?error,
+                                "failed to parse ssu2 message blocks",
+                            );
+                            debug_assert!(false);
+
+                            self.router_ctx
+                                .metrics_handle()
+                                .counter(DROPPED_PKTS)
+                                .increment_with_label(1, "reason", "invalid-active");
+                        }
                     }
-                    Err(Ssu2Error::SessionTerminated(reason)) => return Poll::Ready(reason),
-                    Err(Ssu2Error::Chacha) => tracing::warn!(
-                        target: LOG_TARGET,
-                        router_id = %self.router_id,
-                        "encryption/decryption failure, shutting down session",
-                    ),
-                    Err(error) => tracing::debug!(
-                        target: LOG_TARGET,
-                        router_id = %self.router_id,
-                        ?error,
-                        "failed to process packet",
-                    ),
-                },
+                }
             }
         }
 
         while self.transmission.has_capacity() {
             match self.msg_rx.poll_recv(cx) {
                 Poll::Pending => break,
-                Poll::Ready(None) => return Poll::Ready(TerminationReason::Timeout),
+                Poll::Ready(None) => return Poll::Ready(TerminationReason::RouterShutdown),
                 Poll::Ready(Some(OutboundMessage::Message(message))) => {
                     self.transmission.schedule(message);
                 }
@@ -650,19 +674,14 @@ impl<R: Runtime> Future for Ssu2Session<R> {
                 break;
             };
 
-            match self.transmission.drain_expired() {
-                Ok(None) => {}
-                Err(_) => return Poll::Ready(TerminationReason::Timeout),
-                Ok(Some(pkts)) => {
-                    let address = self.address;
+            if let Some(pkts) = self.transmission.drain_expired() {
+                let address = self.address;
 
-                    for pkt in pkts.into_iter() {
-                        match Pin::new(&mut self.socket).poll_send_to(cx, &pkt, address) {
-                            Poll::Pending => {}
-                            Poll::Ready(None) =>
-                                return Poll::Ready(TerminationReason::RouterShutdown),
-                            Poll::Ready(Some(_)) => {}
-                        }
+                for pkt in pkts.into_iter() {
+                    match Pin::new(&mut self.socket).poll_send_to(cx, &pkt, address) {
+                        Poll::Pending => {}
+                        Poll::Ready(None) => return Poll::Ready(TerminationReason::RouterShutdown),
+                        Poll::Ready(Some(_)) => {}
                     }
                 }
             }
@@ -721,7 +740,14 @@ impl<R: Runtime> Future for Ssu2Session<R> {
                         break;
                     }
                     Poll::Ready(None) => return Poll::Ready(TerminationReason::RouterShutdown),
-                    Poll::Ready(Some(_)) => {}
+                    Poll::Ready(Some(nwritten)) => {
+                        self.router_ctx
+                            .metrics_handle()
+                            .counter(OUTBOUND_BANDWIDTH)
+                            .increment(nwritten);
+                        self.router_ctx.metrics_handle().counter(OUTBOUND_PKTS).increment(1);
+                        self.outbound_bandwidth += nwritten;
+                    }
                 }
             }
 
@@ -739,7 +765,17 @@ impl<R: Runtime> Future for Ssu2Session<R> {
                             }
                             Poll::Ready(None) =>
                                 return Poll::Ready(TerminationReason::RouterShutdown),
-                            Poll::Ready(Some(_)) => {}
+                            Poll::Ready(Some(nwritten)) => {
+                                self.router_ctx
+                                    .metrics_handle()
+                                    .counter(OUTBOUND_BANDWIDTH)
+                                    .increment(nwritten);
+                                self.router_ctx
+                                    .metrics_handle()
+                                    .counter(OUTBOUND_PKTS)
+                                    .increment(1);
+                                self.outbound_bandwidth += nwritten;
+                            }
                         }
                     }
 
@@ -752,6 +788,13 @@ impl<R: Runtime> Future for Ssu2Session<R> {
                     };
                 }
             }
+        }
+
+        if self.event_handle.poll_unpin(cx).is_ready() {
+            self.event_handle.transport_inbound_bandwidth(self.inbound_bandwidth);
+            self.event_handle.transport_outbound_bandwidth(self.outbound_bandwidth);
+            self.inbound_bandwidth = 0;
+            self.outbound_bandwidth = 0;
         }
 
         // poll duplicate message filter and fragment handler
@@ -947,105 +990,5 @@ mod tests {
         };
 
         let _ = tokio::time::timeout(Duration::from_secs(5), future).await.expect("no timeout");
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn session_terminated_after_too_many_resends() {
-        let (_from_socket_tx, from_socket_rx) = channel(128);
-        let (transport_tx, transport_rx) = channel(16);
-        let socket = <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-            .await
-            .unwrap();
-        let mut recv_socket =
-            <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
-                .await
-                .unwrap();
-        let remote_signing_key = SigningPrivateKey::random(rand::rng());
-        let (router_info, static_key, signing_key) = RouterInfoBuilder::default().build();
-        let (_event_mgr, _event_subscriber, event_handle) =
-            EventManager::new(None, MockRuntime::register_metrics(vec![], None));
-        let router_ctx = RouterContext::new(
-            MockRuntime::register_metrics(vec![], None),
-            ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new()),
-            router_info.identity.id(),
-            Bytes::from(router_info.serialize(&signing_key)),
-            static_key.clone(),
-            signing_key,
-            2u8,
-            event_handle.clone(),
-        );
-
-        let ctx = Ssu2SessionContext {
-            address: recv_socket.local_address().unwrap(),
-            dst_id: 1337u64,
-            intro_key: [1u8; 32],
-            max_payload_size: 1472,
-            pkt_rx: from_socket_rx,
-            recv_key_ctx: KeyContext {
-                k_data: [2u8; 32],
-                k_header_2: [3u8; 32],
-            },
-            router_id: RouterId::random(),
-            send_key_ctx: KeyContext {
-                k_data: [3u8; 32],
-                k_header_2: [2u8; 32],
-            },
-            verifying_key: remote_signing_key.public(),
-        };
-        let (peer_test_event_tx, _peer_test_event_rx) =
-            with_recycle(16, PeerTestEventRecycle::default());
-        let peer_test_handle = PeerTestHandle::new(peer_test_event_tx);
-        let (relay_event_tx, _relay_event_rx) = channel(16);
-        let relay_handle = RelayHandle::new(relay_event_tx);
-
-        let (cmd_tx, handle) = {
-            let handle = tokio::spawn(
-                Ssu2Session::<MockRuntime>::new(
-                    ctx,
-                    socket,
-                    transport_tx,
-                    router_ctx,
-                    peer_test_handle,
-                    relay_handle,
-                )
-                .run(),
-            );
-
-            match transport_rx.recv().await.unwrap() {
-                SubsystemEvent::ConnectionEstablished { tx, .. } => (tx, handle),
-                _ => panic!("invalid event"),
-            }
-        };
-
-        // send maximum amount of messages to the channel
-        for _ in 0..CMD_CHANNEL_SIZE {
-            cmd_tx
-                .try_send(OutboundMessage::Message(Message {
-                    message_type: MessageType::Data,
-                    message_id: *MessageId::random(),
-                    expiration: MockRuntime::time_since_epoch() + I2NP_MESSAGE_EXPIRATION,
-                    payload: vec![1, 2, 3, 4],
-                }))
-                .unwrap();
-        }
-
-        // read and parse all packets
-        let mut buffer = vec![0u8; 0xffff];
-
-        for _ in 0..16 {
-            let (nread, _from) = recv_socket.recv_from(&mut buffer).await.unwrap();
-            let pkt = &mut buffer[..nread];
-
-            match HeaderReader::new([1u8; 32], pkt).unwrap().parse([2u8; 32]).unwrap() {
-                HeaderKind::Data { .. } => {}
-                _ => panic!("invalid packet"),
-            }
-        }
-
-        match tokio::time::timeout(Duration::from_secs(15), handle).await {
-            Ok(Ok(context)) => assert!(std::matches!(context.reason, TerminationReason::Timeout)),
-            Ok(Err(_)) => panic!("session panicked"),
-            Err(_) => panic!("timeout"),
-        }
     }
 }

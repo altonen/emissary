@@ -27,6 +27,7 @@ use crate::{
         aes::cbc::Aes, chachapoly::ChaChaPoly, hmac::Hmac, noise::NoiseContext, siphash::SipHash,
         EphemeralPrivateKey, StaticPrivateKey, StaticPublicKey,
     },
+    error::Ntcp2Error,
     primitives::RouterInfo,
     runtime::Runtime,
     transport::ntcp2::{
@@ -34,7 +35,6 @@ use crate::{
         options::{InitiatorOptions, ResponderOptions},
         session::{KeyContext, MAX_CLOCK_SKEW},
     },
-    Error,
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -121,7 +121,7 @@ impl Responder {
         iv: [u8; 16],
         message: Vec<u8>,
         net_id: u8,
-    ) -> crate::Result<(Self, usize)> {
+    ) -> Result<(Self, usize), Ntcp2Error> {
         tracing::trace!(
             target: LOG_TARGET,
             "accept new connection"
@@ -135,20 +135,22 @@ impl Responder {
         noise_ctx.mix_hash(&x);
 
         // MixKey(DH())
-        let ephemeral_key = StaticPublicKey::from_bytes(&x).ok_or(Error::InvalidData)?;
+        let ephemeral_key = StaticPublicKey::from_bytes(&x).ok_or(Ntcp2Error::InvalidData)?;
         let mut remote_key = noise_ctx.mix_key(&local_static_key, &ephemeral_key);
 
         // decrypt initiator options
         //
         // https://geti2p.net/spec/ntcp2#key-derivation-function-kdf-for-handshake-message-2-and-message-3-part-1
         let mut options = message[32..].to_vec();
-        ChaChaPoly::new(&remote_key).decrypt_with_ad(noise_ctx.state(), &mut options)?;
+        ChaChaPoly::new(&remote_key)
+            .decrypt_with_ad(noise_ctx.state(), &mut options)
+            .map_err(|_| Ntcp2Error::Chacha)?;
         remote_key.zeroize();
 
         // MixHash(encrypted payload)
         noise_ctx.mix_hash(&message[32..64]);
 
-        let options = InitiatorOptions::parse(&options).ok_or(Error::InvalidData)?;
+        let options = InitiatorOptions::parse(&options).ok_or(Ntcp2Error::InvalidOptions)?;
         if options.network_id != net_id {
             tracing::warn!(
                 target: LOG_TARGET,
@@ -156,7 +158,7 @@ impl Responder {
                 remote_net_id = ?options.network_id,
                 "network id mismatch",
             );
-            return Err(Error::InvalidData);
+            return Err(Ntcp2Error::NetworkMismatch);
         }
 
         // check clock skew
@@ -174,7 +176,7 @@ impl Responder {
                 ?future,
                 "excessive clock skew",
             );
-            return Err(Error::InvalidData);
+            return Err(Ntcp2Error::ClockSkew);
         }
 
         if options.version != 2 {
@@ -184,7 +186,7 @@ impl Responder {
                 remote_version = ?options.version,
                 "ntcp2 version mismatch",
             );
-            return Err(Error::InvalidData);
+            return Err(Ntcp2Error::InvalidVersion);
         }
 
         let padding_len = options.padding_length as usize;
@@ -225,7 +227,7 @@ impl Responder {
     pub fn create_session<R: Runtime>(
         &mut self,
         padding: Vec<u8>,
-    ) -> crate::Result<(BytesMut, usize)> {
+    ) -> Result<(BytesMut, usize), Ntcp2Error> {
         let ResponderState::SessionRequested {
             local_router_hash,
             iv,
@@ -234,7 +236,7 @@ impl Responder {
             mut noise_ctx,
         } = core::mem::take(&mut self.state)
         else {
-            return Err(Error::InvalidState);
+            return Err(Ntcp2Error::InvalidState);
         };
 
         tracing::trace!(
@@ -269,7 +271,9 @@ impl Responder {
         .serialize()
         .to_vec();
 
-        ChaChaPoly::new(&local_key).encrypt_with_ad_new(noise_ctx.state(), &mut options)?;
+        ChaChaPoly::new(&local_key)
+            .encrypt_with_ad_new(noise_ctx.state(), &mut options)
+            .map_err(|_| Ntcp2Error::Chacha)?;
         let message = {
             let mut padding = [0u8; 32];
             R::rng().fill_bytes(&mut padding);
@@ -307,14 +311,14 @@ impl Responder {
     pub fn finalize<R: Runtime>(
         &mut self,
         message: Vec<u8>,
-    ) -> crate::Result<(KeyContext, RouterInfo, Bytes)> {
+    ) -> Result<(KeyContext, RouterInfo, Bytes), Ntcp2Error> {
         let ResponderState::SessionCreated {
             ephemeral_private,
             mut local_key,
             mut noise_ctx,
         } = core::mem::take(&mut self.state)
         else {
-            return Err(Error::InvalidState);
+            return Err(Ntcp2Error::InvalidState);
         };
 
         tracing::trace!(
@@ -336,7 +340,8 @@ impl Responder {
                     ?error,
                     "failed to decrypt remote's public key"
                 );
-            })?;
+            })
+            .map_err(|_| Ntcp2Error::Chacha)?;
 
         // MixHash(ciphertext)
         noise_ctx.mix_hash(&message[..48]);
@@ -345,7 +350,7 @@ impl Responder {
         //
         // https://geti2p.net/spec/ntcp2#key-derivation-function-kdf-for-data-phase
         let initiator_public =
-            StaticPublicKey::from_bytes(&initiator_public[..32]).ok_or(Error::InvalidData)?;
+            StaticPublicKey::from_bytes(&initiator_public[..32]).ok_or(Ntcp2Error::InvalidData)?;
 
         // MixKey(DH())
         let mut k = noise_ctx.mix_key(&ephemeral_private, &initiator_public);
@@ -361,7 +366,8 @@ impl Responder {
                         ?error,
                         "failed to decrypt remote's router info"
                     );
-                })?;
+                })
+                .map_err(|_| Ntcp2Error::Chacha)?;
             k.zeroize();
 
             // MixHash(ciphertext)
@@ -378,7 +384,7 @@ impl Responder {
                                 "failed to parse remote router info",
                             );
 
-                            Error::InvalidData
+                            Ntcp2Error::InvalidRouterInfo
                         }),
                 Ok(message) => {
                     tracing::warn!(
@@ -386,7 +392,7 @@ impl Responder {
                         ?message,
                         "received an unexpected ntcp2 message block",
                     );
-                    Err(Error::InvalidData)
+                    Err(Ntcp2Error::UnexpectedMessage)
                 }
                 Err(error) => {
                     tracing::warn!(
@@ -395,7 +401,7 @@ impl Responder {
                         ?error,
                         "received a malformed ntcp2 message block",
                     );
-                    Err(Error::InvalidData)
+                    Err(Ntcp2Error::InvalidData)
                 }
             }
         }?;

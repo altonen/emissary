@@ -21,9 +21,10 @@ use crate::{
     error::{PeerTestError, Ssu2Error},
     primitives::{RouterAddress, RouterId, RouterInfo},
     router::context::RouterContext,
-    runtime::{Instant, Runtime, UdpSocket},
+    runtime::{Gauge, Instant, MetricsHandle, Runtime, UdpSocket},
     transport::ssu2::{
         message::{Block, PeerTestBuilder, PeerTestMessage},
+        metrics::*,
         peer_test::types::{
             PeerTestCommand, PeerTestEvent, PeerTestEventRecycle, PeerTestHandle, RejectionReason,
         },
@@ -36,7 +37,7 @@ use hashbrown::{HashMap, HashSet};
 use rand::Rng;
 use thingbuf::mpsc::{with_recycle, Receiver, Sender};
 
-use alloc::{boxed::Box, collections::VecDeque, vec, vec::Vec};
+use alloc::{boxed::Box, collections::VecDeque, format, vec, vec::Vec};
 use core::{
     net::{IpAddr, SocketAddr},
     pin::Pin,
@@ -998,6 +999,7 @@ impl<R: Runtime> PeerTestManager<R> {
             .unzip();
 
         expired.into_iter().for_each(|src_id| {
+            self.router_ctx.metrics_handle().gauge(NUM_ACTIVE_PEER_TESTS).decrement(1);
             self.active.remove(&src_id);
         });
 
@@ -1106,6 +1108,7 @@ impl<R: Runtime> PeerTestManager<R> {
                             ipv4: i < MAX_PARALLEL_TESTS,
                         },
                     );
+                    self.router_ctx.metrics_handle().gauge(NUM_ACTIVE_PEER_TESTS).increment(1);
                 }
                 Err(error) => tracing::warn!(
                     target: LOG_TARGET,
@@ -1146,6 +1149,9 @@ impl<R: Runtime> PeerTestManager<R> {
             .map(|(key, _)| *key)
             .and_then(|key| self.active.remove(&key))
         else {
+            let router_hash =
+                (router_hash != vec![0u8; 32]).then(|| format!("{}", RouterId::from(router_hash)));
+
             tracing::warn!(
                 target: LOG_TARGET,
                 nonce = ?received_nonce,
@@ -1214,7 +1220,10 @@ impl<R: Runtime> PeerTestManager<R> {
                     ..
                 }) => (*intro_key, *socket_address),
                 None => {
-                    tracing::warn!(
+                    // this indicates that we either have a stale `RouterInfo` for charlie which
+                    // doesn't contain a dialable ipv4 address or bob selected charlie without
+                    // considering which transport protocol we requested
+                    tracing::debug!(
                         target: LOG_TARGET,
                         nonce = ?received_nonce,
                         charlie_router_id = %charlie_router_info.identity.id(),
@@ -1227,7 +1236,7 @@ impl<R: Runtime> PeerTestManager<R> {
             },
             false => match charlie_router_info.ssu2_ipv6() {
                 None => {
-                    tracing::warn!(
+                    tracing::debug!(
                         target: LOG_TARGET,
                         nonce = ?received_nonce,
                         charlie_router_id = %charlie_router_info.identity.id(),

@@ -151,6 +151,7 @@ impl TestTransitTunnelManager {
             router_info.identity.id(),
             noise.clone(),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
 
         // spawn subsystem manager in the background

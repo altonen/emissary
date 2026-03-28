@@ -245,6 +245,10 @@ impl PortMapper {
                 target: LOG_TARGET,
                 "ntcp2 port mapped",
             ),
+            Ok(Some(Response::UDP(_))) => tracing::debug!(
+                target: LOG_TARGET,
+                "ssu2 port mapped",
+            ),
             Ok(Some(response)) => tracing::warn!(
                 target: LOG_TARGET,
                 ?response,
@@ -328,7 +332,7 @@ impl PortMapper {
                     }
 
                     match self.try_map_ssu2(&client).await {
-                        Ok(Some(Response::TCP(_))) => tracing::debug!(
+                        Ok(Some(Response::UDP(_))) => tracing::debug!(
                             target: LOG_TARGET,
                             "ssu2 port remapped",
                         ),

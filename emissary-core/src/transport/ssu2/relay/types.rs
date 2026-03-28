@@ -392,6 +392,31 @@ impl RejectionReason {
     }
 }
 
+impl From<RejectionReason> for &'static str {
+    fn from(value: RejectionReason) -> Self {
+        match value {
+            RejectionReason::Bob(reason) => match reason {
+                BobRejectionReason::Unspecified => "bob-unspecified",
+                BobRejectionReason::Banned => "bob-banned",
+                BobRejectionReason::LimitExceeded => "bob-limit-exceeded",
+                BobRejectionReason::SignatureFailure => "bob-signature-failure",
+                BobRejectionReason::RelayTagNotFound => "bob-relay-tag-not-found",
+                BobRejectionReason::AliceNotFound => "bob-alice-not-found",
+            },
+            RejectionReason::Charlie(reason) => match reason {
+                CharlieRejectionReason::Unspecified => "charlie-unspecified",
+                CharlieRejectionReason::UnsupportedAddress => "charlie-unsupported-address",
+                CharlieRejectionReason::LimitExceeded => "charlie-limit-exceeded",
+                CharlieRejectionReason::SignatureFailure => "charlie-signature-failure",
+                CharlieRejectionReason::AlreadyConnected => "charlie-already-connected",
+                CharlieRejectionReason::Banned => "charlie-banned",
+                CharlieRejectionReason::AliceNotFound => "charlie-alice-not-found",
+            },
+            RejectionReason::Unspecified => "unspecified",
+        }
+    }
+}
+
 /// Relay tag request result.
 ///
 /// Used by `InboundSsu2Session` to inform `RelayManager` whether the inbound router requested

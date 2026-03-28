@@ -29,9 +29,7 @@ use crate::{
     transport::{
         ntcp2::{
             message::MessageBlock,
-            metrics::{
-                MESSAGE_SIZES, NUM_BLOCKS_PER_MSG, NUM_INBOUND_MESSAGES, NUM_OUTBOUND_MESSAGES,
-            },
+            metrics::*,
             session::{KeyContext, Role},
         },
         Direction, TerminationReason,
@@ -394,6 +392,9 @@ impl<R: Runtime> Future for Ntcp2Session<R> {
                             this.metrics_handle
                                 .histogram(MESSAGE_SIZES)
                                 .record(this.read_buffer[..size].len() as f64);
+                            this.metrics_handle
+                                .counter(INBOUND_BW)
+                                .increment(this.read_buffer[..size].len());
                             this.metrics_handle.counter(NUM_INBOUND_MESSAGES).increment(1);
 
                             let data_block =
@@ -637,6 +638,7 @@ impl<R: Runtime> Future for Ntcp2Session<R> {
                     Poll::Ready(Ok(0)) => return Poll::Ready(Some(TerminationReason::IoError)),
                     Poll::Ready(Ok(nwritten)) => {
                         this.outbound_bandwidth += nwritten;
+                        this.metrics_handle.counter(OUTBOUND_BW).increment(nwritten);
 
                         match nwritten + offset == message.len() {
                             true => {

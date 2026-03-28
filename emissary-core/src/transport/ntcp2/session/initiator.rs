@@ -27,13 +27,13 @@ use crate::{
         aes::cbc::Aes, base64_encode, chachapoly::ChaChaPoly, hmac::Hmac, noise::NoiseContext,
         siphash::SipHash, EphemeralPrivateKey, StaticPrivateKey, StaticPublicKey,
     },
+    error::Ntcp2Error,
     runtime::Runtime,
     transport::ntcp2::{
         message::MessageBlock,
         options::{InitiatorOptions, ResponderOptions},
         session::{KeyContext, MAX_CLOCK_SKEW},
     },
-    Error,
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -131,7 +131,7 @@ impl Initiator {
         router_hash: Vec<u8>,
         remote_iv: [u8; 16],
         net_id: u8,
-    ) -> crate::Result<(Self, BytesMut)> {
+    ) -> Result<(Self, BytesMut), Ntcp2Error> {
         tracing::trace!(
             target: LOG_TARGET,
             router = ?base64_encode(&router_hash),
@@ -171,7 +171,9 @@ impl Initiator {
         .serialize()
         .to_vec();
 
-        ChaChaPoly::new(&local_key).encrypt_with_ad_new(noise_ctx.state(), &mut options)?;
+        ChaChaPoly::new(&local_key)
+            .encrypt_with_ad_new(noise_ctx.state(), &mut options)
+            .map_err(|_| Ntcp2Error::Chacha)?;
         local_key.zeroize();
 
         out.put_slice(&encrypted_x);
@@ -201,7 +203,10 @@ impl Initiator {
     /// Decrypt `Y` and perform KDF for messages 2 and 3 part 1
     ///
     /// <https://geti2p.net/spec/ntcp2#key-derivation-function-kdf-for-handshake-message-2-and-message-3-part-1>
-    pub fn register_session_created<R: Runtime>(&mut self, bytes: &[u8]) -> crate::Result<usize> {
+    pub fn register_session_created<R: Runtime>(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<usize, Ntcp2Error> {
         let InitiatorState::SessionRequested {
             ephemeral_key,
             iv,
@@ -211,7 +216,7 @@ impl Initiator {
             router_hash,
         } = core::mem::take(&mut self.state)
         else {
-            return Err(Error::InvalidState);
+            return Err(Ntcp2Error::InvalidState);
         };
 
         tracing::trace!(
@@ -228,17 +233,19 @@ impl Initiator {
         noise_ctx.mix_hash(&y);
 
         // MixKey(DH())
-        let responder_public = StaticPublicKey::from_bytes(&y).ok_or(Error::InvalidData)?;
+        let responder_public = StaticPublicKey::from_bytes(&y).ok_or(Ntcp2Error::InvalidData)?;
         let remote_key = noise_ctx.mix_key(&ephemeral_key, &responder_public);
 
         // decrypt the chacha20poly1305 frame with generated remote key, deserialize
         // `ResponderOptions` and validate timestamp
         let padding = {
             let mut options = bytes[32..64].to_vec();
-            ChaChaPoly::new(&remote_key).decrypt_with_ad(noise_ctx.state(), &mut options)?;
+            ChaChaPoly::new(&remote_key)
+                .decrypt_with_ad(noise_ctx.state(), &mut options)
+                .map_err(|_| Ntcp2Error::Chacha)?;
 
             // check clock skew
-            let options = ResponderOptions::parse(&options).ok_or(Error::InvalidData)?;
+            let options = ResponderOptions::parse(&options).ok_or(Ntcp2Error::InvalidOptions)?;
             let now = R::time_since_epoch();
             let remote_time = Duration::from_secs(options.timestamp as u64);
             let future = remote_time.saturating_sub(now);
@@ -253,7 +260,7 @@ impl Initiator {
                     ?future,
                     "excessive clock skew",
                 );
-                return Err(Error::InvalidData);
+                return Err(Ntcp2Error::ClockSkew);
             }
 
             options.padding_length as usize
@@ -284,7 +291,7 @@ impl Initiator {
     /// for the data phase.
     ///
     /// <https://geti2p.net/spec/ntcp2#key-derivation-function-kdf-for-data-phase>
-    pub fn finalize(&mut self, padding: &[u8]) -> crate::Result<(KeyContext, BytesMut)> {
+    pub fn finalize(&mut self, padding: &[u8]) -> Result<(KeyContext, BytesMut), Ntcp2Error> {
         let InitiatorState::SessionCreated {
             local_info,
             local_static_key,
@@ -294,7 +301,7 @@ impl Initiator {
             router_hash,
         } = core::mem::take(&mut self.state)
         else {
-            return Err(Error::InvalidState);
+            return Err(Ntcp2Error::InvalidState);
         };
 
         tracing::trace!(
@@ -309,7 +316,9 @@ impl Initiator {
         // encrypt local public key
         let mut s_p_bytes = local_static_key.public().to_vec();
         let mut cipher = ChaChaPoly::with_nonce(&remote_key, 1);
-        cipher.encrypt_with_ad_new(noise_ctx.state(), &mut s_p_bytes)?;
+        cipher
+            .encrypt_with_ad_new(noise_ctx.state(), &mut s_p_bytes)
+            .map_err(|_| Ntcp2Error::Chacha)?;
 
         // MixHash(ciphertext)
         noise_ctx.mix_hash(&s_p_bytes);
@@ -322,7 +331,9 @@ impl Initiator {
             // h from message 3 part 1 is used as the associated data
             // for the AEAD in message 3 part 2
             let mut message = MessageBlock::new_router_info(&local_info);
-            ChaChaPoly::with_nonce(&k, 0).encrypt_with_ad_new(noise_ctx.state(), &mut message)?;
+            ChaChaPoly::with_nonce(&k, 0)
+                .encrypt_with_ad_new(noise_ctx.state(), &mut message)
+                .map_err(|_| Ntcp2Error::Chacha)?;
 
             // MixHash(ciphertext)
             noise_ctx.mix_hash(&message);

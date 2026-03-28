@@ -298,15 +298,25 @@ impl RouterAddress {
     }
 
     /// Parse [`RouterAddress`] from `input`, returning rest of `input` and parsed address.
+    ///
+    /// Returns `Ok((remaining_bytes, RouterAddress))` on success.
+    ///
+    /// Returns `Err((Option<remaining_bytes>, RouterAddressParseError))` on errror.
+    /// If `remaining_bytes` is `Some`, it means the address was not a supported NTCP2/SSU2 address
+    /// but still a valid address. Caller can then use `remaining_bytes` to parse the rest of the
+    /// addresses/rest of `RouterInfo` normally. If `remaining_bytes` is `None`, the address format
+    /// itself was invalid and caller should reject the `RouterInfo`.
     pub fn parse_frame<R: Runtime>(
         input: &[u8],
-    ) -> IResult<&[u8], RouterAddress, RouterAddressParseError> {
-        let (rest, cost) = be_u8(input)?;
+    ) -> IResult<&[u8], RouterAddress, (Option<&[u8]>, RouterAddressParseError)> {
+        let (rest, cost) = be_u8::<_, ()>(input)
+            .map_err(|_| Err::Error((None, RouterAddressParseError::InvalidTransport)))?;
         let (rest, _expires) = Date::parse_frame(rest)
-            .map_err(|_| Err::Error(RouterAddressParseError::InvalidExpiration))?;
+            .map_err(|_| Err::Error((None, RouterAddressParseError::InvalidExpiration)))?;
         let (rest, transport) = Str::parse_frame(rest)
-            .map_err(|_| Err::Error(RouterAddressParseError::InvalidTransport))?;
-        let (rest, options) = Mapping::parse_frame(rest).map_err(Err::convert)?;
+            .map_err(|_| Err::Error((None, RouterAddressParseError::InvalidTransport)))?;
+        let (rest, options) = Mapping::parse_frame(rest)
+            .map_err(|_| Err::Error((None, RouterAddressParseError::InvalidBitstream)))?;
 
         // parse socket address
         let socket_address: Option<SocketAddr> = {
@@ -331,14 +341,19 @@ impl RouterAddress {
             "NTCP2" => {
                 // static key must always be present
                 let static_key = {
-                    let static_key = options
-                        .get(&Str::from("s"))
-                        .ok_or(Err::Error(RouterAddressParseError::Ntcp2StaticKeyMissing))?;
-                    let bytes = base64_decode(static_key.as_bytes())
-                        .ok_or(Err::Error(RouterAddressParseError::InvalidNtcp2StaticKey))?;
+                    let static_key = options.get(&Str::from("s")).ok_or(Err::Error((
+                        Some(rest),
+                        RouterAddressParseError::Ntcp2StaticKeyMissing,
+                    )))?;
+                    let bytes = base64_decode(static_key.as_bytes()).ok_or(Err::Error((
+                        Some(rest),
+                        RouterAddressParseError::InvalidNtcp2StaticKey,
+                    )))?;
 
-                    StaticPublicKey::from_bytes(&bytes)
-                        .ok_or(Err::Error(RouterAddressParseError::InvalidNtcp2StaticKey))?
+                    StaticPublicKey::from_bytes(&bytes).ok_or(Err::Error((
+                        Some(rest),
+                        RouterAddressParseError::InvalidNtcp2StaticKey,
+                    )))?
                 };
                 let iv = options
                     .get(&Str::from("i"))
@@ -356,28 +371,37 @@ impl RouterAddress {
                     },
                 ))
             }
-            "SSU2" => {
+            "SSU2" | "SSU" => {
                 // static key must always be present
                 let static_key = {
-                    let static_key = options
-                        .get(&Str::from("s"))
-                        .ok_or(Err::Error(RouterAddressParseError::Ssu2StaticKeyMissing))?;
-                    let bytes = base64_decode(static_key.as_bytes())
-                        .ok_or(Err::Error(RouterAddressParseError::InvalidSsu2StaticKey))?;
+                    let static_key = options.get(&Str::from("s")).ok_or(Err::Error((
+                        Some(rest),
+                        RouterAddressParseError::Ssu2StaticKeyMissing,
+                    )))?;
+                    let bytes = base64_decode(static_key.as_bytes()).ok_or(Err::Error((
+                        Some(rest),
+                        RouterAddressParseError::InvalidSsu2StaticKey,
+                    )))?;
 
-                    StaticPublicKey::from_bytes(&bytes)
-                        .ok_or(Err::Error(RouterAddressParseError::InvalidSsu2StaticKey))?
+                    StaticPublicKey::from_bytes(&bytes).ok_or(Err::Error((
+                        Some(rest),
+                        RouterAddressParseError::InvalidSsu2StaticKey,
+                    )))?
                 };
                 // intro key must always be present
                 let intro_key = {
-                    let intro_key = options
-                        .get(&Str::from("i"))
-                        .ok_or(Err::Error(RouterAddressParseError::Ssu2IntroKeyMissing))?;
-                    let bytes = base64_decode(intro_key.as_bytes())
-                        .ok_or(Err::Error(RouterAddressParseError::InvalidSsu2IntroKey))?;
+                    let intro_key = options.get(&Str::from("i")).ok_or(Err::Error((
+                        Some(rest),
+                        RouterAddressParseError::Ssu2IntroKeyMissing,
+                    )))?;
+                    let bytes = base64_decode(intro_key.as_bytes()).ok_or(Err::Error((
+                        Some(rest),
+                        RouterAddressParseError::InvalidSsu2IntroKey,
+                    )))?;
 
-                    TryInto::<[u8; 32]>::try_into(bytes)
-                        .map_err(|_| Err::Error(RouterAddressParseError::InvalidSsu2IntroKey))?
+                    TryInto::<[u8; 32]>::try_into(bytes).map_err(|_| {
+                        Err::Error((Some(rest), RouterAddressParseError::InvalidSsu2IntroKey))
+                    })?
                 };
                 // introducers may be present if `socket_address` is not specified, from spec:
                 //
@@ -418,7 +442,10 @@ impl RouterAddress {
                         .parse::<usize>()
                         .ok()
                         .and_then(|mtu| (mtu >= constants::ssu2::MIN_MTU).then_some(mtu))
-                        .ok_or(Err::Error(RouterAddressParseError::InvalidMtu))?,
+                        .ok_or(Err::Error((
+                            Some(rest),
+                            RouterAddressParseError::InvalidMtu,
+                        )))?,
                 };
 
                 Ok((
@@ -434,7 +461,10 @@ impl RouterAddress {
                     },
                 ))
             }
-            _ => Err(Err::Error(RouterAddressParseError::InvalidTransport)),
+            _ => Err(Err::Error((
+                Some(rest),
+                RouterAddressParseError::InvalidTransport,
+            ))),
         }
     }
 
@@ -529,7 +559,10 @@ impl RouterAddress {
     pub fn parse<R: Runtime>(
         bytes: impl AsRef<[u8]>,
     ) -> Result<RouterAddress, RouterAddressParseError> {
-        Ok(Self::parse_frame::<R>(bytes.as_ref())?.1)
+        match Self::parse_frame::<R>(bytes.as_ref()) {
+            Ok((_, address)) => Ok(address),
+            Err(error) => Err(error.map(|err| err.1).into()),
+        }
     }
 
     /// Serialize [`RouterAddress`].

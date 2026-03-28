@@ -51,7 +51,7 @@ use hashbrown::{HashMap, HashSet};
 use rand::Rng;
 use thingbuf::mpsc;
 
-use alloc::vec::Vec;
+use alloc::{format, vec::Vec};
 use core::{
     future::Future,
     mem,
@@ -1544,7 +1544,7 @@ impl<R: Runtime> NetDb<R> {
         tracing::info!(
             target: LOG_TARGET,
             %router_id,
-            ?floodfills,
+            floodfills = ?floodfills.iter().map(|floodfill| format!("{floodfill}")).collect::<Vec<_>>(),
             %reply_token,
             "publish router info",
         );
@@ -2020,6 +2020,7 @@ mod tests {
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
@@ -2644,6 +2645,7 @@ mod tests {
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
@@ -3064,6 +3066,7 @@ mod tests {
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
@@ -3203,6 +3206,7 @@ mod tests {
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
@@ -3310,6 +3314,7 @@ mod tests {
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
         let serialized = Bytes::from(router_info.serialize(&signing_key));
         let (_event_mgr, _event_subscriber, event_handle) =
@@ -3843,6 +3848,7 @@ mod tests {
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
         let serialized = Bytes::from(router_info.serialize(&signing_key));
         let (_event_mgr, _event_subscriber, event_handle) =
@@ -4184,6 +4190,7 @@ mod tests {
                 Bytes::from(router_info.identity.id().to_vec()),
             ),
             Default::default(),
+            MockRuntime::register_metrics(vec![], None),
         );
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));

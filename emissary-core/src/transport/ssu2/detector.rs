@@ -16,7 +16,13 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::transport::FirewallStatus;
+use crate::{
+    runtime::{Counter, MetricsHandle, Runtime},
+    transport::{
+        ssu2::metrics::{IPV4_PEER_TEST_RESULT, IPV6_PEER_TEST_RESULT},
+        FirewallStatus,
+    },
+};
 
 use core::net::SocketAddr;
 
@@ -29,7 +35,7 @@ const CONFIRMATION_THRESHOLD: usize = 3usize;
 /// Firewall/external address detector.
 ///
 /// https://geti2p.net/spec/ssu2#results-state-machine
-pub struct Detector {
+pub struct Detector<R: Runtime> {
     /// Number of consecutive confirmations for the pending status.
     confirmation_count: usize,
 
@@ -42,23 +48,27 @@ pub struct Detector {
     /// Has the router been forced to consider itself firewalled.
     force_firewall: bool,
 
+    /// Metrics handle.
+    metrics_handle: R::MetricsHandle,
+
     /// Pending status that needs confirmation.
     pending_status: Option<FirewallStatus>,
 }
 
-impl Detector {
+impl<R: Runtime> Detector<R> {
     /// Create new `Detector`.
-    pub fn new(firewalled: bool) -> Self {
+    pub fn new(firewalled: bool, metrics_handle: R::MetricsHandle) -> Self {
         Self {
+            confirmation_count: 0usize,
             external_address: None,
             firewall_status: if firewalled {
                 FirewallStatus::Firewalled
             } else {
                 FirewallStatus::Unknown
             },
-            pending_status: None,
-            confirmation_count: 0usize,
             force_firewall: firewalled,
+            metrics_handle,
+            pending_status: None,
         }
     }
 
@@ -93,7 +103,8 @@ impl Detector {
         message5: bool,
         message7: Option<SocketAddr>,
     ) -> Option<FirewallStatus> {
-        if self.force_firewall {
+        // ignore if we're firewalled or if the result provides no informtion
+        if self.force_firewall || (!message4 && !message5 && message7.is_none()) {
             return None;
         }
 
@@ -108,6 +119,16 @@ impl Detector {
             current = ?self.firewall_status,
             "peer test result",
         );
+
+        if let Some(address) = self.external_address {
+            self.metrics_handle
+                .counter(if address.is_ipv4() {
+                    IPV4_PEER_TEST_RESULT
+                } else {
+                    IPV6_PEER_TEST_RESULT
+                })
+                .increment_with_label(1, "result", detected.into());
+        }
 
         match self.pending_status {
             // status has changed
@@ -140,7 +161,7 @@ impl Detector {
             self.confirmation_count = 0;
 
             if old_status != detected {
-                tracing::info!(
+                tracing::debug!(
                     target: LOG_TARGET,
                     ?old_status,
                     new_status = ?detected,
@@ -217,9 +238,10 @@ impl Detector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::mock::MockRuntime;
 
     fn apply_result<const NUM: usize>(
-        detector: &mut Detector,
+        detector: &mut Detector<MockRuntime>,
         message4: bool,
         message5: bool,
         message7: Option<SocketAddr>,
@@ -231,7 +253,8 @@ mod tests {
 
     #[test]
     fn no_messages_received_returns_none() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
         let result = detector.add_peer_test_result(false, false, None);
         assert!(result.is_none());
         assert_eq!(detector.firewall_status, FirewallStatus::Unknown);
@@ -239,7 +262,8 @@ mod tests {
 
     #[test]
     fn confirmation_threshold_required() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
 
         assert!(detector.add_peer_test_result(true, false, None).is_none());
         assert_eq!(detector.firewall_status, FirewallStatus::Unknown);
@@ -256,7 +280,8 @@ mod tests {
 
     #[test]
     fn mixed_results_reset_confirmation() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
 
         assert!(detector.add_peer_test_result(true, false, None).is_none());
         assert!(detector.add_peer_test_result(true, false, None).is_none());
@@ -275,7 +300,8 @@ mod tests {
 
     #[test]
     fn msg4_only_firewalled() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
 
         assert_eq!(
             apply_result::<3>(&mut detector, true, false, None),
@@ -286,7 +312,8 @@ mod tests {
 
     #[test]
     fn msg4_only_stays_symnat_if_currently_symnat() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
         detector.add_external_address(SocketAddr::new("1.2.3.4".parse().unwrap(), 8888));
 
         // set status to symnat
@@ -304,7 +331,8 @@ mod tests {
 
     #[test]
     fn msg5_only_ok() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
 
         // msg 5 received -> ok since not currently symnat
         assert_eq!(
@@ -316,7 +344,8 @@ mod tests {
 
     #[test]
     fn msg5_only_unknown_if_currently_symnat() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
         detector.add_external_address(SocketAddr::new("1.2.3.4".parse().unwrap(), 8888));
 
         // router is symnatted
@@ -337,7 +366,8 @@ mod tests {
 
     #[test]
     fn msg4_msg5_ok() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
 
         // ok
         assert_eq!(
@@ -349,7 +379,8 @@ mod tests {
 
     #[test]
     fn msg4_msg5_unknown_if_currently_symnat() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
         detector.add_external_address(SocketAddr::new("1.2.3.4".parse().unwrap(), 8888));
 
         // router is symnatted
@@ -370,7 +401,8 @@ mod tests {
 
     #[test]
     fn msg4_msg7_ip_port_match_firewalled() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
         let address = SocketAddr::new("1.2.3.4".parse().unwrap(), 8888);
         detector.add_external_address(address);
 
@@ -383,7 +415,8 @@ mod tests {
 
     #[test]
     fn msg4_msg7_ip_match_port_mismatch_symnat() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
         detector.add_external_address(SocketAddr::new("1.2.3.4".parse().unwrap(), 8888));
 
         // same address, different prot
@@ -397,7 +430,8 @@ mod tests {
 
     #[test]
     fn msg4_msg7_ip_mismatch_port_match_firewalled() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
         detector.add_external_address(SocketAddr::new("1.2.3.4".parse().unwrap(), 8888));
 
         // same port, different address
@@ -411,7 +445,8 @@ mod tests {
 
     #[test]
     fn msg4_msg7_both_mismatch_symnat() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
         detector.add_external_address(SocketAddr::new("1.2.3.4".parse().unwrap(), 8888));
 
         // different ip and port
@@ -425,7 +460,8 @@ mod tests {
 
     #[test]
     fn msg4_msg5_msg7_ip_port_match_ok() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
         let address = SocketAddr::new("1.2.3.4".parse().unwrap(), 8888);
         detector.add_external_address(address);
 
@@ -438,7 +474,8 @@ mod tests {
 
     #[test]
     fn msg4_msg5_msg7_ip_match_port_mismatch_ok() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
         detector.add_external_address(SocketAddr::new("1.2.3.4".parse().unwrap(), 8888));
 
         let msg7 = SocketAddr::new("1.2.3.4".parse().unwrap(), 8889);
@@ -451,7 +488,8 @@ mod tests {
 
     #[test]
     fn msg4_msg5_msg7_ip_mismatch_port_match_ok() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
         detector.add_external_address(SocketAddr::new("1.2.3.4".parse().unwrap(), 8888));
 
         let msg7 = SocketAddr::new("5.6.7.8".parse().unwrap(), 8888);
@@ -464,7 +502,8 @@ mod tests {
 
     #[test]
     fn msg4_msg5_msg7_both_mismatch_ok() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
         detector.add_external_address(SocketAddr::new("1.2.3.4".parse().unwrap(), 8888));
 
         let msg7 = SocketAddr::new("5.6.7.8".parse().unwrap(), 8889);
@@ -477,7 +516,8 @@ mod tests {
 
     #[test]
     fn transition_firewalled_to_ok() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
 
         // firewalled
         assert_eq!(
@@ -496,7 +536,8 @@ mod tests {
 
     #[test]
     fn transition_ok_to_firewalled() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
 
         // ok
         assert_eq!(
@@ -515,7 +556,8 @@ mod tests {
 
     #[test]
     fn transition_symnat_to_ok() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
         detector.add_external_address(SocketAddr::new("1.2.3.4".parse().unwrap(), 8888));
 
         // symnat
@@ -536,7 +578,8 @@ mod tests {
 
     #[test]
     fn exactly_three_confirmations_needed() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
 
         // first confirmation
         assert!(detector.add_peer_test_result(true, false, None).is_none());
@@ -557,7 +600,8 @@ mod tests {
 
     #[test]
     fn confirmation_resets_on_different_result() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
         assert_eq!(detector.firewall_status, FirewallStatus::Unknown);
 
         // two firewalled results
@@ -576,7 +620,8 @@ mod tests {
 
     #[test]
     fn no_change_when_same_status_confirmed() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
         assert_eq!(detector.firewall_status, FirewallStatus::Unknown);
 
         // firewalled
@@ -595,7 +640,8 @@ mod tests {
 
     #[test]
     fn add_external_address_first_time() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
         let address = SocketAddr::new("1.2.3.4".parse().unwrap(), 8889);
 
         assert_eq!(detector.add_external_address(address), Some(address));
@@ -604,7 +650,8 @@ mod tests {
 
     #[test]
     fn alternating_results_never_confirm() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
         assert_eq!(detector.firewall_status, FirewallStatus::Unknown);
 
         for _ in 0..10 {
@@ -621,7 +668,8 @@ mod tests {
 
     #[test]
     fn same_status_doesnt_start_pending_process() {
-        let mut detector = Detector::new(false);
+        let mut detector =
+            Detector::<MockRuntime>::new(false, MockRuntime::register_metrics(vec![], None));
         detector.add_external_address(SocketAddr::new("1.2.3.4".parse().unwrap(), 8888));
 
         // firewalled

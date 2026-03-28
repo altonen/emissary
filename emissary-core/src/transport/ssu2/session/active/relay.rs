@@ -23,7 +23,7 @@ use crate::{
     runtime::{Counter, MetricsHandle, Runtime},
     transport::ssu2::{
         message::data::RelayBlock,
-        metrics::DUPLICATE_PKT_COUNT,
+        metrics::DUPLICATE_PKTS,
         relay::types::{RejectionReason, RelayCommand},
         session::active::Ssu2Session,
     },
@@ -48,7 +48,10 @@ impl<R: Runtime> Ssu2Session<R> {
             ?nonce,
             "ignoring duplicate message",
         );
-        self.router_ctx.metrics_handle().counter(DUPLICATE_PKT_COUNT).increment(1);
+        self.router_ctx
+            .metrics_handle()
+            .counter(DUPLICATE_PKTS)
+            .increment_with_label(1, "kind", "relay");
 
         false
     }

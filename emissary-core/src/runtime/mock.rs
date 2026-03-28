@@ -243,6 +243,13 @@ impl Counter for MockMetricsCounter {
             *inner.entry(self.name).or_default() += value;
         });
     }
+
+    fn increment_with_label(&mut self, value: usize, _: &'static str, _: &'static str) {
+        COUNTERS.with(|v| {
+            let mut inner = v.write();
+            *inner.entry(self.name).or_default() += value;
+        });
+    }
 }
 
 pub struct MockMetricsGauge {

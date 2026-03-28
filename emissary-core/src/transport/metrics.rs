@@ -29,6 +29,8 @@ pub const NUM_DIAL_FAILURES: &str = "transport_dial_failure_count";
 pub const NUM_INTRODUCER_DIAL_FAILURES: &str = "transport_introducer_dial_failure_count";
 pub const NUM_IPV4: &str = "transport_ipv4_router_count";
 pub const NUM_IPV6: &str = "transport_ipv6_router_count";
+pub const CONNECTIONS_OPENED: &str = "transport_connections_opened_count";
+pub const CONNECTIONS_CLOSED: &str = "transport_connections_closed_count";
 
 // netdb-related metrics
 pub const NUM_NETDB_QUERIES: &str = "transport_ri_query_count";
@@ -65,6 +67,14 @@ pub fn register_metrics(mut metrics: Vec<MetricType>) -> Vec<MetricType> {
     metrics.push(MetricType::Counter {
         name: NUM_NETDB_QUERY_FAILURES,
         description: "number of failed netdb queries",
+    });
+    metrics.push(MetricType::Counter {
+        name: CONNECTIONS_OPENED,
+        description: "how many connections have been opened",
+    });
+    metrics.push(MetricType::Counter {
+        name: CONNECTIONS_CLOSED,
+        description: "how many connections have been closed",
     });
 
     // gauges

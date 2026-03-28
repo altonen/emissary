@@ -255,6 +255,7 @@ impl<R: Runtime> Router<R> {
                 let metrics = TransportManager::<R>::metrics(Vec::new());
                 let metrics = TunnelManager::<R>::metrics(metrics);
                 let metrics = NetDb::<R>::metrics(metrics);
+                let metrics = SubsystemManager::<R>::metrics(metrics);
                 #[cfg(feature = "events")]
                 let metrics = EventManager::<R>::metrics(metrics);
 
@@ -306,6 +307,7 @@ impl<R: Runtime> Router<R> {
             router_ctx.router_id().clone(),
             router_ctx.noise().clone(),
             config.bandwidth.unwrap_or_default(),
+            metrics_handle.clone(),
         );
 
         // spawn subsystem manager in the background
@@ -500,7 +502,7 @@ impl<R: Runtime> Router<R> {
     /// If `address` differs from the address that was specified the router configuration,
     /// a warning is logged.
     pub fn add_external_address(&mut self, address: Ipv4Addr) {
-        self.transport_manager.add_external_address(IpAddr::V4(address));
+        self.transport_manager.add_port_mapped_address(IpAddr::V4(address));
     }
 }
 

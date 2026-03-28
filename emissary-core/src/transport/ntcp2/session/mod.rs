@@ -32,7 +32,7 @@
 
 use crate::{
     crypto::{noise::NoiseContext, sha256::Sha256, siphash::SipHash, StaticPrivateKey},
-    error::Error,
+    error::Ntcp2Error,
     events::EventHandle,
     primitives::{RouterAddress, RouterId, RouterInfo},
     profile::ProfileStorage,
@@ -183,7 +183,7 @@ impl<R: Runtime> SessionManager<R> {
         metrics_handle: R::MetricsHandle,
         ipv4: bool,
         ipv6: bool,
-    ) -> crate::Result<Ntcp2Session<R>> {
+    ) -> Result<Ntcp2Session<R>, Ntcp2Error> {
         let router_id = router_info.identity.id();
 
         let (remote_key, iv, socket_address) = {
@@ -243,7 +243,7 @@ impl<R: Runtime> SessionManager<R> {
                     target: LOG_TARGET,
                     "router doesn't have a dialable address",
                 );
-                return Err(Error::InvalidData);
+                return Err(Ntcp2Error::NoAddress);
             };
 
             (static_key, iv, socket_address)
@@ -262,7 +262,7 @@ impl<R: Runtime> SessionManager<R> {
                 %router_id,
                 "failed to dial router",
             );
-            return Err(Error::DialFailure);
+            return Err(Ntcp2Error::ConnectFailure);
         };
         let router_hash = router_info.identity.hash().to_vec();
 
@@ -276,7 +276,7 @@ impl<R: Runtime> SessionManager<R> {
             *iv,
             net_id,
         )?;
-        stream.write_all(&message).await?;
+        stream.write_all(&message).await.map_err(|_| Ntcp2Error::IoError)?;
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -286,13 +286,13 @@ impl<R: Runtime> SessionManager<R> {
 
         // read `SessionCreated` and decrypt & parse it to find padding length
         let mut reply = alloc::vec![0u8; 64];
-        stream.read_exact::<R>(&mut reply).await?;
+        stream.read_exact::<R>(&mut reply).await.map_err(|_| Ntcp2Error::IoError)?;
 
         let padding_len = initiator.register_session_created::<R>(&reply)?;
 
         // read padding and finalize session by sending `SessionConfirmed`
         let mut reply = alloc::vec![0u8; padding_len];
-        stream.read_exact::<R>(&mut reply).await?;
+        stream.read_exact::<R>(&mut reply).await.map_err(|_| Ntcp2Error::IoError)?;
 
         tracing::trace!(
             target: LOG_TARGET,
@@ -301,7 +301,7 @@ impl<R: Runtime> SessionManager<R> {
         );
 
         let (key_context, message) = initiator.finalize(&reply)?;
-        stream.write_all(&message).await?;
+        stream.write_all(&message).await.map_err(|_| Ntcp2Error::IoError)?;
 
         Ok(Ntcp2Session::<R>::new(
             Role::Initiator,
@@ -332,7 +332,7 @@ impl<R: Runtime> SessionManager<R> {
         router: RouterInfo,
         ipv4: bool,
         ipv6: bool,
-    ) -> impl Future<Output = Result<Ntcp2Session<R>, (Option<RouterId>, Error)>> {
+    ) -> impl Future<Output = Result<Ntcp2Session<R>, (Option<RouterId>, Ntcp2Error)>> {
         let net_id = self.router_ctx.net_id();
         let local_info = self.router_ctx.router_info();
         let local_key = self.local_key.clone();
@@ -405,7 +405,7 @@ impl<R: Runtime> SessionManager<R> {
         transport_tx: Sender<SubsystemEvent>,
         started: R::Instant,
         metrics_handle: R::MetricsHandle,
-    ) -> crate::Result<Ntcp2Session<R>> {
+    ) -> Result<Ntcp2Session<R>, Ntcp2Error> {
         tracing::trace!(
             target: LOG_TARGET,
             "read `SessionRequest` from socket",
@@ -413,7 +413,7 @@ impl<R: Runtime> SessionManager<R> {
 
         // read first part of `SessionRequest` which has fixed length
         let mut message = vec![0u8; 64];
-        stream.read_exact::<R>(&mut message).await?;
+        stream.read_exact::<R>(&mut message).await.map_err(|_| Ntcp2Error::IoError)?;
 
         let (mut responder, padding_len) = Responder::new::<R>(
             noise_ctx,
@@ -426,14 +426,14 @@ impl<R: Runtime> SessionManager<R> {
 
         // read padding and create session if the peer is accepted
         let mut padding = alloc::vec![0u8; padding_len];
-        stream.read_exact::<R>(&mut padding).await?;
+        stream.read_exact::<R>(&mut padding).await.map_err(|_| Ntcp2Error::IoError)?;
 
         let (message, message_len) = responder.create_session::<R>(padding)?;
-        stream.write_all(&message).await?;
+        stream.write_all(&message).await.map_err(|_| Ntcp2Error::IoError)?;
 
         // read `SessionConfirmed` message and finalize session
         let mut message = alloc::vec![0u8; message_len];
-        stream.read_exact::<R>(&mut message).await?;
+        stream.read_exact::<R>(&mut message).await.map_err(|_| Ntcp2Error::IoError)?;
 
         match responder.finalize::<R>(message) {
             Ok((key_context, router_info, serialized)) => {
@@ -446,7 +446,7 @@ impl<R: Runtime> SessionManager<R> {
                     );
 
                     let _ = stream.close().await;
-                    return Err(Error::NetworkMismatch);
+                    return Err(Ntcp2Error::NetworkMismatch);
                 }
 
                 // add router to router storage so we can later on use it for outbound connections
@@ -483,7 +483,7 @@ impl<R: Runtime> SessionManager<R> {
         &self,
         stream: R::TcpStream,
         address: SocketAddr,
-    ) -> impl Future<Output = Result<Ntcp2Session<R>, (Option<RouterId>, Error)>> {
+    ) -> impl Future<Output = Result<Ntcp2Session<R>, (Option<RouterId>, Ntcp2Error)>> {
         let net_id = self.router_ctx.net_id();
         let local_router_hash = self.router_ctx.router_id().to_vec();
         let inbound_initial_state = self.inbound_initial_state;

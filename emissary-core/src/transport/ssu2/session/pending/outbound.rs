@@ -871,6 +871,7 @@ impl<R: Runtime> OutboundSsu2Session<R> {
                     relay_tag: None,
                     router_id: Some(self.router_id.clone()),
                     started: self.started,
+                    reason: TerminationReason::Unspecified,
                 }))
             }
         }
@@ -961,6 +962,7 @@ impl<R: Runtime> Future for OutboundSsu2Session<R> {
                         relay_tag: None,
                         router_id: Some(self.router_id.clone()),
                         started: self.started,
+                        reason: TerminationReason::from(error),
                     });
                 }
             }
@@ -987,6 +989,7 @@ impl<R: Runtime> Future for OutboundSsu2Session<R> {
                     connection_id: self.src_id,
                     router_id: Some(self.router_id.clone()),
                     started: self.started,
+                    address: Some(self.address),
                 }),
         }
 

@@ -913,6 +913,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
                     relay_tag: Some(self.relay_tag_requested.tag()),
                     router_id: None,
                     started: self.started,
+                    reason: TerminationReason::Unspecified,
                 }))
             }
         }
@@ -944,6 +945,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
                             relay_tag: Some(self.relay_tag_requested.tag()),
                             router_id: None,
                             started: self.started,
+                            reason: TerminationReason::ClockSkew,
                         };
                     };
 
@@ -997,6 +999,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
                                 relay_tag: Some(self.relay_tag_requested.tag()),
                                 router_id: None,
                                 started: self.started,
+                                reason: error.into(),
                             };
                         }
                     },
@@ -1059,6 +1062,7 @@ impl<R: Runtime> Future for InboundSsu2Session<R> {
                         relay_tag: Some(self.relay_tag_requested.tag()),
                         router_id: None,
                         started: self.started,
+                        reason: error.into(),
                     });
                 }
             }
@@ -1085,6 +1089,7 @@ impl<R: Runtime> Future for InboundSsu2Session<R> {
                     connection_id: self.dst_id,
                     router_id: None,
                     started: self.started,
+                    address: None,
                 }),
         }
 

@@ -19,7 +19,10 @@
 use crate::{
     primitives::{RouterId, RouterInfo},
     runtime::{Instant, Runtime},
-    transport::ssu2::{relay::types::RelayTagRequested, session::active::Ssu2SessionContext},
+    transport::{
+        ssu2::{relay::types::RelayTagRequested, session::active::Ssu2SessionContext},
+        TerminationReason,
+    },
 };
 
 use bytes::{Bytes, BytesMut};
@@ -122,6 +125,9 @@ pub enum PendingSsu2SessionStatus<R: Runtime> {
         ///
         /// Always `Some(tag)` for inbound sessions.
         relay_tag: Option<u32>,
+
+        /// Termination reason.
+        reason: TerminationReason,
     },
 
     /// Pending session terminated due to timeout.
@@ -139,6 +145,11 @@ pub enum PendingSsu2SessionStatus<R: Runtime> {
 
         /// When was the handshake started.
         started: R::Instant,
+
+        /// Remote router's address.
+        ///
+        /// `None` for inbound connections.
+        address: Option<SocketAddr>,
     },
 
     /// [`SSu2Socket`] has been closed.
@@ -186,11 +197,13 @@ impl<R: Runtime> fmt::Debug for PendingSsu2SessionStatus<R> {
                 connection_id,
                 router_id,
                 started,
+                address,
             } => f
                 .debug_struct("PendingSsu2SessionStatus::Timeout")
                 .field("connection_id", &connection_id)
                 .field("router_id", &router_id)
                 .field("started", &started)
+                .field("address", &address)
                 .finish_non_exhaustive(),
             PendingSsu2SessionStatus::SocketClosed { started } => f
                 .debug_struct("PendingSsu2SessionStatus::SocketClosed")

@@ -28,6 +28,136 @@ use core::fmt;
 
 pub mod parser;
 
+/// Tunnel build error
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TunnelBuildError {
+    /// Tunnel build timed out.
+    Timeout,
+
+    /// Tunnel was rejected.
+    Rejected,
+
+    /// Failed to dial first hop.
+    DialFailure,
+
+    /// Reception channel closed.
+    ChannelClosed,
+
+    /// Tunnel error.
+    Tunnel(TunnelError),
+}
+
+impl From<TunnelBuildError> for &'static str {
+    fn from(value: TunnelBuildError) -> Self {
+        match value {
+            TunnelBuildError::Timeout => "timeout",
+            TunnelBuildError::Rejected => "rejected",
+            TunnelBuildError::DialFailure => "dial-failure",
+            TunnelBuildError::ChannelClosed => "channel-closed",
+            TunnelBuildError::Tunnel(error) => error.into(),
+        }
+    }
+}
+
+/// Reason for dial failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DialError {
+    /// Timeout,
+    Timeout,
+
+    /// I/O error.
+    IoError,
+
+    /// TCP dial failure
+    ConnectFailure,
+
+    /// Failed to connect to an introducer.
+    RelayFailure,
+
+    /// No dialalble address.
+    NoAddress,
+
+    /// Session terminated.
+    SessionTerminated(TerminationReason),
+}
+
+impl From<DialError> for &'static str {
+    fn from(value: DialError) -> Self {
+        match value {
+            DialError::Timeout => "timeout",
+            DialError::IoError => "io-error",
+            DialError::RelayFailure => "relay-failure",
+            DialError::NoAddress => "no-address",
+            DialError::ConnectFailure => "connect-failure",
+            DialError::SessionTerminated(reason) => reason.into(),
+        }
+    }
+}
+
+/// NTCP2 error.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Ntcp2Error {
+    /// Encryption/decryption error.
+    Chacha,
+
+    /// No dialable address.
+    NoAddress,
+
+    /// Invalid data.
+    InvalidData,
+
+    /// Invalid state for handshake.
+    InvalidState,
+
+    /// Invalid `RouterInfo` block.
+    InvalidRouterInfo,
+
+    /// Unexpected message.
+    UnexpectedMessage,
+
+    /// I/O error.
+    IoError,
+
+    /// Failed to dial remote router.
+    ConnectFailure,
+
+    /// Clock skew.
+    ClockSkew,
+
+    /// Invalid version.
+    InvalidVersion,
+
+    /// Invalid options.
+    InvalidOptions,
+
+    /// Network mismatch.
+    NetworkMismatch,
+}
+
+impl From<Ntcp2Error> for DialError {
+    fn from(value: Ntcp2Error) -> Self {
+        match value {
+            Ntcp2Error::Chacha => Self::SessionTerminated(TerminationReason::AeadFailure),
+            Ntcp2Error::NoAddress => Self::NoAddress,
+            Ntcp2Error::InvalidData =>
+                Self::SessionTerminated(TerminationReason::PayloadFormatError),
+            Ntcp2Error::InvalidState => Self::SessionTerminated(TerminationReason::Unspecified),
+            Ntcp2Error::InvalidRouterInfo =>
+                Self::SessionTerminated(TerminationReason::InvalidRouterInfo),
+            Ntcp2Error::UnexpectedMessage =>
+                Self::SessionTerminated(TerminationReason::Unspecified),
+            Ntcp2Error::IoError => Self::SessionTerminated(TerminationReason::IoError),
+            Ntcp2Error::ConnectFailure => Self::ConnectFailure,
+            Ntcp2Error::ClockSkew => Self::SessionTerminated(TerminationReason::ClockSkew),
+            Ntcp2Error::InvalidVersion =>
+                Self::SessionTerminated(TerminationReason::IncompatibleVersion),
+            Ntcp2Error::InvalidOptions =>
+                Self::SessionTerminated(TerminationReason::IncompatibleOptions),
+            Ntcp2Error::NetworkMismatch => Self::SessionTerminated(TerminationReason::WrongNetId),
+        }
+    }
+}
+
 /// Relay error.
 #[derive(Debug, PartialEq, Eq)]
 pub enum RelayError {
@@ -71,6 +201,21 @@ impl fmt::Display for RelayError {
     }
 }
 
+impl From<RelayError> for &'static str {
+    fn from(value: RelayError) -> Self {
+        match value {
+            RelayError::NoIntroducer => "relay-no-introducer",
+            RelayError::NoAddress => "relay-no-address",
+            RelayError::RelayRequestSendFailure => "relay-send-failure",
+            RelayError::InvalidSignature => "relay-invalid-signature",
+            RelayError::InvalidHolePunch => "relay-invalid-hole-punch",
+            RelayError::UnknownRelayProcess => "relay-unknown-process",
+            RelayError::NoRelayResponse => "relay-no-response",
+            RelayError::Rejected => "relay-rejected",
+        }
+    }
+}
+
 /// Peer test error.
 #[derive(Debug, PartialEq, Eq)]
 pub enum PeerTestError {
@@ -100,6 +245,16 @@ impl fmt::Display for PeerTestError {
     }
 }
 
+impl From<PeerTestError> for &'static str {
+    fn from(value: PeerTestError) -> Self {
+        match value {
+            PeerTestError::NonExistentPeerTestSession(_) => "peer-test-non-existent-session",
+            PeerTestError::UnexpectedMessage(_) => "peer-test-unexpcted-msg",
+            PeerTestError::InvalidSignature => "peer-test-invalid-signature",
+            PeerTestError::InvalidAddress => "peer-test-invalid-address",
+        }
+    }
+}
 /// SSU2 error.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Ssu2Error {
@@ -135,6 +290,9 @@ pub enum Ssu2Error {
 
     /// Relay error.
     Relay(RelayError),
+
+    /// Non-existent outbound session.
+    NonExistentOutbound,
 }
 
 impl fmt::Display for Ssu2Error {
@@ -151,6 +309,45 @@ impl fmt::Display for Ssu2Error {
             Self::NetworkMismatch => write!(f, "network mismatch"),
             Self::PeerTest(error) => write!(f, "{error}"),
             Self::Relay(error) => write!(f, "{error}"),
+            Self::NonExistentOutbound => write!(f, "non-existent outbound session"),
+        }
+    }
+}
+
+impl From<Ssu2Error> for &'static str {
+    fn from(value: Ssu2Error) -> Self {
+        match value {
+            Ssu2Error::Chacha => "chacha",
+            Ssu2Error::Channel(_) => "channel",
+            Ssu2Error::InvalidVersion => "invalid-version",
+            Ssu2Error::Malformed => "malformed",
+            Ssu2Error::NotEnoughBytes => "not-enough-bytes",
+            Ssu2Error::SessionTerminated(reason) => reason.into(),
+            Ssu2Error::UnexpectedMessage => "unexpected-msg",
+            Ssu2Error::TokenMismatch => "token-mismatch",
+            Ssu2Error::NetworkMismatch => "network-mismatch",
+            Ssu2Error::PeerTest(error) => error.into(),
+            Ssu2Error::Relay(error) => error.into(),
+            Ssu2Error::NonExistentOutbound => "no-outbound-session",
+        }
+    }
+}
+
+impl From<Ssu2Error> for TerminationReason {
+    fn from(value: Ssu2Error) -> Self {
+        match value {
+            Ssu2Error::Chacha => Self::AeadFailure,
+            Ssu2Error::Channel(_) => Self::Unspecified,
+            Ssu2Error::InvalidVersion => Self::IncompatibleVersion,
+            Ssu2Error::Malformed => Self::PayloadFormatError,
+            Ssu2Error::NotEnoughBytes => Self::PayloadFormatError,
+            Ssu2Error::SessionTerminated(reason) => reason,
+            Ssu2Error::UnexpectedMessage => Self::Unspecified,
+            Ssu2Error::TokenMismatch => Self::BadToken,
+            Ssu2Error::NetworkMismatch => Self::WrongNetId,
+            Ssu2Error::PeerTest(_) => Self::Unspecified,
+            Ssu2Error::Relay(_) => Self::Unspecified,
+            Ssu2Error::NonExistentOutbound => Self::Unspecified,
         }
     }
 }
@@ -367,7 +564,7 @@ impl fmt::Display for ChannelError {
 }
 
 /// Tunnel message rejection reason.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum RejectionReason {
     /// Message/operation not supported.
     NotSupported,
@@ -377,7 +574,7 @@ pub enum RejectionReason {
 }
 
 /// Tunnel error.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum TunnelError {
     /// Tunnel doesn't exist.
     TunnelDoesntExist(TunnelId),
@@ -423,6 +620,22 @@ impl fmt::Display for TunnelError {
             Self::MessageDoesntExist(message_id) => {
                 write!(f, "message doesn't exist: {message_id}")
             }
+        }
+    }
+}
+
+impl From<TunnelError> for &'static str {
+    fn from(value: TunnelError) -> Self {
+        match value {
+            TunnelError::TunnelDoesntExist(_) => "tunnel-doesnt-exist",
+            TunnelError::InvalidHop => "invalid-hop",
+            TunnelError::TooManyHops(_) => "too-many-hops",
+            TunnelError::NotEnoughHops(_) => "not-enough-hops",
+            TunnelError::InvalidMessage => "invalid-message",
+            TunnelError::TunnelRejected(_) => "tunnel-rejected",
+            TunnelError::RecordNotFound => "record-not-found",
+            TunnelError::MessageRejected(_) => "message-rejected",
+            TunnelError::MessageDoesntExist(_) => "message-doesnt-exist",
         }
     }
 }
