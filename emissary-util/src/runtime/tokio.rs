@@ -254,7 +254,6 @@ impl UdpSocket for TokioUdpSocket {
                 }
             };
 
-            socket.set_reuse_address(true).ok()?;
             socket.set_nonblocking(true).ok()?;
             socket.bind(&address.into()).ok()?;
 

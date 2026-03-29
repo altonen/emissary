@@ -348,7 +348,7 @@ impl<R: Runtime> NetDb<R> {
         // in the set of router infos we keep track of
         self.router_infos.insert(
             key.clone(),
-            (decompressed.clone(), Duration::from_millis(published)),
+            (raw_router_info.clone(), Duration::from_millis(published)),
         );
         self.router_dht.as_mut().map(|dht| dht.add_router(router_id.clone()));
 
@@ -968,6 +968,23 @@ impl<R: Runtime> NetDb<R> {
                         return Ok(());
                     }
 
+                    // store both the new router info and its serialized form to profile storage
+                    //
+                    // the latter is used when a backup of profile storage is made to disk
+                    let decompressed = match R::gzip_decompress(
+                        DatabaseStore::<R>::extract_raw_router_info(&message.payload),
+                    ) {
+                        None => {
+                            tracing::warn!(
+                                target: LOG_TARGET,
+                                %router_id,
+                                "failed to decompress router info",
+                            );
+                            return Err(Error::InvalidData);
+                        }
+                        Some(router_info) => Bytes::from(router_info),
+                    };
+
                     if router_info.is_floodfill() {
                         self.floodfill_dht.add_router(router_id.clone());
                     }
@@ -980,20 +997,14 @@ impl<R: Runtime> NetDb<R> {
                     if let Some(router_id) = sender {
                         self.floodfill_dht.register_lookup_success(&router_id);
                     }
-
-                    // store both the new router info and its serialized form to profile storage
-                    //
-                    // the latter is used when a backup of profile storage is made to disk
-                    let raw_router_info =
-                        DatabaseStore::<R>::extract_raw_router_info(&message.payload);
-                    self.router_ctx
-                        .profile_storage()
-                        .discover_router(router_info, raw_router_info.clone());
+                    self.router_ctx.profile_storage().discover_router(router_info, decompressed);
                 }
                 (
                     DatabaseStorePayload::RouterInfo { router_info },
                     QueryKind::RouterInfo { query },
                 ) => {
+                    let router_id = router_info.identity.id();
+
                     self.router_ctx.metrics_handle().counter(NUM_RI_QUERY_SUCCESSES).increment(1);
                     self.router_ctx
                         .metrics_handle()
@@ -1011,16 +1022,26 @@ impl<R: Runtime> NetDb<R> {
 
                     tracing::trace!(
                         target: LOG_TARGET,
-                        router_id = %router_info.identity.id(),
+                        %router_id,
                         "router info found",
                     );
 
                     // store both the new router info and its serialized form to profile storage
                     //
                     // the latter is used when a backup of profile storage is made to disk
-                    let raw_router_info =
-                        DatabaseStore::<R>::extract_raw_router_info(&message.payload);
-                    let router_id = router_info.identity.id();
+                    let decompressed = match R::gzip_decompress(
+                        DatabaseStore::<R>::extract_raw_router_info(&message.payload),
+                    ) {
+                        None => {
+                            tracing::warn!(
+                                target: LOG_TARGET,
+                                %router_id,
+                                "failed to decompress router info",
+                            );
+                            return Err(Error::InvalidData);
+                        }
+                        Some(router_info) => Bytes::from(router_info),
+                    };
 
                     // if the router info was received directly from the floodfill, i.e., not
                     // through tunnel, adjust the floodfill score
@@ -1033,7 +1054,7 @@ impl<R: Runtime> NetDb<R> {
                     if self
                         .router_ctx
                         .profile_storage()
-                        .discover_router(router_info, raw_router_info.clone())
+                        .discover_router(router_info, decompressed.clone())
                     {
                         query.complete(Ok(()));
                     } else {

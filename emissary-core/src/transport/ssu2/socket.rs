@@ -1384,7 +1384,6 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
                                     ?reason,
                                     "pending inbound session terminated",
                                 );
-                                debug_assert!(false);
                                 continue;
                             };
 

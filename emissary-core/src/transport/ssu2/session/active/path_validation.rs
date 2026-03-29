@@ -42,9 +42,6 @@ use core::{
 /// Logging target for the file.
 const LOG_TARGET: &str = "emissary::ssu2::active::path-validation";
 
-/// Maximum length for a challenge.
-const CHALLENGE_MAX_SIZE: usize = 512usize;
-
 /// Timeout for path validation.
 const PATH_VALIDATION_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -97,16 +94,6 @@ impl<R: Runtime> Ssu2Session<R> {
             router_id = %self.router_id,
             "handle path challenge",
         );
-
-        if challenge.len() > CHALLENGE_MAX_SIZE {
-            tracing::warn!(
-                target: LOG_TARGET,
-                router_id = %self.router_id,
-                challenge_len = ?challenge.len(),
-                "rejecting excessively large path challenge",
-            );
-            return;
-        }
 
         self.router_ctx
             .metrics_handle()

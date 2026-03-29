@@ -110,22 +110,22 @@ async fn make_router(
     Router::<TokioRuntime>::new(config, None, None).await.unwrap()
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn ipv6_only_ntcp2() {
     ipv6_test(TransportKind::Ntcp2, false).await;
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn ipv4_ipv6_mixed_ntcp2() {
     ipv6_test(TransportKind::Ntcp2, true).await;
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn ipv6_only_ssu2() {
     ipv6_test(TransportKind::Ssu2, false).await;
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn ipv4_ipv6_mixed_ssu2() {
     ipv6_test(TransportKind::Ssu2, true).await;
 }

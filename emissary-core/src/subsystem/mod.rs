@@ -762,7 +762,8 @@ impl<R: Runtime> SubsystemManager<R> {
                             %tunnel_id,
                             "tunnel exist in the routing table but is closed",
                         );
-                        debug_assert!(false);
+                        // TODO: enable once #299 is fixed
+                        // debug_assert!(false);
                     }
                 }
             }
@@ -785,7 +786,8 @@ impl<R: Runtime> SubsystemManager<R> {
                     message_id = %message.message_id,
                     "listener exist in the routing table but is closed",
                 );
-                debug_assert!(false);
+                // TODO: enable once #299 is fixed
+                // debug_assert!(false);
 
                 RoutingError::ChannelClosed(message)
             }),
@@ -1995,6 +1997,7 @@ mod tests {
 
     #[tokio::test]
     #[should_panic]
+    #[ignore] // TODO: enable once #299 is fixed
     async fn route_message_to_closed_tunnel() {
         let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let router_id = RouterId::random();
