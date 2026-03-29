@@ -17,7 +17,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    error::parser::PacketParseError,
+    error::parser::{PacketParseError, Ssu2ParseError},
     i2np::Message,
     primitives::{MessageId, TunnelId},
     transport::TerminationReason,
@@ -28,7 +28,7 @@ use core::fmt;
 
 pub mod parser;
 
-/// Tunnel build error
+/// Tunnel build error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TunnelBuildError {
     /// Tunnel build timed out.
@@ -293,6 +293,9 @@ pub enum Ssu2Error {
 
     /// Non-existent outbound session.
     NonExistentOutbound,
+
+    /// Parse error.
+    Parse(Ssu2ParseError),
 }
 
 impl fmt::Display for Ssu2Error {
@@ -310,6 +313,7 @@ impl fmt::Display for Ssu2Error {
             Self::PeerTest(error) => write!(f, "{error}"),
             Self::Relay(error) => write!(f, "{error}"),
             Self::NonExistentOutbound => write!(f, "non-existent outbound session"),
+            Self::Parse(error) => write!(f, "parse error: {error:?}"),
         }
     }
 }
@@ -329,6 +333,7 @@ impl From<Ssu2Error> for &'static str {
             Ssu2Error::PeerTest(error) => error.into(),
             Ssu2Error::Relay(error) => error.into(),
             Ssu2Error::NonExistentOutbound => "no-outbound-session",
+            Ssu2Error::Parse(_) => "payload-format",
         }
     }
 }
@@ -348,6 +353,7 @@ impl From<Ssu2Error> for TerminationReason {
             Ssu2Error::PeerTest(_) => Self::Unspecified,
             Ssu2Error::Relay(_) => Self::Unspecified,
             Ssu2Error::NonExistentOutbound => Self::Unspecified,
+            Ssu2Error::Parse(_) => Self::PayloadFormatError,
         }
     }
 }
@@ -773,26 +779,26 @@ impl From<chacha20poly1305::Error> for Error {
 // TODO: not good, fix chacha error
 impl From<Error> for SessionError {
     fn from(_: Error) -> Self {
-        SessionError::Chacha
+        Self::Chacha
     }
 }
 
 // TODO: not good, fix chacha error
 impl From<Error> for Ssu2Error {
     fn from(_: Error) -> Self {
-        Ssu2Error::Chacha
+        Self::Chacha
     }
 }
 
 impl From<RoutingError> for Error {
     fn from(value: RoutingError) -> Self {
-        Error::Routing(value)
+        Self::Routing(value)
     }
 }
 
 impl From<PeerTestError> for Ssu2Error {
     fn from(value: PeerTestError) -> Self {
-        Ssu2Error::PeerTest(value)
+        Self::PeerTest(value)
     }
 }
 

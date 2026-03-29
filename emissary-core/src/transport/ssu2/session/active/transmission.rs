@@ -17,11 +17,14 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    constants::ssu2::MIN_MTU,
     i2np::{Message, MessageType},
     primitives::RouterId,
     runtime::{Counter, Histogram, Instant, MetricsHandle, Runtime},
     transport::ssu2::{
-        message::data::{DataMessageBuilder, MessageKind, PeerTestBlock, RelayBlock},
+        message::data::{
+            DataMessageBuilder, MessageKind, PathValidationBlock, PeerTestBlock, RelayBlock,
+        },
         metrics::*,
         session::{
             active::{ack::AckInfo, RemoteAckManager},
@@ -40,6 +43,7 @@ use alloc::{
 use core::{
     cmp::{max, min},
     fmt,
+    net::SocketAddr,
     ops::Deref,
     sync::atomic::{AtomicU32, Ordering},
     time::Duration,
@@ -225,6 +229,26 @@ enum SegmentKind {
         /// Serialized `RouterInfo`.
         router_info: Vec<u8>,
     },
+
+    /// Path validation block.
+    PathValidation {
+        //// Path validation block.
+        path_validation_block: PathValidationBlock,
+    },
+}
+
+impl SegmentKind {
+    /// Get the address where the datagram should be sent to.
+    ///
+    /// Returns `None` if the current address should be used.
+    fn address(&self) -> Option<SocketAddr> {
+        match self {
+            SegmentKind::PathValidation {
+                path_validation_block,
+            } => path_validation_block.address(),
+            _ => None,
+        }
+    }
 }
 
 impl<'a> From<&'a SegmentKind> for MessageKind<'a> {
@@ -268,6 +292,11 @@ impl<'a> From<&'a SegmentKind> for MessageKind<'a> {
                 router_info: router_info.as_deref(),
             },
             SegmentKind::RouterInfo { router_info } => Self::RouterInfo { router_info },
+            SegmentKind::PathValidation {
+                path_validation_block,
+            } => Self::PathValidation {
+                path_validation_block,
+            },
         }
     }
 }
@@ -286,8 +315,33 @@ struct Segment<R: Runtime> {
     sent: R::Instant,
 }
 
+/// Type representing throttling state of `TransmissionManager`.
+enum Throttled {
+    /// `TransmissionManager` is not throttled.
+    No,
+
+    /// `TransmissionManager` is throttled due to an active path validation.
+    Yes {
+        /// Maximum payload size after throttling is over.
+        max_payload_size: usize,
+    },
+}
+
+impl Throttled {
+    /// Is `TransmissionManager` throttled?
+    fn is_throttled(&self) -> bool {
+        core::matches!(self, Throttled::Yes { .. })
+    }
+}
+
 /// Transmission manager.
 pub struct TransmissionManager<R: Runtime> {
+    /// Is `TransmissionManager` throttled due to an active connection migration.
+    ///
+    /// During connection migration window size is not allowed to to change and
+    /// MTU is set to `MIN_MTU`.
+    throttle: Throttled,
+
     /// Destination connection ID.
     dst_id: u64,
 
@@ -350,6 +404,9 @@ pub enum TransmissionMessage {
     ///
     /// May be split into two datagrams.
     RelayWithRouterInfo((RelayBlock, Vec<u8>)),
+
+    /// Path validation block.
+    PathValidation(PathValidationBlock),
 }
 
 impl From<Message> for TransmissionMessage {
@@ -382,6 +439,12 @@ impl From<(RelayBlock, Vec<u8>)> for TransmissionMessage {
     }
 }
 
+impl From<PathValidationBlock> for TransmissionMessage {
+    fn from(value: PathValidationBlock) -> Self {
+        Self::PathValidation(value)
+    }
+}
+
 impl fmt::Debug for TransmissionMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -401,6 +464,10 @@ impl fmt::Debug for TransmissionMessage {
                 .debug_struct("TransmissionMessage::RelayWithRouterInfo")
                 .field("block", &block)
                 .finish_non_exhaustive(),
+            Self::PathValidation(block) => f
+                .debug_struct("TransmissionMessage::PathValidation")
+                .field("block", &block)
+                .finish(),
         }
     }
 }
@@ -417,6 +484,7 @@ impl<R: Runtime> TransmissionManager<R> {
         max_payload_size: usize,
     ) -> Self {
         Self {
+            throttle: Throttled::No,
             dst_id,
             intro_key,
             last_immediate_ack: 0u32,
@@ -461,6 +529,11 @@ impl<R: Runtime> TransmissionManager<R> {
     /// Register packet number for a packet received from remote router.
     pub fn register_remote_pkt(&mut self, pkt_num: u32) {
         self.remote_ack_manager.register_pkt(pkt_num);
+    }
+
+    /// Check if `pkt_num` is duplicate.
+    pub fn is_duplicate(&self, pkt_num: u32) -> bool {
+        self.remote_ack_manager.is_duplicate(pkt_num)
     }
 
     /// Schedule `messsage` for outbound delivery.
@@ -563,6 +636,13 @@ impl<R: Runtime> TransmissionManager<R> {
                     });
                 }
             }
+            TransmissionMessage::PathValidation(block) => {
+                debug_assert!(self.fits_in_datagram(block.serialized_len()));
+
+                self.pending.push_front(SegmentKind::PathValidation {
+                    path_validation_block: block,
+                });
+            }
         }
     }
 
@@ -601,7 +681,9 @@ impl<R: Runtime> TransmissionManager<R> {
                     self.rto.calculate_rto(sent.elapsed());
                 }
 
-                self.window_size += 1;
+                if !self.throttle.is_throttled() {
+                    self.window_size += 1;
+                }
             }
         });
 
@@ -627,7 +709,9 @@ impl<R: Runtime> TransmissionManager<R> {
                         self.rto.calculate_rto(sent.elapsed());
                     }
 
-                    self.window_size += 1;
+                    if !self.throttle.is_throttled() {
+                        self.window_size += 1;
+                    }
                 }
             }
         }
@@ -645,7 +729,7 @@ impl<R: Runtime> TransmissionManager<R> {
     ///
     /// Packets are internally stored into `segments` which tracks when the packet expires and must
     /// be resent.
-    pub fn drain(&mut self) -> Option<Vec<BytesMut>> {
+    pub fn drain(&mut self) -> Option<Vec<(BytesMut, Option<SocketAddr>)>> {
         if self.pending.is_empty() {
             return None;
         }
@@ -685,7 +769,8 @@ impl<R: Runtime> TransmissionManager<R> {
                 .enumerate()
                 .map(|(i, pkt_num)| {
                     // segment must exist since it was just inserted into `segments`
-                    let segment = (&self.segments.get(&pkt_num).expect("to exist").segment).into();
+                    let segment = &self.segments.get(&pkt_num).expect("to exist").segment;
+                    let address = segment.address();
 
                     // include immediate ack flag if:
                     //  1) this is the last in a burst of messages
@@ -695,19 +780,22 @@ impl<R: Runtime> TransmissionManager<R> {
                     let immediate_ack_threshold =
                         pkt_num.saturating_sub(self.last_immediate_ack) > IMMEDIATE_ACK_INTERVAL;
 
-                    if last_in_burst || immediate_ack_threshold {
-                        self.last_immediate_ack = pkt_num;
+                    (
+                        if last_in_burst || immediate_ack_threshold {
+                            self.last_immediate_ack = pkt_num;
 
-                        DataMessageBuilder::default().with_immediate_ack()
-                    } else {
-                        DataMessageBuilder::default()
-                    }
-                    .with_dst_id(self.dst_id)
-                    .with_max_payload_size(self.max_payload_size)
-                    .with_key_context(self.intro_key, &self.send_key_ctx)
-                    .with_message(pkt_num, segment)
-                    .with_ack(highest_seen, num_acks, ranges.as_deref())
-                    .build::<R>()
+                            DataMessageBuilder::default().with_immediate_ack()
+                        } else {
+                            DataMessageBuilder::default()
+                        }
+                        .with_max_payload_size(self.max_payload_size)
+                        .with_dst_id(self.dst_id)
+                        .with_key_context(self.intro_key, &self.send_key_ctx)
+                        .with_message(pkt_num, segment.into())
+                        .with_ack(highest_seen, num_acks, ranges.as_deref())
+                        .build::<R>(),
+                        address,
+                    )
                 })
                 .collect(),
         )
@@ -718,7 +806,7 @@ impl<R: Runtime> TransmissionManager<R> {
     /// Packets which have not been acknowledged within `times_sent * rto` are selected (respecting
     /// window size), new packet numbers are generated and new `Data` messages are built and
     /// returned.
-    pub fn drain_expired(&mut self) -> Option<Vec<BytesMut>> {
+    pub fn drain_expired(&mut self) -> Option<Vec<(BytesMut, Option<SocketAddr>)>> {
         let expired = self
             .segments
             .iter()
@@ -832,15 +920,19 @@ impl<R: Runtime> TransmissionManager<R> {
                 .into_iter()
                 .map(|pkt_num| {
                     // segment must exist since it was just inserted into `segments`
-                    let segment = (&self.segments.get(&pkt_num).expect("to exist").segment).into();
+                    let segment = &self.segments.get(&pkt_num).expect("to exist").segment;
+                    let address = segment.address();
 
-                    DataMessageBuilder::default()
-                        .with_dst_id(self.dst_id)
-                        .with_key_context(self.intro_key, &self.send_key_ctx)
-                        .with_message(pkt_num, segment)
-                        .with_immediate_ack()
-                        .with_ack(highest_seen, num_acks, ranges.as_deref())
-                        .build::<R>()
+                    (
+                        DataMessageBuilder::default()
+                            .with_dst_id(self.dst_id)
+                            .with_key_context(self.intro_key, &self.send_key_ctx)
+                            .with_message(pkt_num, segment.into())
+                            .with_immediate_ack()
+                            .with_ack(highest_seen, num_acks, ranges.as_deref())
+                            .build::<R>(),
+                        address,
+                    )
                 })
                 .collect(),
         )
@@ -869,6 +961,41 @@ impl<R: Runtime> TransmissionManager<R> {
             .with_pkt_num(self.next_pkt_num())
             .with_ack(highest_seen, num_acks, ranges.as_deref())
             .build::<R>()
+    }
+
+    /// Make `TransmissionManager` throttled, i.e, set window size and MTU to minimum
+    /// and don't let them increase until `TransmissionManager::unthrottle()` is called.
+    pub fn throttle(&mut self) {
+        self.throttle = Throttled::Yes {
+            max_payload_size: self.max_payload_size,
+        };
+        self.max_payload_size = MIN_MTU;
+        self.window_size = MIN_WINDOW_SIZE;
+    }
+
+    /// Unthrottle `TransmissionManager` after a path validation has concluded.
+    ///
+    /// If `reset_timers` is true, RTO and RTT measurements must be reset.
+    pub fn unthrottle(&mut self, reset_timers: bool) {
+        match core::mem::replace(&mut self.throttle, Throttled::No) {
+            Throttled::No => {}
+            Throttled::Yes { max_payload_size } => self.max_payload_size = max_payload_size,
+        }
+
+        if reset_timers {
+            self.rto = RetransmissionTimeout::Unsampled;
+        }
+    }
+}
+
+#[cfg(test)]
+impl<R: Runtime> TransmissionManager<R> {
+    pub fn is_throttled(&self) -> bool {
+        self.throttle.is_throttled()
+    }
+
+    pub fn add_rtt_sample(&mut self, sample: Duration) {
+        self.rto.calculate_rto(sample);
     }
 }
 
@@ -1386,7 +1513,7 @@ mod tests {
             .drain_expired()
             .unwrap()
             .into_iter()
-            .map(|mut pkt| {
+            .map(|(mut pkt, _)| {
                 let mut reader = HeaderReader::new(mgr.intro_key, &mut pkt).unwrap();
                 let _dst_id = reader.dst_id();
 
@@ -1433,7 +1560,7 @@ mod tests {
             .drain_expired()
             .unwrap()
             .into_iter()
-            .map(|mut pkt| {
+            .map(|(mut pkt, _)| {
                 let mut reader = HeaderReader::new(mgr.intro_key, &mut pkt).unwrap();
                 let _dst_id = reader.dst_id();
 
@@ -1454,7 +1581,7 @@ mod tests {
             .drain_expired()
             .unwrap()
             .into_iter()
-            .map(|mut pkt| {
+            .map(|(mut pkt, _)| {
                 let mut reader = HeaderReader::new(mgr.intro_key, &mut pkt).unwrap();
                 let _dst_id = reader.dst_id();
 
@@ -1474,7 +1601,7 @@ mod tests {
             .drain_expired()
             .unwrap()
             .into_iter()
-            .map(|mut pkt| {
+            .map(|(mut pkt, _)| {
                 let mut reader = HeaderReader::new(mgr.intro_key, &mut pkt).unwrap();
                 let _dst_id = reader.dst_id();
 
@@ -1563,7 +1690,7 @@ mod tests {
             .drain_expired()
             .unwrap()
             .into_iter()
-            .map(|mut pkt| {
+            .map(|(mut pkt, _)| {
                 let mut reader = HeaderReader::new(mgr.intro_key, &mut pkt).unwrap();
                 let _dst_id = reader.dst_id();
 
@@ -1586,7 +1713,7 @@ mod tests {
             .drain_expired()
             .unwrap()
             .into_iter()
-            .map(|mut pkt| {
+            .map(|(mut pkt, _)| {
                 let mut reader = HeaderReader::new(mgr.intro_key, &mut pkt).unwrap();
                 let _dst_id = reader.dst_id();
 
@@ -1638,7 +1765,7 @@ mod tests {
             .drain()
             .unwrap()
             .into_iter()
-            .map(|mut pkt| {
+            .map(|(mut pkt, _)| {
                 let mut reader = HeaderReader::new(mgr.intro_key, &mut pkt).unwrap();
                 let _dst_id = reader.dst_id();
 
@@ -1695,7 +1822,7 @@ mod tests {
             .drain()
             .unwrap()
             .into_iter()
-            .map(|mut pkt| {
+            .map(|(mut pkt, _)| {
                 let mut reader = HeaderReader::new(mgr.intro_key, &mut pkt).unwrap();
                 let _dst_id = reader.dst_id();
 

@@ -109,6 +109,84 @@ pub enum MessageKind<'a> {
         /// Serialized `RouterInfo`.
         router_info: &'a [u8],
     },
+
+    /// Path validation block.
+    PathValidation {
+        /// Path challenge or response block.
+        path_validation_block: &'a PathValidationBlock,
+    },
+}
+
+/// Path validation block.
+pub enum PathValidationBlock {
+    /// Path challenge block.
+    Challenge {
+        /// Challenge for remote router.
+        challenge: Vec<u8>,
+
+        /// Observed address of remote router.
+        address: SocketAddr,
+    },
+
+    /// Path response block.
+    Response {
+        /// Received challenge.
+        challenge: Vec<u8>,
+
+        /// Observed address of remote router.
+        address: SocketAddr,
+    },
+}
+
+impl PathValidationBlock {
+    /// Get serialized length of the block.
+    ///
+    /// <https://i2p.net/en/docs/specs/ssu2/#message-contents>
+    pub fn serialized_len(&self) -> usize {
+        // block type + block length + date time (3 + 4)
+        let overhead = 1 + 2 + 7usize;
+
+        match self {
+            Self::Challenge { challenge, address } | Self::Response { challenge, address } => {
+                overhead
+                    + challenge.len()
+                    + match address {
+                        // block overhead + port (2 bytes) + address (4 bytes)
+                        SocketAddr::V4(_) => 3usize + 2usize + 4usize,
+                        // block overhead + port (2 bytes) + address (16 bytes)
+                        SocketAddr::V6(_) => 3usize + 2usize + 16usize,
+                    }
+            }
+        }
+    }
+
+    /// Get the address where the block should be sent to.
+    ///
+    /// `Challenge` blocks must obviously be sent to the new address and `Response` block
+    /// must be sent to the address from which the challenge was received.
+    ///
+    /// <https://i2p.net/en/docs/specs/ssu2/#responding-to-path-challenge>
+    pub fn address(&self) -> Option<SocketAddr> {
+        match self {
+            Self::Challenge { address, .. } => Some(*address),
+            Self::Response { address, .. } => Some(*address),
+        }
+    }
+}
+
+impl fmt::Debug for PathValidationBlock {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Challenge { address, .. } => f
+                .debug_struct("PathValidationBlock::Challenge")
+                .field("address", &address)
+                .finish_non_exhaustive(),
+            Self::Response { address, .. } => f
+                .debug_struct("PathValidationBlock::Response")
+                .field("address", &address)
+                .finish_non_exhaustive(),
+        }
+    }
 }
 
 /// Peer test block.
@@ -613,6 +691,43 @@ impl<'a> DataMessageBuilder<'a> {
                     out.put_u8(0u8);
                     out.put_u8(1u8);
                     out.put_slice(router_info);
+                }
+                Some(MessageKind::PathValidation {
+                    path_validation_block,
+                }) => {
+                    let address = match path_validation_block {
+                        PathValidationBlock::Challenge { challenge, address } => {
+                            out.put_u8(BlockType::PathChallenge.as_u8());
+                            out.put_u16(challenge.len() as u16);
+                            out.put_slice(challenge);
+                            address
+                        }
+                        PathValidationBlock::Response { challenge, address } => {
+                            out.put_u8(BlockType::PathResponse.as_u8());
+                            out.put_u16(challenge.len() as u16);
+                            out.put_slice(challenge);
+                            address
+                        }
+                    };
+
+                    // date time
+                    out.put_u8(BlockType::DateTime.as_u8());
+                    out.put_u16(4u16);
+                    out.put_u32(R::time_since_epoch().as_secs() as u32);
+
+                    // address
+                    match address {
+                        SocketAddr::V4(address) => {
+                            out.put_u16(6u16);
+                            out.put_u16(address.port());
+                            out.put_slice(&address.ip().octets());
+                        }
+                        SocketAddr::V6(address) => {
+                            out.put_u16(18u16);
+                            out.put_u16(address.port());
+                            out.put_slice(&address.ip().octets());
+                        }
+                    }
                 }
             }
             bytes_left = bytes_left.saturating_sub(out.len());

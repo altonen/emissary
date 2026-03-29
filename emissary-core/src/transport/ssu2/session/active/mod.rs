@@ -35,7 +35,7 @@ use crate::{
             session::{
                 active::{
                     ack::RemoteAckManager, fragment::FragmentHandler,
-                    transmission::TransmissionManager,
+                    path_validation::PathValidationState, transmission::TransmissionManager,
                 },
                 terminating::TerminationContext,
                 KeyContext,
@@ -63,6 +63,7 @@ use core::{
 
 mod ack;
 mod fragment;
+mod path_validation;
 mod peer_test;
 mod relay;
 mod transmission;
@@ -216,6 +217,9 @@ pub struct Ssu2Session<R: Runtime> {
     /// Total outbound bandwidth.
     outbound_bandwidth: usize,
 
+    /// Path validation state.
+    path_validation_state: PathValidationState<R>,
+
     /// Peer test handle.
     peer_test_handle: PeerTestHandle<R>,
 
@@ -264,7 +268,7 @@ pub struct Ssu2Session<R: Runtime> {
     verifying_key: SigningPublicKey,
 
     /// Write buffer
-    write_buffer: VecDeque<BytesMut>,
+    write_buffer: VecDeque<(BytesMut, Option<SocketAddr>)>,
 }
 
 impl<R: Runtime> Ssu2Session<R> {
@@ -300,6 +304,7 @@ impl<R: Runtime> Ssu2Session<R> {
             intro_key: context.intro_key,
             msg_rx,
             msg_tx,
+            path_validation_state: PathValidationState::default(),
             outbound_bandwidth: 0usize,
             peer_test_handle,
             pending_router_info: None,
@@ -378,7 +383,7 @@ impl<R: Runtime> Ssu2Session<R> {
 
     /// Handle received `pkt` for this session.
     fn handle_packet(&mut self, pkt: Packet) -> Result<(), Ssu2Error> {
-        let Packet { mut pkt, .. } = pkt;
+        let Packet { mut pkt, address } = pkt;
 
         let (pkt_num, immediate_ack) = match HeaderReader::new(self.intro_key, &mut pkt)?
             .parse(self.recv_key_ctx.k_header_2)?
@@ -416,16 +421,12 @@ impl<R: Runtime> Ssu2Session<R> {
             self.ack_timer.schedule_immediate_ack(self.transmission.round_trip_time());
         }
 
-        for block in Block::parse::<R>(&payload).map_err(|error| {
-            tracing::warn!(
-                target: LOG_TARGET,
-                router_id = %self.router_id,
-                ?error,
-                ?payload,
-                "failed to parse message block",
-            );
-            Ssu2Error::Malformed
-        })? {
+        let blocks = Block::parse::<R>(&payload).map_err(Ssu2Error::Parse)?;
+
+        // validate packet address and send path challenge if `address` differs from `self.address`
+        self.validate_pkt_address(address, pkt_num);
+
+        for block in blocks {
             match block {
                 Block::Termination {
                     reason,
@@ -550,6 +551,16 @@ impl<R: Runtime> Ssu2Session<R> {
                     self.handle_relay_response(
                         nonce, address, token, rejection, message, signature,
                     );
+                }
+                Block::PathChallenge { challenge } => {
+                    self.remote_ack.register_pkt(pkt_num);
+                    self.ack_timer.schedule_ack(self.transmission.round_trip_time());
+                    self.handle_path_challenge(address, challenge);
+                }
+                Block::PathResponse { response } => {
+                    self.remote_ack.register_pkt(pkt_num);
+                    self.ack_timer.schedule_ack(self.transmission.round_trip_time());
+                    self.handle_path_response(response);
                 }
                 block => {
                     tracing::trace!(
@@ -677,8 +688,12 @@ impl<R: Runtime> Future for Ssu2Session<R> {
             if let Some(pkts) = self.transmission.drain_expired() {
                 let address = self.address;
 
-                for pkt in pkts.into_iter() {
-                    match Pin::new(&mut self.socket).poll_send_to(cx, &pkt, address) {
+                for (pkt, destination) in pkts.into_iter() {
+                    match Pin::new(&mut self.socket).poll_send_to(
+                        cx,
+                        &pkt,
+                        destination.unwrap_or(address),
+                    ) {
                         Poll::Pending => {}
                         Poll::Ready(None) => return Poll::Ready(TerminationReason::RouterShutdown),
                         Poll::Ready(Some(_)) => {}
@@ -722,7 +737,7 @@ impl<R: Runtime> Future for Ssu2Session<R> {
 
             match Pin::new(&mut self.socket).poll_send_to(cx, &pkt, address) {
                 Poll::Pending => {
-                    self.write_buffer.push_front(pkt);
+                    self.write_buffer.push_front((pkt, None));
                 }
                 Poll::Ready(None) => return Poll::Ready(TerminationReason::RouterShutdown),
                 Poll::Ready(Some(_)) => {}
@@ -733,10 +748,14 @@ impl<R: Runtime> Future for Ssu2Session<R> {
         {
             let address = self.address;
 
-            while let Some(pkt) = self.write_buffer.pop_front() {
-                match Pin::new(&mut self.socket).poll_send_to(cx, &pkt, address) {
+            while let Some((pkt, destination)) = self.write_buffer.pop_front() {
+                match Pin::new(&mut self.socket).poll_send_to(
+                    cx,
+                    &pkt,
+                    destination.unwrap_or(address),
+                ) {
                     Poll::Pending => {
-                        self.write_buffer.push_front(pkt);
+                        self.write_buffer.push_front((pkt, destination));
                         break;
                     }
                     Poll::Ready(None) => return Poll::Ready(TerminationReason::RouterShutdown),
@@ -755,13 +774,17 @@ impl<R: Runtime> Future for Ssu2Session<R> {
             // otherwise the window size is skewed because there's an extra buffer
             if self.write_buffer.is_empty() {
                 if let Some(pkts) = self.transmission.drain() {
-                    for pkt in pkts {
-                        match Pin::new(&mut self.socket).poll_send_to(cx, &pkt, address) {
+                    for (pkt, destination) in pkts {
+                        match Pin::new(&mut self.socket).poll_send_to(
+                            cx,
+                            &pkt,
+                            destination.unwrap_or(address),
+                        ) {
                             Poll::Pending => {
                                 // if the socket is pending, store the packet in a temporary buffer
                                 // that'll be flushed before `TransmissioManager::drain()` is called
                                 // the next time
-                                self.write_buffer.push_back(pkt);
+                                self.write_buffer.push_back((pkt, destination));
                             }
                             Poll::Ready(None) =>
                                 return Poll::Ready(TerminationReason::RouterShutdown),
@@ -797,7 +820,15 @@ impl<R: Runtime> Future for Ssu2Session<R> {
             self.outbound_bandwidth = 0;
         }
 
-        // poll duplicate message filter and fragment handler
+        // poll path validation and handle expiration if an active validation has expired
+        loop {
+            match self.path_validation_state.poll_unpin(cx) {
+                Poll::Pending => break,
+                Poll::Ready(()) => self.handle_path_response_timeout(),
+            }
+        }
+
+        // poll duplicate message filter, fragment handler and path validation manager
         //
         // the futures don't return anything but must be polled so they make progress
         let _ = self.duplicate_filter.poll_unpin(cx);

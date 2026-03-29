@@ -53,6 +53,10 @@ pub const NUM_ACTIVE_PEER_TESTS: &str = "ssu2_active_peer_test_count";
 pub const IPV4_PEER_TEST_RESULT: &str = "ssu2_ipv4_peer_test_result_count";
 pub const IPV6_PEER_TEST_RESULT: &str = "ssu2_ipv6_peer_test_result_count";
 
+// connection migration
+pub const NUM_INBOUND_PATH_CHALLENGES: &str = "ssu2_inbound_path_challenge_count";
+pub const NUM_PATH_CHALLENGES: &str = "ssu2_inbound_path_challenge_count";
+
 /// Register SSU2 metrics.
 pub fn register_metrics(mut metrics: Vec<MetricType>) -> Vec<MetricType> {
     // counters
@@ -123,6 +127,14 @@ pub fn register_metrics(mut metrics: Vec<MetricType>) -> Vec<MetricType> {
     metrics.push(MetricType::Counter {
         name: NUM_CONNECTIONS,
         description: "how many connections have been opened",
+    });
+    metrics.push(MetricType::Counter {
+        name: NUM_INBOUND_PATH_CHALLENGES,
+        description: "total number of inbound path challenges received",
+    });
+    metrics.push(MetricType::Counter {
+        name: NUM_PATH_CHALLENGES,
+        description: "total number of path challenges initiated/concluded",
     });
 
     // gauges

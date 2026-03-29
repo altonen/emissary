@@ -101,6 +101,11 @@ impl RemoteAckManager {
         }
     }
 
+    /// Check if `pkt_num` has already been received.
+    pub fn is_duplicate(&self, pkt_num: u32) -> bool {
+        self.packets.contains(&Reverse(Packet::Received(pkt_num)))
+    }
+
     /// Register ACK-eliciting packet.
     pub fn register_pkt(&mut self, pkt_num: u32) {
         // next expected packet number
