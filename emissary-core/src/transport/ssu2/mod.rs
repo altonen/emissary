@@ -166,7 +166,7 @@ impl<R: Runtime> Ssu2Transport<R> {
                 ipv4_mtu,
                 ipv6_socket,
                 ipv6_mtu,
-                StaticPrivateKey::from(config.static_key),
+                StaticPrivateKey::from_bytes(config.static_key),
                 config.intro_key,
                 transport_tx,
                 router_ctx.clone(),

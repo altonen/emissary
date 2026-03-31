@@ -171,7 +171,7 @@ impl RouterIdentity {
         };
 
         let static_key = match pub_key_type {
-            KEY_KIND_X25519 => StaticPublicKey::from_bytes(&initial_bytes[..32])
+            KEY_KIND_X25519 => StaticPublicKey::try_from_bytes(&initial_bytes[..32])
                 .ok_or(Err::Error(RouterIdentityParseError::InvalidBitstream)),
             kind => Err(Err::Error(RouterIdentityParseError::InvalidPublicKey(kind))),
         }?;
@@ -262,7 +262,7 @@ impl RouterIdentity {
             let mut out = [0u8; 32];
             MockRuntime::rng().fill_bytes(&mut out);
 
-            StaticPrivateKey::from(out)
+            StaticPrivateKey::from_bytes(out)
         };
         let sgk = {
             let mut out = [0u8; 32];

@@ -233,7 +233,8 @@ impl Initiator {
         noise_ctx.mix_hash(&y);
 
         // MixKey(DH())
-        let responder_public = StaticPublicKey::from_bytes(&y).ok_or(Ntcp2Error::InvalidData)?;
+        let responder_public =
+            StaticPublicKey::try_from_bytes(&y).ok_or(Ntcp2Error::InvalidData)?;
         let remote_key = noise_ctx.mix_key(&ephemeral_key, &responder_public);
 
         // decrypt the chacha20poly1305 frame with generated remote key, deserialize

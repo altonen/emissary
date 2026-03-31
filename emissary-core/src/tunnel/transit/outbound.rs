@@ -525,7 +525,7 @@ mod tests {
 
             // create tunnel session
             let mut obep_session = obep_noise.create_short_inbound_session(
-                EphemeralPublicKey::from_bytes(
+                EphemeralPublicKey::try_from_bytes(
                     pending.hops()[0].outbound_session().ephemeral_key(),
                 )
                 .unwrap(),
@@ -643,7 +643,7 @@ mod tests {
 
             // create tunnel session
             let mut obep_session = obep_noise.create_short_inbound_session(
-                EphemeralPublicKey::from_bytes(
+                EphemeralPublicKey::try_from_bytes(
                     pending.hops()[0].outbound_session().ephemeral_key(),
                 )
                 .unwrap(),
@@ -747,7 +747,7 @@ mod tests {
 
             // create tunnel session
             let mut obep_session = obep_noise.create_short_inbound_session(
-                EphemeralPublicKey::from_bytes(
+                EphemeralPublicKey::try_from_bytes(
                     pending.hops()[0].outbound_session().ephemeral_key(),
                 )
                 .unwrap(),

@@ -143,27 +143,70 @@ impl TryFrom<u16> for PrivateKeyKind {
 pub enum StaticPublicKey {
     /// x25519
     X25519(x25519_dalek::PublicKey),
+
+    /// ML-KEM-512-X25519.
+    MlKem512X25519(x25519_dalek::PublicKey),
+
+    /// ML-KEM-768-X25519.
+    MlKem768X25519(x25519_dalek::PublicKey),
+
+    /// ML-KEM-1024-X25519.
+    MlKem1024X25519(x25519_dalek::PublicKey),
 }
 
 impl StaticPublicKey {
-    /// Try to create [`StaticPublicKey`] from `bytes`.
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        let key: [u8; 32] = bytes.try_into().ok()?;
+    /// Create [`StaticPublicKey::X25519`] from `bytes`.
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self::X25519(x25519_dalek::PublicKey::from(bytes))
+    }
 
+    /// Create [`StaticPublicKey::MlKem512X25519`] from `bytes`.
+    pub fn from_bytes_ml_kem_512(bytes: [u8; 32]) -> Self {
+        Self::MlKem512X25519(x25519_dalek::PublicKey::from(bytes))
+    }
+
+    /// Create [`StaticPublicKey::MlKem768X25519`] from `bytes`.
+    pub fn from_bytes_ml_kem_768(bytes: [u8; 32]) -> Self {
+        Self::MlKem768X25519(x25519_dalek::PublicKey::from(bytes))
+    }
+
+    /// Create [`StaticPublicKey::MlKem1024X25519`] from `bytes`.
+    pub fn from_bytes_ml_kem_1024(bytes: [u8; 32]) -> Self {
+        Self::MlKem1024X25519(x25519_dalek::PublicKey::from(bytes))
+    }
+
+    /// Try to create [`StaticPublicKey::X25519`] from `bytes`.
+    pub fn try_from_bytes(bytes: &[u8]) -> Option<Self> {
+        let key: [u8; 32] = bytes.try_into().ok()?;
         Some(Self::X25519(x25519_dalek::PublicKey::from(key)))
+    }
+
+    /// Try to create [`StaticPublicKey::MlKem512X25519`] from `bytes`.
+    pub fn try_from_bytes_ml_kem_512(bytes: &[u8]) -> Option<Self> {
+        let key: [u8; 32] = bytes.try_into().ok()?;
+        Some(Self::MlKem512X25519(x25519_dalek::PublicKey::from(key)))
+    }
+
+    /// Try to create [`StaticPublicKey::MlKem768X25519`] from `bytes`.
+    pub fn try_from_bytes_ml_kem_768(bytes: &[u8]) -> Option<Self> {
+        let key: [u8; 32] = bytes.try_into().ok()?;
+        Some(Self::MlKem768X25519(x25519_dalek::PublicKey::from(key)))
+    }
+
+    /// Try to create [`StaticPublicKey::MlKem1024X25519`] from `bytes`.
+    pub fn try_from_bytes_ml_kem_1024(bytes: &[u8]) -> Option<Self> {
+        let key: [u8; 32] = bytes.try_into().ok()?;
+        Some(Self::MlKem1024X25519(x25519_dalek::PublicKey::from(key)))
     }
 
     /// Convert [`StaticPublicKey`] to a byte vector.
     pub fn to_vec(&self) -> Vec<u8> {
         match self {
             Self::X25519(key) => key.to_bytes().to_vec(),
+            Self::MlKem512X25519(key) => key.to_bytes().to_vec(),
+            Self::MlKem768X25519(key) => key.to_bytes().to_vec(),
+            Self::MlKem1024X25519(key) => key.to_bytes().to_vec(),
         }
-    }
-}
-
-impl From<[u8; 32]> for StaticPublicKey {
-    fn from(value: [u8; 32]) -> Self {
-        StaticPublicKey::X25519(x25519_dalek::PublicKey::from(value))
     }
 }
 
@@ -171,6 +214,9 @@ impl AsRef<[u8]> for StaticPublicKey {
     fn as_ref(&self) -> &[u8] {
         match self {
             Self::X25519(key) => key.as_ref(),
+            Self::MlKem512X25519(key) => key.as_ref(),
+            Self::MlKem768X25519(key) => key.as_ref(),
+            Self::MlKem1024X25519(key) => key.as_ref(),
         }
     }
 }
@@ -179,6 +225,9 @@ impl AsRef<x25519_dalek::PublicKey> for StaticPublicKey {
     fn as_ref(&self) -> &x25519_dalek::PublicKey {
         match self {
             Self::X25519(key) => key,
+            Self::MlKem512X25519(key) => key,
+            Self::MlKem768X25519(key) => key,
+            Self::MlKem1024X25519(key) => key,
         }
     }
 }
@@ -188,18 +237,48 @@ impl AsRef<x25519_dalek::PublicKey> for StaticPublicKey {
 pub enum StaticPrivateKey {
     /// X25519.
     X25519(x25519_dalek::StaticSecret),
+
+    /// ML-KEM-512-X25519
+    MlKem512X25519(x25519_dalek::StaticSecret),
+
+    /// ML-KEM-786-X25519
+    MlKem768X25519(x25519_dalek::StaticSecret),
+
+    /// ML-KEM-1024-X25519
+    MlKem1024X25519(x25519_dalek::StaticSecret),
 }
 
 impl StaticPrivateKey {
-    /// Create new [`StaticPrivateKey`].
+    /// Create new [`StaticPrivateKey::X25519`].
     pub fn random(mut csprng: impl CryptoRng) -> Self {
         Self::X25519(x25519_dalek::StaticSecret::random_from_rng(&mut csprng))
+    }
+
+    /// Create new [`StaticPrivateKey::MlKem512X25519`].
+    pub fn random_ml_kem_512(mut csprng: impl CryptoRng) -> Self {
+        Self::MlKem512X25519(x25519_dalek::StaticSecret::random_from_rng(&mut csprng))
+    }
+
+    /// Create new [`StaticPrivateKey::MlKem768X25519`].
+    pub fn random_ml_kem_768(mut csprng: impl CryptoRng) -> Self {
+        Self::MlKem768X25519(x25519_dalek::StaticSecret::random_from_rng(&mut csprng))
+    }
+
+    /// Create new [`StaticPrivateKey::MlKem1024X25519`].
+    pub fn random_ml_kem_1024(mut csprng: impl CryptoRng) -> Self {
+        Self::MlKem1024X25519(x25519_dalek::StaticSecret::random_from_rng(&mut csprng))
     }
 
     /// Get public key.
     pub fn public(&self) -> StaticPublicKey {
         match self {
             Self::X25519(key) => StaticPublicKey::X25519(x25519_dalek::PublicKey::from(key)),
+            Self::MlKem512X25519(key) =>
+                StaticPublicKey::MlKem512X25519(x25519_dalek::PublicKey::from(key)),
+            Self::MlKem768X25519(key) =>
+                StaticPublicKey::MlKem768X25519(x25519_dalek::PublicKey::from(key)),
+            Self::MlKem1024X25519(key) =>
+                StaticPublicKey::MlKem1024X25519(x25519_dalek::PublicKey::from(key)),
         }
     }
 
@@ -207,22 +286,57 @@ impl StaticPrivateKey {
     pub fn diffie_hellman<T: AsRef<x25519_dalek::PublicKey>>(&self, public_key: &T) -> Vec<u8> {
         match self {
             Self::X25519(key) => key.diffie_hellman(public_key.as_ref()).to_bytes().to_vec(),
+            Self::MlKem512X25519(key) =>
+                key.diffie_hellman(public_key.as_ref()).to_bytes().to_vec(),
+            Self::MlKem768X25519(key) =>
+                key.diffie_hellman(public_key.as_ref()).to_bytes().to_vec(),
+            Self::MlKem1024X25519(key) =>
+                key.diffie_hellman(public_key.as_ref()).to_bytes().to_vec(),
         }
     }
 
-    /// Try to create [`StaticPublicKey`] from `bytes`.
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        let key: [u8; 32] = bytes.try_into().ok()?;
-
-        Some(StaticPrivateKey::X25519(x25519_dalek::StaticSecret::from(
-            key,
-        )))
+    /// Create new [`StaticPrivateKey::X25519`] from `bytes`.
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self::X25519(x25519_dalek::StaticSecret::from(bytes))
     }
-}
 
-impl From<[u8; 32]> for StaticPrivateKey {
-    fn from(value: [u8; 32]) -> Self {
-        StaticPrivateKey::X25519(x25519_dalek::StaticSecret::from(value))
+    /// Create [`StaticPrivateKey::MlKem512X25519`] from `bytes`.
+    pub fn from_bytes_ml_kem_512(bytes: [u8; 32]) -> Self {
+        Self::MlKem512X25519(x25519_dalek::StaticSecret::from(bytes))
+    }
+
+    /// Create [`StaticPrivateKey::MlKem768X25519`] from `bytes`.
+    pub fn from_bytes_ml_kem_768(bytes: [u8; 32]) -> Self {
+        Self::MlKem768X25519(x25519_dalek::StaticSecret::from(bytes))
+    }
+
+    /// Create [`StaticPrivateKey::MlKem1024X25519`] from `bytes`.
+    pub fn from_bytes_ml_kem_1024(bytes: [u8; 32]) -> Self {
+        Self::MlKem1024X25519(x25519_dalek::StaticSecret::from(bytes))
+    }
+
+    /// Try to create new [`StaticPrivateKey::X25519`] from `bytes`.
+    pub fn try_from_bytes(bytes: &[u8]) -> Option<Self> {
+        let key: [u8; 32] = bytes.try_into().ok()?;
+        Some(Self::X25519(x25519_dalek::StaticSecret::from(key)))
+    }
+
+    /// Try to create [`StaticPrivateKey::MlKem512X25519`] from `bytes`.
+    pub fn try_from_bytes_ml_kem_512(bytes: &[u8]) -> Option<Self> {
+        let key: [u8; 32] = bytes.try_into().ok()?;
+        Some(Self::MlKem512X25519(x25519_dalek::StaticSecret::from(key)))
+    }
+
+    /// Try to create [`StaticPrivateKey::MlKem768X25519`] from `bytes`.
+    pub fn try_from_bytes_ml_kem_768(bytes: &[u8]) -> Option<Self> {
+        let key: [u8; 32] = bytes.try_into().ok()?;
+        Some(Self::MlKem768X25519(x25519_dalek::StaticSecret::from(key)))
+    }
+
+    /// Try to create [`StaticPrivateKey::MlKem1024X25519`] from `bytes`.
+    pub fn try_from_bytes_ml_kem_1024(bytes: &[u8]) -> Option<Self> {
+        let key: [u8; 32] = bytes.try_into().ok()?;
+        Some(Self::MlKem1024X25519(x25519_dalek::StaticSecret::from(key)))
     }
 }
 
@@ -230,6 +344,9 @@ impl AsRef<[u8]> for StaticPrivateKey {
     fn as_ref(&self) -> &[u8] {
         match self {
             Self::X25519(key) => key.as_ref(),
+            Self::MlKem512X25519(key) => key.as_ref(),
+            Self::MlKem768X25519(key) => key.as_ref(),
+            Self::MlKem1024X25519(key) => key.as_ref(),
         }
     }
 }
@@ -238,6 +355,9 @@ impl SecretKey for StaticPrivateKey {
     fn diffie_hellman<T: AsRef<x25519_dalek::PublicKey>>(&self, public_key: &T) -> [u8; 32] {
         match self {
             Self::X25519(key) => key.diffie_hellman(public_key.as_ref()).to_bytes(),
+            Self::MlKem512X25519(key) => key.diffie_hellman(public_key.as_ref()).to_bytes(),
+            Self::MlKem768X25519(key) => key.diffie_hellman(public_key.as_ref()).to_bytes(),
+            Self::MlKem1024X25519(key) => key.diffie_hellman(public_key.as_ref()).to_bytes(),
         }
     }
 }
@@ -246,18 +366,48 @@ impl SecretKey for StaticPrivateKey {
 pub enum EphemeralPrivateKey {
     /// X25519.
     X25519(x25519_dalek::ReusableSecret),
+
+    /// ML-KEM-512-X25519
+    MlKem512X25519(x25519_dalek::ReusableSecret),
+
+    /// ML-KEM-786-X25519
+    MlKem768X25519(x25519_dalek::ReusableSecret),
+
+    /// ML-KEM-1024-X25519
+    MlKem1024X25519(x25519_dalek::ReusableSecret),
 }
 
 impl EphemeralPrivateKey {
-    /// Create new [`EphemeralPrivateKey`].
+    /// Create new [`EphemeralPrivateKey::X25519`].
     pub fn random(mut csprng: impl CryptoRng) -> Self {
         Self::X25519(x25519_dalek::ReusableSecret::random_from_rng(&mut csprng))
+    }
+
+    /// Create new [`EphemeralPrivateKey::MlKem512X25519`].
+    pub fn random_ml_kem_512(mut csprng: impl CryptoRng) -> Self {
+        Self::MlKem512X25519(x25519_dalek::ReusableSecret::random_from_rng(&mut csprng))
+    }
+
+    /// Create new [`EphemeralPrivateKey::MlKem768X25519`].
+    pub fn random_ml_kem_768(mut csprng: impl CryptoRng) -> Self {
+        Self::MlKem768X25519(x25519_dalek::ReusableSecret::random_from_rng(&mut csprng))
+    }
+
+    /// Create new [`EphemeralPrivateKey::MlKem1024X25519`].
+    pub fn random_ml_kem_1024(mut csprng: impl CryptoRng) -> Self {
+        Self::MlKem1024X25519(x25519_dalek::ReusableSecret::random_from_rng(&mut csprng))
     }
 
     /// Get associated public key.
     pub fn public(&self) -> EphemeralPublicKey {
         match self {
             Self::X25519(key) => EphemeralPublicKey::X25519(x25519_dalek::PublicKey::from(key)),
+            Self::MlKem512X25519(key) =>
+                EphemeralPublicKey::MlKem512X25519(x25519_dalek::PublicKey::from(key)),
+            Self::MlKem768X25519(key) =>
+                EphemeralPublicKey::MlKem768X25519(x25519_dalek::PublicKey::from(key)),
+            Self::MlKem1024X25519(key) =>
+                EphemeralPublicKey::MlKem1024X25519(x25519_dalek::PublicKey::from(key)),
         }
     }
 
@@ -265,6 +415,12 @@ impl EphemeralPrivateKey {
     pub fn diffie_hellman<T: AsRef<x25519_dalek::PublicKey>>(&self, public_key: &T) -> Vec<u8> {
         match self {
             Self::X25519(key) => key.diffie_hellman(public_key.as_ref()).to_bytes().to_vec(),
+            Self::MlKem512X25519(key) =>
+                key.diffie_hellman(public_key.as_ref()).to_bytes().to_vec(),
+            Self::MlKem768X25519(key) =>
+                key.diffie_hellman(public_key.as_ref()).to_bytes().to_vec(),
+            Self::MlKem1024X25519(key) =>
+                key.diffie_hellman(public_key.as_ref()).to_bytes().to_vec(),
         }
     }
 }
@@ -273,6 +429,9 @@ impl SecretKey for EphemeralPrivateKey {
     fn diffie_hellman<T: AsRef<x25519_dalek::PublicKey>>(&self, public_key: &T) -> [u8; 32] {
         match self {
             Self::X25519(key) => key.diffie_hellman(public_key.as_ref()).to_bytes(),
+            Self::MlKem512X25519(key) => key.diffie_hellman(public_key.as_ref()).to_bytes(),
+            Self::MlKem768X25519(key) => key.diffie_hellman(public_key.as_ref()).to_bytes(),
+            Self::MlKem1024X25519(key) => key.diffie_hellman(public_key.as_ref()).to_bytes(),
         }
     }
 }
@@ -282,6 +441,15 @@ impl SecretKey for EphemeralPrivateKey {
 pub enum EphemeralPublicKey {
     /// X25519.
     X25519(x25519_dalek::PublicKey),
+
+    /// ML-KEM-512-X25519
+    MlKem512X25519(x25519_dalek::PublicKey),
+
+    /// ML-KEM-786-X25519
+    MlKem768X25519(x25519_dalek::PublicKey),
+
+    /// ML-KEM-1024-X25519
+    MlKem1024X25519(x25519_dalek::PublicKey),
 }
 
 impl EphemeralPublicKey {
@@ -289,14 +457,35 @@ impl EphemeralPublicKey {
     pub fn to_vec(&self) -> Vec<u8> {
         match self {
             Self::X25519(key) => key.as_bytes().to_vec(),
+            Self::MlKem512X25519(key) => key.as_bytes().to_vec(),
+            Self::MlKem768X25519(key) => key.as_bytes().to_vec(),
+            Self::MlKem1024X25519(key) => key.as_bytes().to_vec(),
         }
     }
 
-    /// Try to create [`EphemeralPublicKey`] from `bytes`.
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+    /// Try to create [`EphemeralPublicKey::X25519`] from `bytes`.
+    pub fn try_from_bytes(bytes: &[u8]) -> Option<Self> {
         let key: [u8; 32] = bytes.try_into().ok()?;
 
         Some(Self::X25519(x25519_dalek::PublicKey::from(key)))
+    }
+
+    /// Try to create [`EphemeralPublicKey::MlKem512X25519`] from `bytes`.
+    pub fn try_from_bytes_ml_kem_512(bytes: &[u8]) -> Option<Self> {
+        let key: [u8; 32] = bytes.try_into().ok()?;
+        Some(Self::MlKem512X25519(x25519_dalek::PublicKey::from(key)))
+    }
+
+    /// Try to create [`EphemeralPublicKey::MlKem768X25519`] from `bytes`.
+    pub fn try_from_bytes_ml_kem_768(bytes: &[u8]) -> Option<Self> {
+        let key: [u8; 32] = bytes.try_into().ok()?;
+        Some(Self::MlKem768X25519(x25519_dalek::PublicKey::from(key)))
+    }
+
+    /// Try to create [`EphemeralPublicKey::MlKem1024X25519`] from `bytes`.
+    pub fn try_from_bytes_ml_kem_1024(bytes: &[u8]) -> Option<Self> {
+        let key: [u8; 32] = bytes.try_into().ok()?;
+        Some(Self::MlKem1024X25519(x25519_dalek::PublicKey::from(key)))
     }
 }
 
@@ -304,6 +493,9 @@ impl AsRef<[u8]> for EphemeralPublicKey {
     fn as_ref(&self) -> &[u8] {
         match self {
             Self::X25519(key) => key.as_ref(),
+            Self::MlKem512X25519(key) => key.as_ref(),
+            Self::MlKem768X25519(key) => key.as_ref(),
+            Self::MlKem1024X25519(key) => key.as_ref(),
         }
     }
 }
@@ -312,6 +504,9 @@ impl AsRef<x25519_dalek::PublicKey> for EphemeralPublicKey {
     fn as_ref(&self) -> &x25519_dalek::PublicKey {
         match self {
             Self::X25519(key) => key,
+            Self::MlKem512X25519(key) => key,
+            Self::MlKem768X25519(key) => key,
+            Self::MlKem1024X25519(key) => key,
         }
     }
 }
@@ -320,6 +515,9 @@ impl Zeroize for EphemeralPublicKey {
     fn zeroize(&mut self) {
         match self {
             Self::X25519(key) => key.zeroize(),
+            Self::MlKem512X25519(key) => key.zeroize(),
+            Self::MlKem768X25519(key) => key.zeroize(),
+            Self::MlKem1024X25519(key) => key.zeroize(),
         }
     }
 }

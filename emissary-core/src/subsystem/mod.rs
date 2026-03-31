@@ -879,7 +879,7 @@ impl<R: Runtime> SubsystemManager<R> {
         let message = {
             let (mut cipher_key, associated_data) = self
                 .noise
-                .derive_inbound_garlic_key(EphemeralPublicKey::from_bytes(&payload[4..36])?);
+                .derive_inbound_garlic_key(EphemeralPublicKey::try_from_bytes(&payload[4..36])?);
 
             let mut message = payload[36..].to_vec();
             ChaChaPoly::new(&cipher_key)

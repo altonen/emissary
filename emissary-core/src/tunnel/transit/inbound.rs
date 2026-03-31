@@ -414,7 +414,7 @@ mod tests {
         let (ibgw_keys, _) = {
             // create tunnel session
             let mut ibgw_session = ibgw_noise.create_short_inbound_session(
-                EphemeralPublicKey::from_bytes(
+                EphemeralPublicKey::try_from_bytes(
                     pending.hops()[0].outbound_session().ephemeral_key(),
                 )
                 .unwrap(),
@@ -531,7 +531,7 @@ mod tests {
         let (ibgw_keys, _) = {
             // create tunnel session
             let mut ibgw_session = ibgw_noise.create_short_inbound_session(
-                EphemeralPublicKey::from_bytes(
+                EphemeralPublicKey::try_from_bytes(
                     pending.hops()[0].outbound_session().ephemeral_key(),
                 )
                 .unwrap(),

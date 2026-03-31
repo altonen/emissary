@@ -548,7 +548,7 @@ impl<'a> GarlicMessage<'a> {
 
                 (
                     rest,
-                    Some(StaticPublicKey::from(
+                    Some(StaticPublicKey::from_bytes(
                         TryInto::<[u8; 32]>::try_into(key).expect("to succeed"),
                     )),
                 )

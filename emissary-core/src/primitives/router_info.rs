@@ -497,7 +497,7 @@ pub(crate) mod builder {
         /// Build [`RouterInfoBuilder`] into a [`RouterInfo].
         pub fn build(&mut self) -> (RouterInfo, StaticPrivateKey, SigningPrivateKey) {
             let static_key = match self.static_key.take() {
-                Some(key) => StaticPrivateKey::from_bytes(&key).unwrap(),
+                Some(key) => StaticPrivateKey::try_from_bytes(&key).unwrap(),
                 None => StaticPrivateKey::random(MockRuntime::rng()),
             };
             let signing_key = match self.signing_key.take() {

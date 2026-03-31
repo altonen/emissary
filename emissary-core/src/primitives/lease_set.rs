@@ -276,7 +276,7 @@ impl LeaseSet2 {
 
                     match pubkey_type {
                         0x0004 => {
-                            let key = StaticPublicKey::from_bytes(pubkey)?;
+                            let key = StaticPublicKey::try_from_bytes(pubkey)?;
                             public_keys.push(key);
 
                             Some((rest, public_keys))

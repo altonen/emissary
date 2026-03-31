@@ -135,7 +135,7 @@ impl Responder {
         noise_ctx.mix_hash(&x);
 
         // MixKey(DH())
-        let ephemeral_key = StaticPublicKey::from_bytes(&x).ok_or(Ntcp2Error::InvalidData)?;
+        let ephemeral_key = StaticPublicKey::try_from_bytes(&x).ok_or(Ntcp2Error::InvalidData)?;
         let mut remote_key = noise_ctx.mix_key(&local_static_key, &ephemeral_key);
 
         // decrypt initiator options
@@ -349,8 +349,8 @@ impl Responder {
         // perform diffie-hellman key exchange and derive keys for data phase
         //
         // https://geti2p.net/spec/ntcp2#key-derivation-function-kdf-for-data-phase
-        let initiator_public =
-            StaticPublicKey::from_bytes(&initiator_public[..32]).ok_or(Ntcp2Error::InvalidData)?;
+        let initiator_public = StaticPublicKey::try_from_bytes(&initiator_public[..32])
+            .ok_or(Ntcp2Error::InvalidData)?;
 
         // MixKey(DH())
         let mut k = noise_ctx.mix_key(&ephemeral_private, &initiator_public);

@@ -187,11 +187,12 @@ impl<R: Runtime> Router<R> {
         // create static/signing keypairs for the router
         //
         // if caller didn't supply keys, generate transient keypair
-        let local_static_key = StaticPrivateKey::from(config.static_key.unwrap_or_else(|| {
-            let mut key = [0u8; 32];
-            R::rng().fill_bytes(&mut key);
-            key
-        }));
+        let local_static_key =
+            StaticPrivateKey::from_bytes(config.static_key.unwrap_or_else(|| {
+                let mut key = [0u8; 32];
+                R::rng().fill_bytes(&mut key);
+                key
+            }));
         let local_signing_key = SigningPrivateKey::from(config.signing_key.unwrap_or_else(|| {
             let mut key = [0u8; 32];
             R::rng().fill_bytes(&mut key);

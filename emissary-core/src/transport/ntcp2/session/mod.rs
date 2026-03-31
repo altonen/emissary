@@ -148,7 +148,7 @@ impl<R: Runtime> SessionManager<R> {
         allow_local: bool,
         transport_tx: Sender<SubsystemEvent>,
     ) -> Self {
-        let local_key = StaticPrivateKey::from(local_key);
+        let local_key = StaticPrivateKey::from_bytes(local_key);
         let state = Sha256::new().update(PROTOCOL_NAME.as_bytes()).finalize_new();
         let chaining_key = state;
         let outbound_initial_state = Sha256::new().update(state).finalize_new();

@@ -587,7 +587,7 @@ impl Message {
 
                 match key_kind {
                     0x0004 if key_length == 32 => {
-                        keys.push(StaticPrivateKey::from_bytes(key)?);
+                        keys.push(StaticPrivateKey::try_from_bytes(key)?);
 
                         Some((rest, keys))
                     }

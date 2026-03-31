@@ -1856,7 +1856,7 @@ impl<'a> HeaderReader<'a> {
                     TryInto::<[u8; 8]>::try_into(&self.pkt[24..32]).expect("to succeed"),
                 );
                 let ephemeral_key =
-                    EphemeralPublicKey::from_bytes(&self.pkt[32..64]).expect("to succeed");
+                    EphemeralPublicKey::try_from_bytes(&self.pkt[32..64]).expect("to succeed");
 
                 Ok(HeaderKind::SessionRequest {
                     ephemeral_key,
@@ -1881,7 +1881,7 @@ impl<'a> HeaderReader<'a> {
 
                 // expected to succeed as the packet has been confirmed to be long enough
                 let ephemeral_key =
-                    EphemeralPublicKey::from_bytes(&self.pkt[32..64]).expect("to succeed");
+                    EphemeralPublicKey::try_from_bytes(&self.pkt[32..64]).expect("to succeed");
 
                 Ok(HeaderKind::SessionCreated {
                     ephemeral_key,

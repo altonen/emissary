@@ -984,7 +984,7 @@ mod test {
 
             let new_record = record[..].to_vec();
 
-            let pk = EphemeralPublicKey::from_bytes(&new_record[16..48]).unwrap();
+            let pk = EphemeralPublicKey::try_from_bytes(&new_record[16..48]).unwrap();
 
             let mut session = noise.create_short_inbound_session(pk);
             let decrypted_record = session.decrypt_build_record(record[48..].to_vec()).unwrap();

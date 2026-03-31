@@ -160,9 +160,9 @@ impl<R: Runtime> InboundSession<R> {
                 let (ephemeral_private_key, ephemeral_public_key, representative) = {
                     let (ephemeral_private_key, tweak) =
                         KeyContext::<R>::generate_ephemeral_keypair();
-                    let sk = StaticPrivateKey::from_bytes(&ephemeral_private_key)
+                    let sk = StaticPrivateKey::try_from_bytes(&ephemeral_private_key)
                         .ok_or(SessionError::InvalidKey)?;
-                    let ephemeral_public_key = StaticPublicKey::from(
+                    let ephemeral_public_key = StaticPublicKey::from_bytes(
                         Randomized::mul_base_clamped(ephemeral_private_key).to_montgomery().0,
                     );
 
@@ -310,9 +310,9 @@ impl<R: Runtime> InboundSession<R> {
                 let (ephemeral_private_key, ephemeral_public_key, representative) = {
                     let (ephemeral_private_key, tweak) =
                         KeyContext::<R>::generate_ephemeral_keypair();
-                    let sk = StaticPrivateKey::from_bytes(&ephemeral_private_key)
+                    let sk = StaticPrivateKey::try_from_bytes(&ephemeral_private_key)
                         .ok_or(SessionError::InvalidKey)?;
-                    let ephemeral_public_key = StaticPublicKey::from(
+                    let ephemeral_public_key = StaticPublicKey::from_bytes(
                         Randomized::mul_base_clamped(ephemeral_private_key).to_montgomery().0,
                     );
 

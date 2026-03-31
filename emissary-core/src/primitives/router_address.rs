@@ -122,7 +122,7 @@ impl fmt::Display for RouterAddress {
 impl RouterAddress {
     /// Create new unpublished NTCP2 [`RouterAddress`].
     pub fn new_unpublished_ntcp2(key: [u8; 32], address: SocketAddr) -> Self {
-        let static_key = StaticPrivateKey::from(key).public();
+        let static_key = StaticPrivateKey::from_bytes(key).public();
         let key = base64_encode(&static_key);
 
         let mut options = Mapping::default();
@@ -148,7 +148,7 @@ impl RouterAddress {
         host: IpAddr,
         address: SocketAddr,
     ) -> Self {
-        let static_key = StaticPrivateKey::from(key).public();
+        let static_key = StaticPrivateKey::from_bytes(key).public();
 
         let mut options = Mapping::default();
         options.insert(Str::from("v"), Str::from("2"));
@@ -173,7 +173,7 @@ impl RouterAddress {
         address: SocketAddr,
         mtu: usize,
     ) -> Self {
-        let static_key = StaticPrivateKey::from(static_key).public();
+        let static_key = StaticPrivateKey::from_bytes(static_key).public();
         let encoded_static_key = base64_encode(&static_key);
         let encoded_intro_key = base64_encode(intro_key);
 
@@ -214,7 +214,7 @@ impl RouterAddress {
         address: SocketAddr,
         mtu: usize,
     ) -> Self {
-        let static_key = StaticPrivateKey::from(static_key).public();
+        let static_key = StaticPrivateKey::from_bytes(static_key).public();
         let encoded_static_key = base64_encode(&static_key);
         let encoded_intro_key = base64_encode(intro_key);
 
@@ -350,7 +350,7 @@ impl RouterAddress {
                         RouterAddressParseError::InvalidNtcp2StaticKey,
                     )))?;
 
-                    StaticPublicKey::from_bytes(&bytes).ok_or(Err::Error((
+                    StaticPublicKey::try_from_bytes(&bytes).ok_or(Err::Error((
                         Some(rest),
                         RouterAddressParseError::InvalidNtcp2StaticKey,
                     )))?
@@ -383,7 +383,7 @@ impl RouterAddress {
                         RouterAddressParseError::InvalidSsu2StaticKey,
                     )))?;
 
-                    StaticPublicKey::from_bytes(&bytes).ok_or(Err::Error((
+                    StaticPublicKey::try_from_bytes(&bytes).ok_or(Err::Error((
                         Some(rest),
                         RouterAddressParseError::InvalidSsu2StaticKey,
                     )))?
@@ -623,7 +623,7 @@ mod tests {
             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
         )
         .serialize();
-        let static_key = StaticPrivateKey::from([1u8; 32]).public();
+        let static_key = StaticPrivateKey::from_bytes([1u8; 32]).public();
 
         match RouterAddress::parse::<MockRuntime>(&serialized).unwrap() {
             RouterAddress::Ntcp2 {
@@ -655,7 +655,7 @@ mod tests {
             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
         )
         .serialize();
-        let static_key = StaticPrivateKey::from([1u8; 32]).public();
+        let static_key = StaticPrivateKey::from_bytes([1u8; 32]).public();
 
         match RouterAddress::parse::<MockRuntime>(&serialized).unwrap() {
             RouterAddress::Ntcp2 {
@@ -697,7 +697,7 @@ mod tests {
             SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 8888),
         )
         .serialize();
-        let static_key = StaticPrivateKey::from([1u8; 32]).public();
+        let static_key = StaticPrivateKey::from_bytes([1u8; 32]).public();
 
         match RouterAddress::parse::<MockRuntime>(&serialized).unwrap() {
             RouterAddress::Ntcp2 {
@@ -736,7 +736,7 @@ mod tests {
             1500,
         )
         .serialize();
-        let static_key = StaticPrivateKey::from([1u8; 32]).public();
+        let static_key = StaticPrivateKey::from_bytes([1u8; 32]).public();
         let intro_key = [2u8; 32];
 
         match RouterAddress::parse::<MockRuntime>(&serialized).unwrap() {
@@ -776,7 +776,7 @@ mod tests {
             1500,
         )
         .serialize();
-        let static_key = StaticPrivateKey::from([1u8; 32]).public();
+        let static_key = StaticPrivateKey::from_bytes([1u8; 32]).public();
         let intro_key = [2u8; 32];
 
         match RouterAddress::parse::<MockRuntime>(&serialized).unwrap() {
@@ -821,7 +821,7 @@ mod tests {
             1500,
         )
         .serialize();
-        let static_key = StaticPrivateKey::from([1u8; 32]).public();
+        let static_key = StaticPrivateKey::from_bytes([1u8; 32]).public();
         let intro_key = [2u8; 32];
 
         match RouterAddress::parse::<MockRuntime>(&serialized).unwrap() {

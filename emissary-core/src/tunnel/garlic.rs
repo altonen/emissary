@@ -137,7 +137,7 @@ impl<R: Runtime> GarlicHandler<R> {
         // derive cipher key and associated data and decrypt the garlic message
         let message = {
             let (mut cipher_key, associated_data) = self.noise.derive_inbound_garlic_key(
-                EphemeralPublicKey::from_bytes(&payload[4..36]).ok_or(Error::InvalidData)?,
+                EphemeralPublicKey::try_from_bytes(&payload[4..36]).ok_or(Error::InvalidData)?,
             );
 
             let mut message = payload[36..].to_vec();

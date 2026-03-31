@@ -754,7 +754,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
         // MixKey(DH())
         let mut cipher_key = self.noise_ctx.mix_key(
             &ephemeral_key,
-            &StaticPublicKey::from_bytes(&static_key).expect("to succeed"),
+            &StaticPublicKey::try_from_bytes(&static_key).expect("to succeed"),
         );
 
         // decrypt payload

@@ -150,7 +150,7 @@ impl<R: Runtime> OutboundSession<R> {
             let new_pubkey =
                 Randomized::from_representative(&public_key).unwrap().to_montgomery().to_bytes();
 
-            StaticPublicKey::from(new_pubkey)
+            StaticPublicKey::from_bytes(new_pubkey)
         };
 
         // poly1305 mac for the key section (empty payload)
