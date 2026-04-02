@@ -25,7 +25,7 @@ futures = { package = "futures-util", version = "0.3.31", default-features = fal
 hashbrown = "0.15.4"
 hmac = { version = "0.12.1", default-features = false }
 lazy_static = { version = "1.5.0", default-features = false }
-ml-kem = { version = "0.2.3" }
+ml-kem = { version = "0.3.0-rc.0" }
 num-bigint = { version = "0.4.6", default-features = false }
 num-traits = { version = "0.2.19", default-features = false }
 p256 = { version = "0.13.2", default-features = false, features = ["alloc", "ecdsa", "ecdsa-core"] }

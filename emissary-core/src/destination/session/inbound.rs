@@ -23,6 +23,7 @@ use crate::{
         chachapoly::ChaChaPoly, hmac::Hmac, sha256::Sha256, StaticPrivateKey, StaticPublicKey,
     },
     destination::session::{
+        context::MlKemKind,
         tag_set::{TagSet, TagSetEntry},
         KeyContext, NUM_TAGS_TO_GENERATE,
     },
@@ -33,6 +34,10 @@ use crate::{
 use bytes::{BufMut, BytesMut};
 use curve25519_elligator2::{MapToPointVariant, Randomized};
 use hashbrown::HashMap;
+use ml_kem::{
+    array::Array, kem::Encapsulate, Ciphertext, EncapsulationKey, MlKem1024, MlKem512, MlKem768,
+    SharedKey,
+};
 use zeroize::Zeroize;
 
 use alloc::{boxed::Box, vec::Vec};
@@ -55,14 +60,19 @@ enum InboundSessionState {
         /// Chaining key.
         chaining_key: Vec<u8>,
 
-        /// State for `NewSessionReply` KDF.
-        state: Vec<u8>,
+        /// ML-KEM context.
+        ///
+        /// `None` if x25519 is used.
+        ml_kem_context: Option<MlKemContext>,
 
         /// Ephemeral public key of remote destination.
         remote_ephemeral_public_key: StaticPublicKey,
 
         /// Static public key of remote destination.
         remote_static_public_key: StaticPublicKey,
+
+        /// State for `NewSessionReply` KDF.
+        state: Vec<u8>,
     },
 
     /// `NewSessionReply` has been sent.
@@ -70,11 +80,15 @@ enum InboundSessionState {
     /// [`InboundSession`] is waiting for `ExistingSession` message to be received before the
     /// session is considered active.
     NewSessionReplySent {
-        /// Generated tag sets.
-        tag_sets: HashMap<usize, (TagSet, TagSet)>,
+        /// Chaining key from NS.
+        ///
+        /// Used if multiple NSR messages are sent.
+        chaining_key: Vec<u8>,
 
-        /// Garlic tag -> `tag_sets` index mappings.
-        tag_set_mappings: HashMap<u64, usize>,
+        /// ML-KEM context.
+        ///
+        /// `None` if x25519 is used.
+        ml_kem_context: Option<MlKemContext>,
 
         /// `NewSessionReply` tag set.
         nsr_tag_set: Box<TagSet>,
@@ -90,10 +104,11 @@ enum InboundSessionState {
         /// Used if multiple NSR messages are sent.
         state: Vec<u8>,
 
-        /// Chaining key from NS.
-        ///
-        /// Used if multiple NSR messages are sent.
-        chaining_key: Vec<u8>,
+        /// Garlic tag -> `tag_sets` index mappings.
+        tag_set_mappings: HashMap<u64, usize>,
+
+        /// Generated tag sets.
+        tag_sets: HashMap<usize, (TagSet, TagSet)>,
     },
 
     /// Inbound session state has been poisoned.
@@ -115,6 +130,103 @@ impl fmt::Debug for InboundSessionState {
     }
 }
 
+/// ML-KEM context.
+pub enum MlKemContext {
+    /// ML-KEM-512-x25519.
+    MlKem512X25519 {
+        /// Ciphertext.
+        ciphertext: Ciphertext<MlKem512>,
+
+        /// Shared key.
+        shared_key: SharedKey,
+    },
+
+    /// ML-KEM-512-x25519.
+    MlKem768X25519 {
+        /// Ciphertext.
+        ciphertext: Ciphertext<MlKem768>,
+
+        /// Shared key.
+        shared_key: SharedKey,
+    },
+
+    /// ML-KEM-512-x25519.
+    MlKem1024X25519 {
+        /// Ciphertext.
+        ciphertext: Ciphertext<MlKem1024>,
+
+        /// Shared key.
+        shared_key: SharedKey,
+    },
+}
+
+impl MlKemContext {
+    /// Create new `MlKemContext` encapsulation key.
+    ///
+    /// Returns `None` of encapsulation fails.
+    pub fn new<R: Runtime>(kind: MlKemKind, encap: Vec<u8>) -> Option<Self> {
+        match kind {
+            MlKemKind::MlKem512X25519 => {
+                let key = Array::try_from(encap.as_slice()).ok()?;
+                let key = EncapsulationKey::<MlKem512>::new(&key).ok()?;
+                let (ciphertext, shared_key) = key.encapsulate_with_rng(&mut R::rng());
+
+                Some(Self::MlKem512X25519 {
+                    ciphertext,
+                    shared_key,
+                })
+            }
+            MlKemKind::MlKem768X25519 => {
+                let key = Array::try_from(encap.as_slice()).ok()?;
+                let key = EncapsulationKey::<MlKem768>::new(&key).ok()?;
+                let (ciphertext, shared_key) = key.encapsulate_with_rng(&mut R::rng());
+
+                Some(Self::MlKem768X25519 {
+                    ciphertext,
+                    shared_key,
+                })
+            }
+            MlKemKind::MlKem1024X25519 => {
+                let key = Array::try_from(encap.as_slice()).ok()?;
+                let key = EncapsulationKey::<MlKem1024>::new(&key).ok()?;
+                let (ciphertext, shared_key) = key.encapsulate_with_rng(&mut R::rng());
+
+                Some(Self::MlKem1024X25519 {
+                    ciphertext,
+                    shared_key,
+                })
+            }
+        }
+    }
+
+    /// Perform `MixKey(kem_shared_secet)`.
+    ///
+    /// Returns chaining key and the KEM ciphertext
+    fn mix_key(&self, chaining_key: [u8; 32]) -> ([u8; 32], Vec<u8>) {
+        let (shared_key, ciphertext) = match self {
+            Self::MlKem512X25519 {
+                ciphertext,
+                shared_key,
+            } => (shared_key, ciphertext.0.to_vec()),
+            Self::MlKem768X25519 {
+                ciphertext,
+                shared_key,
+            } => (shared_key, ciphertext.0.to_vec()),
+            Self::MlKem1024X25519 {
+                ciphertext,
+                shared_key,
+            } => (shared_key, ciphertext.0.to_vec()),
+        };
+
+        let mut temp_key = Hmac::new(&chaining_key).update(&shared_key).finalize_new();
+        let chaining_key = Hmac::new(&temp_key).update(b"").update([0x01]).finalize_new();
+
+        temp_key.zeroize();
+
+        (chaining_key, ciphertext)
+    }
+}
+
 /// Inbound session.
 pub struct InboundSession<R: Runtime> {
     /// State of the inbound session.
@@ -131,12 +243,14 @@ impl<R: Runtime> InboundSession<R> {
         remote_ephemeral_public_key: StaticPublicKey,
         chaining_key: Vec<u8>,
         state: Vec<u8>,
+        ml_kem_context: Option<MlKemContext>,
     ) -> Self {
         Self {
             state: InboundSessionState::AwaitingNewSessionReplyTransmit {
                 chaining_key,
-                remote_static_public_key,
+                ml_kem_context,
                 remote_ephemeral_public_key,
+                remote_static_public_key,
                 state,
             },
             _runtime: Default::default(),
@@ -154,6 +268,7 @@ impl<R: Runtime> InboundSession<R> {
                 chaining_key: ns_chaining_key,
                 remote_ephemeral_public_key,
                 remote_static_public_key,
+                ml_kem_context,
                 state: ns_state,
             } => {
                 // generate new elligator2-encodable ephemeral keypair
@@ -177,9 +292,11 @@ impl<R: Runtime> InboundSession<R> {
 
                 // create garlic tag for the `NewSessionReply` message
                 let (nsr_tag_set, garlic_tag) = {
-                    let temp_key = Hmac::new(&ns_chaining_key).update([]).finalize();
-                    let tagset_key =
-                        Hmac::new(&temp_key).update(b"SessionReplyTags").update([0x01]).finalize();
+                    let temp_key = Hmac::new(&ns_chaining_key).update([]).finalize_new();
+                    let tagset_key = Hmac::new(&temp_key)
+                        .update(b"SessionReplyTags")
+                        .update([0x01])
+                        .finalize_new();
                     let mut nsr_tag_set =
                         TagSet::new(&ns_chaining_key, tagset_key, ratchet_threshold);
 
@@ -195,31 +312,6 @@ impl<R: Runtime> InboundSession<R> {
                     "garlic tag for NSR",
                 );
 
-                // calculate keys from shared secrets derived from ee & es
-                let (chaining_key, keydata) = {
-                    // ephemeral-ephemeral
-                    let mut shared =
-                        ephemeral_private_key.diffie_hellman(&remote_ephemeral_public_key);
-                    let mut temp_key = Hmac::new(&ns_chaining_key).update(&shared).finalize();
-                    let mut chaining_key =
-                        Hmac::new(&temp_key).update(b"").update([0x01]).finalize();
-
-                    // static-ephemeral
-                    shared = ephemeral_private_key.diffie_hellman(&remote_static_public_key);
-                    temp_key = Hmac::new(&chaining_key).update(&shared).finalize();
-                    chaining_key = Hmac::new(&temp_key).update(b"").update([0x01]).finalize();
-                    let keydata = Hmac::new(&temp_key)
-                        .update(&chaining_key)
-                        .update(b"")
-                        .update([0x02])
-                        .finalize();
-
-                    shared.zeroize();
-                    temp_key.zeroize();
-
-                    (chaining_key, keydata)
-                };
-
                 // calculate new state encrypting the empty key section
                 let state = {
                     let state =
@@ -230,6 +322,58 @@ impl<R: Runtime> InboundSession<R> {
                         .update::<&[u8]>(ephemeral_public_key.as_ref())
                         .finalize()
                 };
+
+                // calculate keys from shared secrets derived from ee, ekem1 and es
+                //
+                // additionally encrypt the kem ciphertext
+                let (chaining_key, keydata, state, kem_ciphertext) = {
+                    // ephemeral-ephemeral
+                    let mut shared =
+                        ephemeral_private_key.diffie_hellman(&remote_ephemeral_public_key);
+                    let mut temp_key = Hmac::new(&ns_chaining_key).update(&shared).finalize_new();
+                    let chaining_key =
+                        Hmac::new(&temp_key).update(b"").update([0x01]).finalize_new();
+                    let keydata = Hmac::new(&temp_key)
+                        .update(&chaining_key)
+                        .update(b"")
+                        .update([0x02])
+                        .finalize_new();
+
+                    // ekem1
+                    //
+                    // <https://i2p.net/en/docs/specs/ecies-hybrid/#bob-kdf-for-nsr-message>
+                    let (mut chaining_key, state, kem_ciphertext) = match &ml_kem_context {
+                        None => (chaining_key, state, None),
+                        Some(context) => {
+                            let (chaining_key, mut ciphertext) = context.mix_key(chaining_key);
+
+                            ChaChaPoly::new(&keydata)
+                                .encrypt_with_ad_new(&state, &mut ciphertext)?;
+
+                            (
+                                chaining_key,
+                                Sha256::new().update(&state).update(&ciphertext).finalize(),
+                                Some(ciphertext),
+                            )
+                        }
+                    };
+
+                    // static-ephemeral
+                    shared = ephemeral_private_key.diffie_hellman(&remote_static_public_key);
+                    temp_key = Hmac::new(&chaining_key).update(&shared).finalize_new();
+                    chaining_key = Hmac::new(&temp_key).update(b"").update([0x01]).finalize_new();
+                    let keydata = Hmac::new(&temp_key)
+                        .update(&chaining_key)
+                        .update(b"")
+                        .update([0x02])
+                        .finalize_new();
+
+                    shared.zeroize();
+                    temp_key.zeroize();
+
+                    (chaining_key, keydata, state, kem_ciphertext)
+                };
+
                 let mac = ChaChaPoly::new(&keydata).encrypt_with_ad(&state, &mut [])?;
 
                 // include `mac` into state for payload section's encryption
@@ -244,7 +388,7 @@ impl<R: Runtime> InboundSession<R> {
                 let send_tag_set = TagSet::new(&chaining_key, &send_key, ratchet_threshold);
                 let mut recv_tag_set = TagSet::new(chaining_key, recv_key, ratchet_threshold);
 
-                // decode payload of the `NewSessionReply` message
+                // encrypt payload of the `NewSessionReply` message
                 let temp_key = Hmac::new(&send_key).update([]).finalize();
                 let payload_key =
                     Hmac::new(&temp_key).update(b"AttachPayloadKDF").update([0x01]).finalize();
@@ -257,10 +401,14 @@ impl<R: Runtime> InboundSession<R> {
                             .len()
                             .saturating_add(8) // garlic tag
                             .saturating_add(mac.len())
-                            .saturating_add(payload.len()),
+                            .saturating_add(payload.len())
+                            .saturating_add(kem_ciphertext.as_ref().map_or(0, |c| c.len())),
                     );
                     out.put_slice(&garlic_tag.to_le_bytes());
                     out.put_slice(&representative);
+                    if let Some(ciphertext) = kem_ciphertext {
+                        out.put_slice(&ciphertext);
+                    }
                     out.put_slice(&mac);
                     out.put_slice(&payload);
 
@@ -281,25 +429,27 @@ impl<R: Runtime> InboundSession<R> {
                     .unzip();
 
                 self.state = InboundSessionState::NewSessionReplySent {
-                    tag_sets: HashMap::from_iter([(0usize, (send_tag_set, recv_tag_set))]),
-                    tag_set_mappings,
+                    chaining_key: ns_chaining_key,
+                    ml_kem_context,
                     nsr_tag_set: Box::new(nsr_tag_set),
                     remote_ephemeral_public_key,
                     remote_static_public_key,
                     state: ns_state,
-                    chaining_key: ns_chaining_key,
+                    tag_set_mappings,
+                    tag_sets: HashMap::from_iter([(0usize, (send_tag_set, recv_tag_set))]),
                 };
 
                 Ok((payload, tags))
             }
             InboundSessionState::NewSessionReplySent {
-                mut tag_sets,
-                mut tag_set_mappings,
+                chaining_key: ns_chaining_key,
+                ml_kem_context,
                 mut nsr_tag_set,
+                mut tag_set_mappings,
+                mut tag_sets,
                 remote_ephemeral_public_key,
                 remote_static_public_key,
                 state: ns_state,
-                chaining_key: ns_chaining_key,
             } => {
                 tracing::debug!(
                     target: LOG_TARGET,
@@ -335,31 +485,6 @@ impl<R: Runtime> InboundSession<R> {
                     "garlic tag for NSR",
                 );
 
-                // calculate keys from shared secrets derived from ee & es
-                let (chaining_key, keydata) = {
-                    // ephemeral-ephemeral
-                    let mut shared =
-                        ephemeral_private_key.diffie_hellman(&remote_ephemeral_public_key);
-                    let mut temp_key = Hmac::new(&ns_chaining_key).update(&shared).finalize();
-                    let mut chaining_key =
-                        Hmac::new(&temp_key).update(b"").update([0x01]).finalize();
-
-                    // static-ephemeral
-                    shared = ephemeral_private_key.diffie_hellman(&remote_static_public_key);
-                    temp_key = Hmac::new(&chaining_key).update(&shared).finalize();
-                    chaining_key = Hmac::new(&temp_key).update(b"").update([0x01]).finalize();
-                    let keydata = Hmac::new(&temp_key)
-                        .update(&chaining_key)
-                        .update(b"")
-                        .update([0x02])
-                        .finalize();
-
-                    shared.zeroize();
-                    temp_key.zeroize();
-
-                    (chaining_key, keydata)
-                };
-
                 // calculate new state encrypting the empty key section
                 let state = {
                     let state =
@@ -370,6 +495,58 @@ impl<R: Runtime> InboundSession<R> {
                         .update::<&[u8]>(ephemeral_public_key.as_ref())
                         .finalize()
                 };
+
+                // calculate keys from shared secrets derived from ee, ekem1 & es
+                //
+                // additionally encrypt the kem ciphertext
+                let (chaining_key, keydata, state, kem_ciphertext) = {
+                    // ephemeral-ephemeral
+                    let mut shared =
+                        ephemeral_private_key.diffie_hellman(&remote_ephemeral_public_key);
+                    let mut temp_key = Hmac::new(&ns_chaining_key).update(&shared).finalize();
+                    let chaining_key =
+                        Hmac::new(&temp_key).update(b"").update([0x01]).finalize_new();
+                    let keydata = Hmac::new(&temp_key)
+                        .update(&chaining_key)
+                        .update(b"")
+                        .update([0x02])
+                        .finalize_new();
+
+                    // ekem1
+                    //
+                    // <https://i2p.net/en/docs/specs/ecies-hybrid/#bob-kdf-for-nsr-message>
+                    let (mut chaining_key, state, kem_ciphertext) = match &ml_kem_context {
+                        None => (chaining_key, state, None),
+                        Some(context) => {
+                            let (chaining_key, mut ciphertext) = context.mix_key(chaining_key);
+
+                            ChaChaPoly::new(&keydata)
+                                .encrypt_with_ad_new(&state, &mut ciphertext)?;
+
+                            (
+                                chaining_key,
+                                Sha256::new().update(&state).update(&ciphertext).finalize(),
+                                Some(ciphertext),
+                            )
+                        }
+                    };
+
+                    // static-ephemeral
+                    shared = ephemeral_private_key.diffie_hellman(&remote_static_public_key);
+                    temp_key = Hmac::new(&chaining_key).update(&shared).finalize();
+                    chaining_key = Hmac::new(&temp_key).update(b"").update([0x01]).finalize_new();
+                    let keydata = Hmac::new(&temp_key)
+                        .update(&chaining_key)
+                        .update(b"")
+                        .update([0x02])
+                        .finalize();
+
+                    shared.zeroize();
+                    temp_key.zeroize();
+
+                    (chaining_key, keydata, state, kem_ciphertext)
+                };
+
                 let mac = ChaChaPoly::new(&keydata).encrypt_with_ad(&state, &mut [])?;
 
                 // include `mac` into state for payload section's encryption
@@ -397,10 +574,14 @@ impl<R: Runtime> InboundSession<R> {
                             .len()
                             .saturating_add(8) // garlic tag
                             .saturating_add(mac.len())
-                            .saturating_add(payload.len()),
+                            .saturating_add(payload.len())
+                            .saturating_add(kem_ciphertext.as_ref().map_or(0, |c| c.len())),
                     );
                     out.put_slice(&garlic_tag.to_le_bytes());
                     out.put_slice(&representative);
+                    if let Some(ciphertext) = kem_ciphertext {
+                        out.put_slice(&ciphertext);
+                    }
                     out.put_slice(&mac);
                     out.put_slice(&payload);
 
@@ -427,13 +608,14 @@ impl<R: Runtime> InboundSession<R> {
                 tag_sets.insert(tag_sets.len(), (send_tag_set, recv_tag_set));
 
                 self.state = InboundSessionState::NewSessionReplySent {
-                    tag_sets,
-                    tag_set_mappings,
+                    chaining_key: ns_chaining_key,
+                    ml_kem_context,
                     nsr_tag_set,
                     remote_ephemeral_public_key,
                     remote_static_public_key,
                     state: ns_state,
-                    chaining_key: ns_chaining_key,
+                    tag_set_mappings,
+                    tag_sets,
                 };
 
                 Ok((payload, tags))

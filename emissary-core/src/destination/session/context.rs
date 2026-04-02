@@ -20,7 +20,10 @@ use crate::{
     crypto::{
         chachapoly::ChaChaPoly, hmac::Hmac, sha256::Sha256, StaticPrivateKey, StaticPublicKey,
     },
-    destination::session::{inbound::InboundSession, outbound::OutboundSession},
+    destination::session::{
+        inbound::{InboundSession, MlKemContext as InboundMlKemContext},
+        outbound::{MlKemContext as OutboundMlKemContext, OutboundSession},
+    },
     error::SessionError,
     i2np::{
         database::store::{DatabaseStoreBuilder, DatabaseStoreKind},
@@ -33,44 +36,176 @@ use crate::{
 
 use bytes::{BufMut, Bytes, BytesMut};
 use curve25519_elligator2::{MapToPointVariant, Randomized};
+use ml_kem::{kem::Kem, KeyExport, MlKem1024, MlKem512, MlKem768};
 use rand::Rng;
 use zeroize::Zeroize;
 
 use alloc::vec::Vec;
-use core::{
-    marker::PhantomData,
-    ops::{Range, RangeFrom},
-};
+use core::{fmt, marker::PhantomData, ops::Range};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "emissary::destination::session::context";
 
-/// Noise protocol name.
-const PROTOCOL_NAME: &str = "Noise_IKelg2+hs2_25519_ChaChaPoly_SHA256";
+mod constants {
+    pub mod ml_kem_512 {
+        /// Size of the encapsulation key.
+        pub const KEY_SIZE: usize = 800usize;
+
+        /// Noise protocol name for ML-KEM-512-x25519.
+        pub const PROTOCOL_NAME: &str = "Noise_IKhfselg2_25519+MLKEM512_ChaChaPoly_SHA256";
+    }
+
+    pub mod ml_kem_768 {
+        /// Size of the encapsulation key.
+        pub const KEY_SIZE: usize = 1184usize;
+
+        /// Noise protocol name for ML-KEM-768-x25519.
+        pub const PROTOCOL_NAME: &str = "Noise_IKhfselg2_25519+MLKEM768_ChaChaPoly_SHA256";
+    }
+
+    pub mod ml_kem_1024 {
+        /// Size of the encapsulation key.
+        pub const KEY_SIZE: usize = 1568usize;
+
+        /// Noise protocol name for ML-KEM-1024-x25519.
+        pub const PROTOCOL_NAME: &str = "Noise_IKhfselg2_25519+MLKEM1024_ChaChaPoly_SHA256";
+    }
+
+    pub mod x25519 {
+        /// Noise protocol name for x25519.
+        pub const PROTOCOL_NAME: &str = "Noise_IKelg2+hs2_25519_ChaChaPoly_SHA256";
+    }
+}
 
 /// Ephemeral public key offset in `NewSession` message.
 const NS_EPHEMERAL_PUBKEY_OFFSET: Range<usize> = 4..36;
 
-/// Static public key offset in `NewSession` message, including Poly1305 MAC.
-const NS_STATIC_PUBKEY_OFFSET: Range<usize> = 36..84;
-
-/// Payload section offset in `NewSession` message, including Poly1305 MAC.
-const NS_PAYLOAD_OFFSET: RangeFrom<usize> = 84..;
+/// Static public key section size.
+///
+/// 32 bytes for the key and 16 for Poly1305 MAC.
+const NS_STATIC_PUBKEY_SECTION_SIZE: usize = 32usize + 16usize;
 
 /// Minimum size for `NewSession` message.
 const NS_MINIMUM_SIZE: usize = 100usize;
 
-/// Key context for an ECIES-X25519-AEAD-Ratchet session.
+/// Poly1305 MAC size.
+const POLY1035_MAC_SIZE: usize = 16usize;
+
+/// ML-KEM kind.
+#[derive(Clone, Copy)]
+pub enum MlKemKind {
+    /// ML-KEM-512-x25519.
+    MlKem512X25519,
+
+    /// ML-KEM-512-x25519.
+    MlKem768X25519,
+
+    /// ML-KEM-512-x25519.
+    MlKem1024X25519,
+}
+
+impl MlKemKind {
+    /// Get key size.
+    fn key_size(&self) -> usize {
+        match self {
+            Self::MlKem512X25519 => constants::ml_kem_512::KEY_SIZE,
+            Self::MlKem768X25519 => constants::ml_kem_768::KEY_SIZE,
+            Self::MlKem1024X25519 => constants::ml_kem_1024::KEY_SIZE,
+        }
+    }
+}
+
+impl fmt::Display for MlKemKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MlKem512X25519 => write!(f, "ml-kem-512-x25519"),
+            Self::MlKem768X25519 => write!(f, "ml-kem-768-x25519"),
+            Self::MlKem1024X25519 => write!(f, "ml-kem-1024-x25519"),
+        }
+    }
+}
+
+/// Outbound key context.
 #[derive(Clone)]
-pub struct KeyContext<R: Runtime> {
+struct OutboundKeyContext {
     /// Chaining key.
     chaining_key: Bytes,
 
-    /// Inbound state.
-    inbound_state: Bytes,
-
     /// Outbound state.
     outbound_state: Bytes,
+}
+
+/// Inbound key context.
+#[derive(Clone)]
+struct InboundContext {
+    /// Chaining key for one of the ML-KEM variants.
+    ml_kem_chaining_key: Bytes,
+
+    /// Outbound state for one of the ML-KEM variants.
+    ml_kem_inbound_state: Bytes,
+
+    /// ML-KEM kind.
+    ml_kem_kind: MlKemKind,
+
+    /// Chaining key for x25519.
+    x25519_chaining_key: Bytes,
+
+    /// Outbound state for x25519.
+    x25519_inbound_state: Bytes,
+}
+
+/// Decryption state for ML-KEM NS messages.
+struct MlKemNsState {
+    /// Chaining key.
+    chaining_key: [u8; 32],
+
+    /// Cipher key.
+    cipher_key: [u8; 32],
+
+    /// ML-KEM context for an inbound session.
+    ml_kem_context: InboundMlKemContext,
+
+    /// Offset for the end of encapsulation key section.
+    offset: usize,
+
+    /// Current state.
+    state: [u8; 32],
+}
+
+/// Key context for an ECIES-X25519-AEAD-Ratchet session.
+///
+/// Outbound connections can be established over any supported protocol:
+/// * x25519
+/// * ML-KEM-512-x25519
+/// * ML-KEM-768-x25519
+/// * ML-KEM-1024-x25519
+///
+/// Inbound connections are supported over two protocols:
+/// * x25519 + ML-KEM-512-x25519
+/// * x25519 + ML-KEM-768-x25519
+/// * x25519 + ML-KEM-1024-x25519
+///
+/// If the private key passed into `KeyContext::from_private_key()` is `StaticPrivateKey::x25519`,
+/// `KeyContext` creates inbound contexts for x25519 and ML-KEM-768-x25519. If the private key is
+/// one of the ML-KEM variants, `KeyContext` creates inbound contexts for that variant and x25519.
+#[derive(Clone)]
+pub struct KeyContext<R: Runtime> {
+    /// Key context for x25519.
+    x25519: OutboundKeyContext,
+
+    /// Key context for ML-KEM-1024-x25519.
+    ml_kem_1024_x25519: OutboundKeyContext,
+
+    /// Key context for ML-KEM-512-x25519.
+    ml_kem_512_x25519: OutboundKeyContext,
+
+    /// Key context for ML-KEM-768-x25519.
+    ml_kem_768_x25519: OutboundKeyContext,
+
+    /// Inbound context.
+    ///
+    /// Has state for x25519 and one of the ML-KEM variants.
+    inbound_context: InboundContext,
 
     /// Static private key of the session.
     private_key: StaticPrivateKey,
@@ -87,25 +222,87 @@ impl<R: Runtime> KeyContext<R> {
     ///
     /// https://geti2p.net/spec/ecies#f-kdfs-for-new-session-message
     pub fn from_private_key(private_key: StaticPrivateKey) -> Self {
-        let chaining_key = Sha256::new().update(PROTOCOL_NAME.as_bytes()).finalize();
         let public_key = private_key.public();
+        let make_key_context = |protocol_name: &str| -> (Bytes, Bytes, Bytes) {
+            let chaining_key = Sha256::new().update(protocol_name.as_bytes()).finalize();
 
-        let outbound_state = Sha256::new().update(&chaining_key).finalize();
-        let inbound_state = Sha256::new().update(&outbound_state).update(&public_key).finalize();
+            let outbound_state = Sha256::new().update(&chaining_key).finalize();
+            let inbound_state =
+                Sha256::new().update(&outbound_state).update(&public_key).finalize();
+
+            (
+                Bytes::from(chaining_key),
+                Bytes::from(outbound_state),
+                Bytes::from(inbound_state),
+            )
+        };
+
+        // create key contexts for each supported protocol
+        let x25519 = make_key_context(constants::x25519::PROTOCOL_NAME);
+        let ml_kem_512_x25519 = make_key_context(constants::ml_kem_512::PROTOCOL_NAME);
+        let ml_kem_768_x25519 = make_key_context(constants::ml_kem_768::PROTOCOL_NAME);
+        let ml_kem_1024_x25519 = make_key_context(constants::ml_kem_1024::PROTOCOL_NAME);
+
+        // create inbound key contexts
+        //
+        // if `private_key` was x25519, create additional context for ml-kem-768-x25519
+        // if `private_key` was ml-kem-*, create additional context for x25519
+        let inbound_context = match public_key {
+            StaticPublicKey::X25519(_) => InboundContext {
+                ml_kem_chaining_key: ml_kem_768_x25519.0.clone(),
+                ml_kem_inbound_state: ml_kem_768_x25519.2,
+                ml_kem_kind: MlKemKind::MlKem768X25519,
+                x25519_chaining_key: x25519.0.clone(),
+                x25519_inbound_state: x25519.2.clone(),
+            },
+            StaticPublicKey::MlKem512X25519(_) => InboundContext {
+                ml_kem_chaining_key: ml_kem_512_x25519.0.clone(),
+                ml_kem_inbound_state: ml_kem_512_x25519.2,
+                ml_kem_kind: MlKemKind::MlKem512X25519,
+                x25519_chaining_key: x25519.0.clone(),
+                x25519_inbound_state: x25519.2.clone(),
+            },
+            StaticPublicKey::MlKem768X25519(_) => InboundContext {
+                ml_kem_chaining_key: ml_kem_768_x25519.0.clone(),
+                ml_kem_inbound_state: ml_kem_768_x25519.2,
+                ml_kem_kind: MlKemKind::MlKem768X25519,
+                x25519_chaining_key: x25519.0.clone(),
+                x25519_inbound_state: x25519.2.clone(),
+            },
+            StaticPublicKey::MlKem1024X25519(_) => InboundContext {
+                ml_kem_chaining_key: ml_kem_1024_x25519.0.clone(),
+                ml_kem_inbound_state: ml_kem_1024_x25519.2,
+                ml_kem_kind: MlKemKind::MlKem1024X25519,
+                x25519_chaining_key: x25519.0.clone(),
+                x25519_inbound_state: x25519.2.clone(),
+            },
+        };
 
         Self {
-            chaining_key: Bytes::from(chaining_key),
-            inbound_state: Bytes::from(inbound_state),
-            outbound_state: Bytes::from(outbound_state),
+            x25519: OutboundKeyContext {
+                chaining_key: x25519.0,
+                outbound_state: x25519.1,
+            },
+            ml_kem_512_x25519: OutboundKeyContext {
+                chaining_key: ml_kem_512_x25519.0,
+                outbound_state: ml_kem_512_x25519.1,
+            },
+            ml_kem_768_x25519: OutboundKeyContext {
+                chaining_key: ml_kem_768_x25519.0,
+                outbound_state: ml_kem_768_x25519.1,
+            },
+            ml_kem_1024_x25519: OutboundKeyContext {
+                chaining_key: ml_kem_1024_x25519.0,
+                outbound_state: ml_kem_1024_x25519.1,
+            },
+            inbound_context,
             private_key,
             public_key,
-            _runtime: Default::default(),
+            _runtime: PhantomData,
         }
     }
 
     /// Generate private key which can be Elligator2-encoded.
-    //
-    // TODO: move this into `src/crypto`
     pub fn generate_ephemeral_keypair() -> ([u8; 32], u8) {
         let mut rng = R::rng();
         let tweak = rng.next_u32() as u8;
@@ -122,7 +319,8 @@ impl<R: Runtime> KeyContext<R> {
 
     /// Create new outbound session.
     ///
-    /// https://geti2p.net/spec/ecies#f-kdfs-for-new-session-message
+    /// <https://geti2p.net/spec/ecies#f-kdfs-for-new-session-message>
+    /// <https://i2p.net/en/docs/specs/ecies-hybrid/#alice-kdf-for-ns-message>
     pub fn create_outbound_session(
         &mut self,
         local: DestinationId,
@@ -147,6 +345,23 @@ impl<R: Runtime> KeyContext<R> {
             },
         )
         .build();
+
+        // get correct chaining key and outbound state using the public key type
+        let (chaining_key, outbound_state) = match remote_public_key {
+            StaticPublicKey::X25519(_) => (&self.x25519.chaining_key, &self.x25519.outbound_state),
+            StaticPublicKey::MlKem512X25519(_) => (
+                &self.ml_kem_512_x25519.chaining_key,
+                &self.ml_kem_512_x25519.outbound_state,
+            ),
+            StaticPublicKey::MlKem768X25519(_) => (
+                &self.ml_kem_768_x25519.chaining_key,
+                &self.ml_kem_768_x25519.outbound_state,
+            ),
+            StaticPublicKey::MlKem1024X25519(_) => (
+                &self.ml_kem_1024_x25519.chaining_key,
+                &self.ml_kem_1024_x25519.outbound_state,
+            ),
+        };
 
         let hash = remote.to_vec();
         let payload = GarlicMessageBuilder::default()
@@ -193,21 +408,96 @@ impl<R: Runtime> KeyContext<R> {
 
         let state = {
             let state = Sha256::new()
-                .update(&self.outbound_state)
+                .update(&outbound_state)
                 .update::<&[u8]>(remote_public_key.as_ref())
                 .finalize();
 
             Sha256::new().update(&state).update(&public_key).finalize()
         };
 
-        // derive keys for encrypting initiator's static key
-        let (chaining_key, static_key_ciphertext) = {
-            let mut shared = private_key.diffie_hellman(remote_public_key);
-            let mut temp_key = Hmac::new(&self.chaining_key).update(&shared).finalize();
-            let chaining_key = Hmac::new(&temp_key).update(b"").update([0x01]).finalize();
-            let mut cipher_key =
-                Hmac::new(&temp_key).update(&chaining_key).update(b"").update([0x02]).finalize();
+        // derive keys for encrypting initiator's static key and possible for ml-kem section
+        let mut shared = private_key.diffie_hellman(remote_public_key);
+        let mut temp_key = Hmac::new(&chaining_key).update(&shared).finalize();
+        let chaining_key = Hmac::new(&temp_key).update(b"").update([0x01]).finalize();
+        let mut cipher_key =
+            Hmac::new(&temp_key).update(&chaining_key).update(b"").update([0x02]).finalize();
 
+        // encrypt ml-kem encapsulation key if remote public key indicates hybrid
+        //
+        // <https://i2p.net/en/docs/specs/ecies-hybrid/#message-format>
+        let (nonce, state, encap_ciphertext, ml_kem_context) = if let StaticPublicKey::X25519(_) =
+            &remote_public_key
+        {
+            tracing::trace!(
+                target: LOG_TARGET,
+                %local,
+                %remote,
+                "creating outbound x25519 session",
+            );
+
+            (0u64, state, None, None)
+        } else {
+            let (mut encap_key, ml_kem_context) = match remote_public_key {
+                StaticPublicKey::X25519(_) => unreachable!(),
+                StaticPublicKey::MlKem512X25519(_) => {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        %local,
+                        %remote,
+                        "creating outbound ml-kem-512-x25519 session",
+                    );
+
+                    let (decap_key, encap_key) = MlKem512::generate_keypair_from_rng(&mut R::rng());
+                    (
+                        encap_key.to_bytes().to_vec(),
+                        Some(OutboundMlKemContext::MlKem512X25519(decap_key)),
+                    )
+                }
+                StaticPublicKey::MlKem768X25519(_) => {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        %local,
+                        %remote,
+                        "creating outbound ml-kem-768-x25519 session",
+                    );
+
+                    let (decap_key, encap_key) = MlKem768::generate_keypair_from_rng(&mut R::rng());
+                    (
+                        encap_key.to_bytes().to_vec(),
+                        Some(OutboundMlKemContext::MlKem768X25519(decap_key)),
+                    )
+                }
+                StaticPublicKey::MlKem1024X25519(_) => {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        %local,
+                        %remote,
+                        "creating outbound ml-kem-1024-x25519 session",
+                    );
+
+                    let (decap_key, encap_key) =
+                        MlKem1024::generate_keypair_from_rng(&mut R::rng());
+                    (
+                        encap_key.to_bytes().to_vec(),
+                        Some(OutboundMlKemContext::MlKem1024X25519(decap_key)),
+                    )
+                }
+            };
+
+            ChaChaPoly::with_nonce(&cipher_key, 0u64)
+                .encrypt_with_ad_new(&state, &mut encap_key)
+                .expect("to succeed");
+
+            (
+                1u64,
+                Sha256::new().update(&state).update(&encap_key).finalize(),
+                Some(encap_key),
+                ml_kem_context,
+            )
+        };
+
+        // encrypt static key section
+        let static_key_ciphertext = {
             // encrypt initiator's static public key
             //
             // `encrypt_with_ad()` must succeed as it's called with valid parameters
@@ -218,16 +508,16 @@ impl<R: Runtime> KeyContext<R> {
                 out.freeze().to_vec()
             };
 
-            ChaChaPoly::with_nonce(&cipher_key, 0u64)
+            ChaChaPoly::with_nonce(&cipher_key, nonce)
                 .encrypt_with_ad_new(&state, &mut static_key)
                 .expect("to succeed");
 
-            shared.zeroize();
-            temp_key.zeroize();
-            cipher_key.zeroize();
-
-            (chaining_key, static_key)
+            static_key
         };
+
+        shared.zeroize();
+        temp_key.zeroize();
+        cipher_key.zeroize();
 
         // state for payload section
         let state = Sha256::new().update(&state).update(&static_key_ciphertext).finalize();
@@ -269,9 +559,13 @@ impl<R: Runtime> KeyContext<R> {
                 representative
                     .len()
                     .saturating_add(static_key_ciphertext.len())
-                    .saturating_add(payload_ciphertext.len()),
+                    .saturating_add(payload_ciphertext.len())
+                    .saturating_add(encap_ciphertext.as_ref().map_or(0, |key| key.len())),
             );
             out.put_slice(&representative);
+            if let Some(encap) = encap_ciphertext {
+                out.put_slice(&encap);
+            }
             out.put_slice(&static_key_ciphertext);
             out.put_slice(&payload_ciphertext);
 
@@ -285,14 +579,94 @@ impl<R: Runtime> KeyContext<R> {
                 self.private_key.clone(),
                 private_key,
                 chaining_key,
+                ml_kem_context,
             ),
             payload,
         )
     }
 
+    /// Attempt to create inbound ML-KEM session.
+    ///
+    /// If decryption succeeds, `MlKemNsContext` is returned which contains state that the caller
+    /// must use to process the rest of the message.
+    ///
+    /// If an error is returned, the caller must attempt to handle the message as a normal x25519 NS
+    /// message.
+    fn create_inbound_session_ml_kem(
+        &self,
+        public_key: &StaticPublicKey,
+        message: &[u8],
+    ) -> Result<MlKemNsState, SessionError> {
+        // encapsulation key is right after the elligator2-encoded public key
+        //
+        // the section is variable length and ends in a poly1305 mac
+        let encap_offset = 4 + 32 + self.inbound_context.ml_kem_kind.key_size() + POLY1035_MAC_SIZE;
+        if message.len() <= encap_offset {
+            return Err(SessionError::TooShortForMlKem);
+        }
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            kind = %self.inbound_context.ml_kem_kind,
+            "trying to decrypt with ml-kem",
+        );
+
+        // calculate new state based on remote's ephemeral public key
+        let state = Sha256::new()
+            .update(&self.inbound_context.ml_kem_inbound_state)
+            .update(&public_key)
+            .finalize();
+
+        // generate chaining key and cipher key for decrypting remote's public key
+        let (chaining_key, cipher_key) = {
+            let mut shared = self.private_key.diffie_hellman(&public_key);
+            let mut temp_key =
+                Hmac::new(&self.inbound_context.ml_kem_chaining_key).update(&shared).finalize();
+            let chaining_key = Hmac::new(&temp_key).update(b"").update([0x01]).finalize_new();
+            let cipher_key = Hmac::new(&temp_key)
+                .update(&chaining_key)
+                .update(b"")
+                .update([0x02])
+                .finalize_new();
+
+            shared.zeroize();
+            temp_key.zeroize();
+
+            (chaining_key, cipher_key)
+        };
+
+        // attempt to decrypt the encapsulatd key
+        let mut encap_key = message[4 + 32..encap_offset].to_vec();
+        ChaChaPoly::with_nonce(&cipher_key, 0u64)
+            .decrypt_with_ad(&state, &mut encap_key)
+            .inspect_err(|error| {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?error,
+                    "failed to decrypt encap key section",
+                );
+            })?;
+
+        Ok(MlKemNsState {
+            chaining_key,
+            cipher_key,
+            ml_kem_context: InboundMlKemContext::new::<R>(
+                self.inbound_context.ml_kem_kind,
+                encap_key,
+            )
+            .ok_or(SessionError::EncapsulationFailure)?,
+            offset: encap_offset,
+            state: Sha256::new()
+                .update(&state)
+                .update(&message[4 + 32..encap_offset])
+                .finalize_new(),
+        })
+    }
+
     /// Create inbound session from serialized `NewSession` message.
     ///
-    /// https://geti2p.net/spec/ecies#f-kdfs-for-new-session-message
+    /// <https://geti2p.net/spec/ecies#f-kdfs-for-new-session-message>
+    /// <https://i2p.net/en/docs/specs/ecies-hybrid/#bob-kdf-for-ns-message>
     pub fn create_inbound_session(
         &self,
         message: Vec<u8>,
@@ -321,7 +695,7 @@ impl<R: Runtime> KeyContext<R> {
                     tracing::warn!(
                         target: LOG_TARGET,
                         ?representative,
-                        "failed to elligator2-decode public key",
+                        "failed to decode elligator2-encoded public key",
                     );
 
                     SessionError::Malformed
@@ -331,33 +705,86 @@ impl<R: Runtime> KeyContext<R> {
             StaticPublicKey::from_bytes(new_pubkey.0)
         };
 
-        // calculate new state based on remote's ephemeral public key
-        let state = Sha256::new().update(&self.inbound_state).update(&public_key).finalize();
+        // attempt to first handle the message with ml-kem
+        //
+        // if the call fails, retry with regular x25519 logic
+        //
+        // <https://i2p.net/en/docs/specs/ecies-hybrid/#shared-tunnels>
+        let (chaining_key, mut cipher_key, state, nonce, offset, ml_kem_context) = match self
+            .create_inbound_session_ml_kem(&public_key, &message)
+        {
+            Ok(MlKemNsState {
+                chaining_key,
+                cipher_key,
+                ml_kem_context,
+                offset,
+                state,
+            }) => (
+                chaining_key,
+                cipher_key,
+                state,
+                1u64,
+                offset,
+                Some(ml_kem_context),
+            ),
+            Err(SessionError::EncapsulationFailure) => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    "failed to encapsulate key received from alice",
+                );
+                return Err(SessionError::EncapsulationFailure);
+            }
+            Err(error) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    ?error,
+                    "failed to handle NewSession as ml-kem, trying x25519",
+                );
 
-        // generate chaining key and cipher key for decrypting remote's public key
-        let (chaining_key, mut cipher_key) = {
-            let mut shared = self.private_key.diffie_hellman(&public_key);
-            let mut temp_key = Hmac::new(&self.chaining_key).update(&shared).finalize();
-            let chaining_key = Hmac::new(&temp_key).update(b"").update([0x01]).finalize();
-            let cipher_key =
-                Hmac::new(&temp_key).update(&chaining_key).update(b"").update([0x02]).finalize();
+                // calculate new state based on remote's ephemeral public key
+                let state = Sha256::new()
+                    .update(&self.inbound_context.x25519_inbound_state)
+                    .update(&public_key)
+                    .finalize_new();
 
-            shared.zeroize();
-            temp_key.zeroize();
+                // generate chaining key and cipher key for decrypting remote's public key
+                let mut shared = self.private_key.diffie_hellman(&public_key);
+                let mut temp_key =
+                    Hmac::new(&self.inbound_context.x25519_chaining_key).update(&shared).finalize();
+                let chaining_key = Hmac::new(&temp_key).update(b"").update([0x01]).finalize_new();
+                let cipher_key = Hmac::new(&temp_key)
+                    .update(&chaining_key)
+                    .update(b"")
+                    .update([0x02])
+                    .finalize_new();
 
-            (chaining_key, cipher_key)
+                shared.zeroize();
+                temp_key.zeroize();
+
+                (chaining_key, cipher_key, state, 0u64, 36usize, None)
+            }
         };
+
+        if message.len() <= offset + NS_STATIC_PUBKEY_SECTION_SIZE {
+            tracing::warn!(
+                target: LOG_TARGET,
+                size = ?message.len(),
+                expected = ?(offset + NS_STATIC_PUBKEY_SECTION_SIZE),
+                "NewSession is too short",
+            );
+            return Err(SessionError::Malformed);
+        }
 
         // decrypt remote's static key and calculate new state
         let (static_key, state) = {
-            let mut static_key = message[NS_STATIC_PUBKEY_OFFSET].to_vec();
-            ChaChaPoly::with_nonce(&cipher_key, 0u64)
+            let mut static_key = message[offset..offset + NS_STATIC_PUBKEY_SECTION_SIZE].to_vec();
+            ChaChaPoly::with_nonce(&cipher_key, nonce)
                 .decrypt_with_ad(&state, &mut static_key)
                 .inspect_err(|error| {
                     tracing::debug!(
                         target: LOG_TARGET,
                         ?error,
-                        "failed decrypt static key section",
+                        "failed to decrypt static key section",
                     );
                 })?;
 
@@ -367,7 +794,7 @@ impl<R: Runtime> KeyContext<R> {
                 StaticPublicKey::try_from_bytes(&static_key).expect("to succeed"),
                 Sha256::new()
                     .update(&state)
-                    .update(&message[NS_STATIC_PUBKEY_OFFSET])
+                    .update(&message[offset..offset + NS_STATIC_PUBKEY_SECTION_SIZE])
                     .finalize(),
             )
         };
@@ -380,7 +807,7 @@ impl<R: Runtime> KeyContext<R> {
             let mut cipher_key =
                 Hmac::new(&temp_key).update(&chaining_key).update(b"").update([0x02]).finalize();
 
-            let mut payload = message[NS_PAYLOAD_OFFSET].to_vec();
+            let mut payload = message[offset + NS_STATIC_PUBKEY_SECTION_SIZE..].to_vec();
             ChaChaPoly::with_nonce(&cipher_key, 0u64)
                 .decrypt_with_ad(&state, &mut payload)
                 .inspect_err(|error| {
@@ -403,9 +830,70 @@ impl<R: Runtime> KeyContext<R> {
                 static_key,
                 public_key,
                 chaining_key,
-                Sha256::new().update(&state).update(&message[NS_PAYLOAD_OFFSET]).finalize(),
+                Sha256::new()
+                    .update(&state)
+                    .update(&message[offset + NS_STATIC_PUBKEY_SECTION_SIZE..])
+                    .finalize(),
+                ml_kem_context,
             ),
             payload,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::mock::MockRuntime;
+
+    #[test]
+    fn make_key_context_with_preference() {
+        // x25519 + default (ml-kem-768)
+        {
+            let key_contxt = KeyContext::<MockRuntime>::from_private_key(StaticPrivateKey::random(
+                MockRuntime::rng(),
+            ));
+
+            assert!(std::matches!(
+                key_contxt.inbound_context.ml_kem_kind,
+                MlKemKind::MlKem768X25519
+            ));
+        }
+
+        // ml-kem-512 + default (x25519)
+        {
+            let key_contxt = KeyContext::<MockRuntime>::from_private_key(
+                StaticPrivateKey::random_ml_kem_512(MockRuntime::rng()),
+            );
+
+            assert!(std::matches!(
+                key_contxt.inbound_context.ml_kem_kind,
+                MlKemKind::MlKem512X25519
+            ));
+        }
+
+        // ml-kem-768 + default (x25519)
+        {
+            let key_contxt = KeyContext::<MockRuntime>::from_private_key(
+                StaticPrivateKey::random_ml_kem_768(MockRuntime::rng()),
+            );
+
+            assert!(std::matches!(
+                key_contxt.inbound_context.ml_kem_kind,
+                MlKemKind::MlKem768X25519
+            ));
+        }
+
+        // ml-kem-1024 + default (x25519)
+        {
+            let key_contxt = KeyContext::<MockRuntime>::from_private_key(
+                StaticPrivateKey::random_ml_kem_1024(MockRuntime::rng()),
+            );
+
+            assert!(std::matches!(
+                key_contxt.inbound_context.ml_kem_kind,
+                MlKemKind::MlKem1024X25519
+            ));
+        }
     }
 }

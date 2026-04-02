@@ -30,13 +30,11 @@ use crate::{
 
 use bytes::Bytes;
 use curve25519_elligator2::{MapToPointVariant, Randomized};
+use ml_kem::{Decapsulate, DecapsulationKey, MlKem1024, MlKem512, MlKem768};
 use zeroize::Zeroize;
 
 use alloc::vec::Vec;
-use core::{
-    marker::PhantomData,
-    ops::{Range, RangeFrom},
-};
+use core::{fmt, marker::PhantomData, ops::Range};
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "emissary::destination::session::outbound";
@@ -50,28 +48,83 @@ const NSR_MINIMUM_LEN: usize = 60usize;
 /// Ephemeral public key offset in `NewSessionReply` message.
 const NSR_EPHEMERAL_PUBKEY_OFFSET: Range<usize> = 12..44;
 
-/// Poly1305 MAC offset in `NewSessionReply` message.
-const NSR_POLY1305_MAC_OFFSET: Range<usize> = 44..60;
+/// Index for the endo of the ephemeral public key offset in `NewSessionReply` message.
+const NSR_EPHEMERAL_PUBKEY_SECTION_END: usize = 44;
 
-/// Payload offset in `NewSessionReply` message.
-const NSR_PAYLOAD_OFFSET: RangeFrom<usize> = 60..;
+/// Poly1305 MAC section size in `NewSessionReply` message.
+const NSR_POLY1305_SECTION_SIZE: usize = 16usize;
+
+/// Poly1305 MAC size.
+const POLY1035_MAC_SIZE: usize = 16usize;
+
+/// ML-KEM context for hybrid PQ ratchet.
+pub enum MlKemContext {
+    /// ML-KEM-512-x25519 ECIES-Rachet.
+    MlKem512X25519(DecapsulationKey<MlKem512>),
+
+    /// ML-KEM-768-x25519 ECIES-Rachet.
+    MlKem768X25519(DecapsulationKey<MlKem768>),
+
+    /// ML-KEM-1024-x25519 ECIES-Rachet.
+    MlKem1024X25519(DecapsulationKey<MlKem1024>),
+}
+
+impl MlKemContext {
+    /// Get KEM ciphertext size.
+    fn ciphertext_size(&self) -> usize {
+        match self {
+            Self::MlKem512X25519(_) => 768,
+            Self::MlKem768X25519(_) => 1088,
+            Self::MlKem1024X25519(_) => 1568,
+        }
+    }
+
+    /// Attempt to calculate shared key.
+    ///
+    /// Returns `None` if decapsulation fails.
+    fn decapsulate(&self, ciphertext: &[u8]) -> Option<Vec<u8>> {
+        match self {
+            Self::MlKem512X25519(decap_key) =>
+                decap_key.decapsulate_slice(ciphertext).ok().map(|key| key.0.to_vec()),
+            Self::MlKem768X25519(decap_key) =>
+                decap_key.decapsulate_slice(ciphertext).ok().map(|key| key.0.to_vec()),
+            Self::MlKem1024X25519(decap_key) =>
+                decap_key.decapsulate_slice(ciphertext).ok().map(|key| key.0.to_vec()),
+        }
+    }
+}
+
+impl fmt::Display for MlKemContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MlKem512X25519(_) => write!(f, "ml-kem-512-x25519"),
+            Self::MlKem768X25519(_) => write!(f, "ml-kem-768-x25519"),
+            Self::MlKem1024X25519(_) => write!(f, "ml-kem-1024-x25519"),
+        }
+    }
+}
 
 /// Outbound session.
 pub struct OutboundSession<R: Runtime> {
+    /// Chaining key.
+    pub chaining_key: Vec<u8>,
+
     /// Destination ID.
     pub destination_id: DestinationId,
+
+    /// Ephemeral private key.
+    pub ephemeral_private_key: StaticPrivateKey,
+
+    /// ML-KEM context.
+    ///
+    /// `None` for x25519.
+    pub ml_kem_context: Option<MlKemContext>,
 
     /// State (`h` from the specification).
     pub state: Bytes,
 
     /// Static private key.
     pub static_private_key: StaticPrivateKey,
-
-    /// Ephemeral private key.
-    pub ephemeral_private_key: StaticPrivateKey,
-
-    /// Chaining key.
-    pub chaining_key: Vec<u8>,
 
     /// Marker for `Runtime`.
     pub _runtime: PhantomData<R>,
@@ -85,13 +138,15 @@ impl<R: Runtime> OutboundSession<R> {
         static_private_key: StaticPrivateKey,
         ephemeral_private_key: StaticPrivateKey,
         chaining_key: Vec<u8>,
+        ml_kem_context: Option<MlKemContext>,
     ) -> Self {
         Self {
+            chaining_key,
             destination_id,
+            ephemeral_private_key,
+            ml_kem_context,
             state,
             static_private_key,
-            ephemeral_private_key,
-            chaining_key,
             _runtime: Default::default(),
         }
     }
@@ -153,12 +208,6 @@ impl<R: Runtime> OutboundSession<R> {
             StaticPublicKey::from_bytes(new_pubkey)
         };
 
-        // poly1305 mac for the key section (empty payload)
-        let mut ciphertext = message[NSR_POLY1305_MAC_OFFSET].to_vec();
-
-        // payload section of the `NewSessionReply`
-        let mut payload = message[NSR_PAYLOAD_OFFSET].to_vec();
-
         // calculate new state with garlic tag & remote's ephemeral public key
         let state = {
             let state = Sha256::new()
@@ -170,24 +219,88 @@ impl<R: Runtime> OutboundSession<R> {
         };
 
         // calculate keys from shared secrets derived from ee & es
-        let (chaining_key, keydata) = {
-            // ephemeral-ephemeral
-            let mut shared = self.ephemeral_private_key.diffie_hellman(&public_key);
-            let mut temp_key = Hmac::new(&self.chaining_key).update(&shared).finalize();
-            let mut chaining_key = Hmac::new(&temp_key).update(b"").update([0x01]).finalize();
+        //
+        // ephemeral-ephemeral
+        let mut shared = self.ephemeral_private_key.diffie_hellman(&public_key);
+        let mut temp_key = Hmac::new(&self.chaining_key).update(&shared).finalize();
+        let chaining_key = Hmac::new(&temp_key).update(b"").update([0x01]).finalize();
+        let mut keydata =
+            Hmac::new(&temp_key).update(&chaining_key).update(b"").update([0x02]).finalize();
 
-            // static-ephemeral
-            shared = self.static_private_key.diffie_hellman(&public_key);
-            temp_key = Hmac::new(&chaining_key).update(&shared).finalize();
-            chaining_key = Hmac::new(&temp_key).update(b"").update([0x01]).finalize();
-            let keydata =
-                Hmac::new(&temp_key).update(&chaining_key).update(b"").update([0x02]).finalize();
+        // ekem1
+        //
+        // <https://i2p.net/en/docs/specs/ecies-hybrid/#bob-kdf-for-nsr-message>
+        let (mut chaining_key, state, offset) = match &self.ml_kem_context {
+            None => (chaining_key, state, NSR_EPHEMERAL_PUBKEY_SECTION_END),
+            Some(context) => {
+                if message.len() <= context.ciphertext_size() {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        remote = %self.destination_id,
+                        kind = %context,
+                        "NSR is too short",
+                    );
+                    return Err(SessionError::Malformed);
+                }
 
-            shared.zeroize();
-            temp_key.zeroize();
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    remote = %self.destination_id,
+                    kind = %context,
+                    "processing ml-kem NSR",
+                );
 
-            (chaining_key, keydata)
+                // decrypt kem ciphertext
+                let kem_ciphertext_offset = NSR_EPHEMERAL_PUBKEY_SECTION_END
+                    ..NSR_EPHEMERAL_PUBKEY_SECTION_END
+                        + context.ciphertext_size()
+                        + POLY1035_MAC_SIZE;
+                let mut kem_ciphertext = message[kem_ciphertext_offset.clone()].to_vec();
+
+                ChaChaPoly::new(&keydata).decrypt_with_ad(&state, &mut kem_ciphertext).unwrap();
+                keydata.zeroize();
+
+                // decapsulate and acquire shared key.
+                let shared_key = context
+                    .decapsulate(&kem_ciphertext)
+                    .ok_or(SessionError::DecapsulationFailure)?;
+                kem_ciphertext.zeroize();
+
+                let temp_key = Hmac::new(&chaining_key).update(&shared_key).finalize_new();
+                let chaining_key = Hmac::new(&temp_key).update(b"").update([0x01]).finalize();
+
+                (
+                    chaining_key,
+                    Sha256::new().update(&state).update(&message[kem_ciphertext_offset]).finalize(),
+                    NSR_EPHEMERAL_PUBKEY_SECTION_END
+                        + context.ciphertext_size()
+                        + POLY1035_MAC_SIZE,
+                )
+            }
         };
+
+        // ensure the message has space for at least the NSR mac and payload's poly1305 mac
+        if message.len() < offset + NSR_POLY1305_SECTION_SIZE + POLY1035_MAC_SIZE {
+            tracing::warn!(
+                target: LOG_TARGET,
+                remote = %self.destination_id,
+                "NSR is too short",
+            );
+            return Err(SessionError::Malformed);
+        }
+
+        // static-ephemeral
+        shared = self.static_private_key.diffie_hellman(&public_key);
+        temp_key = Hmac::new(&chaining_key).update(&shared).finalize();
+        chaining_key = Hmac::new(&temp_key).update(b"").update([0x01]).finalize();
+        let keydata =
+            Hmac::new(&temp_key).update(&chaining_key).update(b"").update([0x02]).finalize();
+
+        // poly1305 mac for the key section (empty payload)
+        let mut ciphertext = message[offset..offset + NSR_POLY1305_SECTION_SIZE].to_vec();
+
+        // payload section of the `NewSessionReply`
+        let mut payload = message[offset + NSR_POLY1305_SECTION_SIZE..].to_vec();
 
         // verify they poly1305 mac for the key section is correct and return updated state
         let state = {

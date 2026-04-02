@@ -281,6 +281,24 @@ impl LeaseSet2 {
 
                             Some((rest, public_keys))
                         }
+                        0x005 => {
+                            let key = StaticPublicKey::try_from_bytes_ml_kem_512(pubkey)?;
+                            public_keys.push(key);
+
+                            Some((rest, public_keys))
+                        }
+                        0x006 => {
+                            let key = StaticPublicKey::try_from_bytes_ml_kem_768(pubkey)?;
+                            public_keys.push(key);
+
+                            Some((rest, public_keys))
+                        }
+                        0x007 => {
+                            let key = StaticPublicKey::try_from_bytes_ml_kem_1024(pubkey)?;
+                            public_keys.push(key);
+
+                            Some((rest, public_keys))
+                        }
                         pubkey_type => {
                             tracing::debug!(
                                 target: LOG_TARGET,
