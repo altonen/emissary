@@ -141,6 +141,7 @@ impl RouterUi {
                     name: name.clone(),
                     port: service.port.parse::<u16>().expect("to succeed"),
                     destination_path: service.path.clone(),
+                    i2cp: None,
                 })
                 .collect(),
         )

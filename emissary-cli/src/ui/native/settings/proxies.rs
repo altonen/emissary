@@ -182,6 +182,7 @@ impl TryInto<Option<crate::config::HttpProxyConfig>> for HttpProxyConfig {
             },
             outproxy: self.outproxy,
             tunnel_config: Some(self.tunnel_config.try_into()?),
+            i2cp: None,
         }))
     }
 }
@@ -263,6 +264,7 @@ impl TryInto<Option<crate::config::SocksProxyConfig>> for SocksProxyConfig {
 
                 host
             },
+            i2cp: None,
         }))
     }
 }
