@@ -53,6 +53,7 @@ impl SocksProxy {
             publish: false,
             samv3_tcp_port,
             nickname: "socks-proxy".to_string(),
+            lease_set_enc_type: config.i2cp.and_then(|config| config.lease_set_enc_type).clone(),
             ..Default::default()
         })
         .await?;
@@ -253,6 +254,7 @@ mod tests {
             SocksProxyConfig {
                 port: 0,
                 host: "127.0.0.1".to_string(),
+                i2cp: None,
             },
             sam_port,
         )
@@ -283,6 +285,7 @@ mod tests {
             SocksProxyConfig {
                 port: 0,
                 host: "127.0.0.1".to_string(),
+                i2cp: None,
             },
             sam_port,
         )
@@ -312,6 +315,7 @@ mod tests {
             SocksProxyConfig {
                 port: 0,
                 host: "127.0.0.1".to_string(),
+                i2cp: None,
             },
             sam_port,
         )
@@ -346,6 +350,7 @@ mod tests {
             SocksProxyConfig {
                 port: 0,
                 host: "127.0.0.1".to_string(),
+                i2cp: None,
             },
             sam_port,
         )
@@ -375,6 +380,7 @@ mod tests {
             SocksProxyConfig {
                 port: 0,
                 host: "127.0.0.1".to_string(),
+                i2cp: None,
             },
             sam_port,
         )

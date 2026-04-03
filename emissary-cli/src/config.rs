@@ -49,6 +49,12 @@ const RESERVED_PORTS: [u16; 57] = [
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct I2cpOptions {
+    #[serde(rename = "leaseSetEncType")]
+    pub lease_set_enc_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TunnelConfig {
     pub inbound_len: usize,
     pub inbound_count: usize,
@@ -120,12 +126,14 @@ pub struct HttpProxyConfig {
     pub outproxy: Option<String>,
     #[serde(flatten)]
     pub tunnel_config: Option<TunnelConfig>,
+    pub i2cp: Option<I2cpOptions>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SocksProxyConfig {
     pub port: u16,
     pub host: String,
+    pub i2cp: Option<I2cpOptions>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,6 +156,7 @@ pub struct ServerTunnelConfig {
     pub name: String,
     pub port: u16,
     pub destination_path: String,
+    pub i2cp: Option<I2cpOptions>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -199,6 +208,11 @@ pub struct RouterUiConfig {
     pub port: Option<u16>,
 }
 
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct ClientTunnelOptions {
+    pub i2cp: Option<I2cpOptions>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmissaryConfig {
     #[serde(rename = "address-book")]
@@ -229,6 +243,8 @@ pub struct EmissaryConfig {
     pub transit: Option<TransitConfig>,
     #[serde(rename = "client-tunnels")]
     pub client_tunnels: Option<Vec<ClientTunnelConfig>>,
+    #[serde(rename = "client-tunnel-options")]
+    pub client_tunnel_options: Option<ClientTunnelOptions>,
     #[serde(rename = "server-tunnels")]
     pub server_tunnels: Option<Vec<ServerTunnelConfig>>,
     #[serde(rename = "router-ui")]
@@ -254,6 +270,7 @@ impl EmissaryConfig {
                 port: 4444u16,
                 outproxy: None,
                 tunnel_config: Some(TunnelConfig::default()),
+                i2cp: None,
             }),
             socks_proxy: None,
             i2cp: Some(I2cpConfig {
@@ -307,6 +324,7 @@ impl EmissaryConfig {
             net_id: None,
             ssu2: None,
             client_tunnels: None,
+            client_tunnel_options: None,
             server_tunnels: None,
         }
     }
@@ -331,6 +349,9 @@ pub struct Config {
 
     /// Client tunnel configurations.
     pub client_tunnels: Vec<ClientTunnelConfig>,
+
+    /// Client tunnel options.
+    pub client_tunnel_options: Option<ClientTunnelOptions>,
 
     /// Exploratory tunnel pool config.
     pub exploratory: Option<emissary_core::ExploratoryConfig>,
@@ -606,6 +627,7 @@ impl Config {
             }),
             caps: config.caps,
             client_tunnels: config.client_tunnels.unwrap_or(Vec::new()),
+            client_tunnel_options: config.client_tunnel_options.clone(),
             exploratory: config.exploratory.map(|config| emissary_core::ExploratoryConfig {
                 inbound_len: Some(config.inbound_len),
                 inbound_count: Some(config.inbound_count),
@@ -777,6 +799,7 @@ impl Config {
                     host: host.clone(),
                     outproxy: http_outproxy.clone(),
                     tunnel_config: Some(TunnelConfig::default()),
+                    i2cp: None,
                 });
             }
             _ => {}
@@ -808,6 +831,7 @@ impl Config {
                 self.socks_proxy = Some(SocksProxyConfig {
                     port: *port,
                     host: host.clone(),
+                    i2cp: None,
                 });
             }
             _ => {}
@@ -1269,6 +1293,140 @@ mod tests {
             assert_eq!(
                 config.ntcp2_config.as_ref().unwrap().ipv6_host,
                 Some("::1".parse().unwrap())
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn i2cp_options_parsed_correctly() {
+        let dir = tempdir().unwrap();
+        let storage = Storage::new::<TokioRuntime>(Some(dir.path().to_owned())).await.unwrap();
+
+        let config_with_host = "\
+            allow_local=false\n\
+            insecure_tunnels=false\n\
+            floodfill=false\n\
+            [http-proxy]
+                port = 4444
+                host = \"127.0.0.1\"
+                i2cp.leaseSetEncType = \"6,4\"
+            [socks-proxy]
+                port = 4447
+                host = \"127.0.0.1\"
+                i2cp.leaseSetEncType = \"7,4\"
+            [[server-tunnels]]
+                name = \"my-website-1\"
+                port = 6666
+                destination_path = \"path1\"
+            [[server-tunnels]]
+                name = \"my-website-2\"
+                port = 7777
+                destination_path = \"path2\"
+                i2cp.leaseSetEncType = \"4,5\"
+            [[server-tunnels]]
+                name = \"my-website-3\"
+                port = 8888
+                destination_path = \"path3\"
+                i2cp.leaseSetEncType = \"5,4\"";
+
+        let mut file = tokio::fs::File::create(dir.path().to_owned().join("router.toml"))
+            .await
+            .unwrap();
+        file.write_all(config_with_host.as_bytes()).await.unwrap();
+        file.flush().await.unwrap();
+
+        let config = Config::parse::<TokioRuntime>(&make_arguments(), &storage).await.unwrap();
+
+        assert_eq!(
+            config.http_proxy.unwrap().i2cp.unwrap().lease_set_enc_type.unwrap(),
+            "6,4".to_string()
+        );
+        assert_eq!(
+            config.socks_proxy.unwrap().i2cp.unwrap().lease_set_enc_type.unwrap(),
+            "7,4".to_string()
+        );
+
+        assert!(config
+            .server_tunnels
+            .iter()
+            .any(|config| config.name == "my-website-1" && config.i2cp.is_none()));
+        assert!(
+            config.server_tunnels.iter().any(|config| config.name == "my-website-2"
+                && config.i2cp.as_ref().unwrap().lease_set_enc_type == Some("4,5".to_string()))
+        );
+        assert!(
+            config.server_tunnels.iter().any(|config| config.name == "my-website-3"
+                && config.i2cp.as_ref().unwrap().lease_set_enc_type == Some("5,4".to_string()))
+        );
+    }
+
+    #[tokio::test]
+    async fn client_tunnel_options_parsed_correctly() {
+        // no options
+        {
+            let dir = tempdir().unwrap();
+            let storage = Storage::new::<TokioRuntime>(Some(dir.path().to_owned())).await.unwrap();
+
+            let config_with_host = "\
+            allow_local=false\n\
+            insecure_tunnels=false\n\
+            floodfill=false\n\
+            [[client-tunnels]]
+                name = \"google\"
+                address = \"127.0.0.1\"
+                port = 6670
+                destination = \"google.com\"
+                destination_port = 443";
+
+            let mut file = tokio::fs::File::create(dir.path().to_owned().join("router.toml"))
+                .await
+                .unwrap();
+            file.write_all(config_with_host.as_bytes()).await.unwrap();
+            file.flush().await.unwrap();
+
+            let config = Config::parse::<TokioRuntime>(&make_arguments(), &storage).await.unwrap();
+
+            assert_eq!(config.client_tunnels.len(), 1);
+            assert!(config.client_tunnel_options.is_none());
+        }
+
+        // `i2cp.leaseSetEncType` specified
+        {
+            let dir = tempdir().unwrap();
+            let storage = Storage::new::<TokioRuntime>(Some(dir.path().to_owned())).await.unwrap();
+
+            let config_with_host = "\
+            allow_local=false\n\
+            insecure_tunnels=false\n\
+            floodfill=false\n\
+            [client-tunnel-options]
+                i2cp.leaseSetEncType = \"6,4\"
+            [[client-tunnels]]
+                name = \"google\"
+                address = \"127.0.0.1\"
+                port = 6670
+                destination = \"google.com\"
+                destination_port = 443";
+
+            let mut file = tokio::fs::File::create(dir.path().to_owned().join("router.toml"))
+                .await
+                .unwrap();
+            file.write_all(config_with_host.as_bytes()).await.unwrap();
+            file.flush().await.unwrap();
+
+            let config = Config::parse::<TokioRuntime>(&make_arguments(), &storage).await.unwrap();
+
+            assert_eq!(config.client_tunnels.len(), 1);
+            assert_eq!(
+                config
+                    .client_tunnel_options
+                    .as_ref()
+                    .unwrap()
+                    .i2cp
+                    .as_ref()
+                    .unwrap()
+                    .lease_set_enc_type,
+                Some("6,4".to_string())
             );
         }
     }

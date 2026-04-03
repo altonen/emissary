@@ -195,6 +195,7 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
     let socks = config.socks_proxy.take();
     let port_forwarding = config.port_forwarding.take();
     let client_tunnels = mem::take(&mut config.client_tunnels);
+    let client_tunnel_options = mem::take(&mut config.client_tunnel_options);
     let server_tunnels = mem::take(&mut config.server_tunnels);
     let router_ui_config = config.router_ui.clone();
     let router_config = config.config.take().expect("to exist");
@@ -310,7 +311,9 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
         }
 
         // start client and server tunnels
-        tokio::spawn(ClientTunnelManager::new(client_tunnels, address.port()).run());
+        tokio::spawn(
+            ClientTunnelManager::new(client_tunnels, client_tunnel_options, address.port()).run(),
+        );
         tokio::spawn(
             ServerTunnelManager::new(server_tunnels, address.port(), path.clone())
                 .await

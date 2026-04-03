@@ -16,7 +16,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::config::ClientTunnelConfig;
+use crate::config::{ClientTunnelConfig, ClientTunnelOptions};
 
 use tokio::{net::TcpListener, task::JoinSet};
 use yosemite::{style, Session, SessionOptions, StreamOptions};
@@ -39,12 +39,20 @@ pub struct ClientTunnelManager {
 
     /// Client tunnel configurations.
     tunnels: Vec<Arc<ClientTunnelConfig>>,
+
+    /// Client tunnel options.
+    client_tunnel_options: Option<ClientTunnelOptions>,
 }
 
 impl ClientTunnelManager {
     /// Create new [`ClientTunnelManager`].
-    pub fn new(tunnels: Vec<ClientTunnelConfig>, sam_tcp_port: u16) -> Self {
+    pub fn new(
+        tunnels: Vec<ClientTunnelConfig>,
+        client_tunnel_options: Option<ClientTunnelOptions>,
+        sam_tcp_port: u16,
+    ) -> Self {
         Self {
+            client_tunnel_options,
             futures: JoinSet::new(),
             sam_tcp_port,
             tunnels: tunnels.into_iter().map(Arc::from).collect(),
@@ -91,6 +99,9 @@ impl ClientTunnelManager {
             nickname: "i2p-tunnel".to_string(),
             inbound_quantity: 4,
             outbound_quantity: 4,
+            lease_set_enc_type: self.client_tunnel_options.and_then(|config| {
+                config.i2cp.and_then(|config| config.lease_set_enc_type.clone())
+            }),
             ..Default::default()
         })
         .await

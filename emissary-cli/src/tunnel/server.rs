@@ -16,7 +16,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::config::ServerTunnelConfig;
+use crate::config::{I2cpOptions, ServerTunnelConfig};
 
 use yosemite::{style, DestinationKind, RouterApi, Session, SessionOptions};
 
@@ -38,6 +38,9 @@ const STREAM_FORWARD_BACKOFF: Duration = Duration::from_secs(10);
 pub struct TunnelConfig {
     /// Base64 destination.
     destination: String,
+
+    /// I2CP options.
+    i2cp: Option<I2cpOptions>,
 
     /// Name of the tunnel.
     name: String,
@@ -69,6 +72,7 @@ impl ServerTunnelManager {
             name,
             port,
             destination_path,
+            i2cp,
             ..
         } in configs
         {
@@ -93,6 +97,7 @@ impl ServerTunnelManager {
                         name,
                         port,
                         sam_tcp_port,
+                        i2cp: i2cp.clone(),
                     }));
                 }
             }
@@ -173,6 +178,10 @@ impl ServerTunnelManager {
             destination: DestinationKind::Persistent {
                 private_key: config.destination.clone(),
             },
+            lease_set_enc_type: config
+                .i2cp
+                .as_ref()
+                .and_then(|i2cp| i2cp.lease_set_enc_type.clone()),
             ..Default::default()
         })
         .await
