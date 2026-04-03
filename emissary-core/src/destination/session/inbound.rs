@@ -164,9 +164,9 @@ impl MlKemContext {
     /// Create new `MlKemContext` encapsulation key.
     ///
     /// Returns `None` of encapsulation fails.
-    pub fn new<R: Runtime>(kind: MlKemKind, encap: Vec<u8>) -> Option<Self> {
+    pub fn new<R: Runtime>(kind: &MlKemKind, encap: Vec<u8>) -> Option<Self> {
         match kind {
-            MlKemKind::MlKem512X25519 => {
+            MlKemKind::MlKem512X25519 { .. } => {
                 let key = Array::try_from(encap.as_slice()).ok()?;
                 let key = EncapsulationKey::<MlKem512>::new(&key).ok()?;
                 let (ciphertext, shared_key) = key.encapsulate_with_rng(&mut R::rng());
@@ -176,7 +176,7 @@ impl MlKemContext {
                     shared_key,
                 })
             }
-            MlKemKind::MlKem768X25519 => {
+            MlKemKind::MlKem768X25519 { .. } => {
                 let key = Array::try_from(encap.as_slice()).ok()?;
                 let key = EncapsulationKey::<MlKem768>::new(&key).ok()?;
                 let (ciphertext, shared_key) = key.encapsulate_with_rng(&mut R::rng());
@@ -186,7 +186,7 @@ impl MlKemContext {
                     shared_key,
                 })
             }
-            MlKemKind::MlKem1024X25519 => {
+            MlKemKind::MlKem1024X25519 { .. } => {
                 let key = Array::try_from(encap.as_slice()).ok()?;
                 let key = EncapsulationKey::<MlKem1024>::new(&key).ok()?;
                 let (ciphertext, shared_key) = key.encapsulate_with_rng(&mut R::rng());

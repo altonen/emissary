@@ -92,25 +92,61 @@ const NS_MINIMUM_SIZE: usize = 100usize;
 const POLY1035_MAC_SIZE: usize = 16usize;
 
 /// ML-KEM kind.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub enum MlKemKind {
     /// ML-KEM-512-x25519.
-    MlKem512X25519,
+    MlKem512X25519 {
+        /// Chaining key.
+        chaining_key: Bytes,
+
+        /// Outbound state.
+        inbound_state: Bytes,
+    },
 
     /// ML-KEM-512-x25519.
-    MlKem768X25519,
+    MlKem768X25519 {
+        /// Chaining key.
+        chaining_key: Bytes,
+
+        /// Outbound state.
+        inbound_state: Bytes,
+    },
 
     /// ML-KEM-512-x25519.
-    MlKem1024X25519,
+    MlKem1024X25519 {
+        /// Chaining key.
+        chaining_key: Bytes,
+
+        /// Outbound state.
+        inbound_state: Bytes,
+    },
 }
 
 impl MlKemKind {
     /// Get key size.
     fn key_size(&self) -> usize {
         match self {
-            Self::MlKem512X25519 => constants::ml_kem_512::KEY_SIZE,
-            Self::MlKem768X25519 => constants::ml_kem_768::KEY_SIZE,
-            Self::MlKem1024X25519 => constants::ml_kem_1024::KEY_SIZE,
+            Self::MlKem512X25519 { .. } => constants::ml_kem_512::KEY_SIZE,
+            Self::MlKem768X25519 { .. } => constants::ml_kem_768::KEY_SIZE,
+            Self::MlKem1024X25519 { .. } => constants::ml_kem_1024::KEY_SIZE,
+        }
+    }
+
+    /// Get inbound state.
+    fn inbound_state(&self) -> &[u8] {
+        match self {
+            Self::MlKem512X25519 { inbound_state, .. } => inbound_state.as_ref(),
+            Self::MlKem768X25519 { inbound_state, .. } => inbound_state.as_ref(),
+            Self::MlKem1024X25519 { inbound_state, .. } => inbound_state.as_ref(),
+        }
+    }
+
+    /// Get chaining key.
+    fn chaining_key(&self) -> &[u8] {
+        match self {
+            Self::MlKem512X25519 { chaining_key, .. } => chaining_key.as_ref(),
+            Self::MlKem768X25519 { chaining_key, .. } => chaining_key.as_ref(),
+            Self::MlKem1024X25519 { chaining_key, .. } => chaining_key.as_ref(),
         }
     }
 }
@@ -118,10 +154,16 @@ impl MlKemKind {
 impl fmt::Display for MlKemKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MlKem512X25519 => write!(f, "ml-kem-512-x25519"),
-            Self::MlKem768X25519 => write!(f, "ml-kem-768-x25519"),
-            Self::MlKem1024X25519 => write!(f, "ml-kem-1024-x25519"),
+            Self::MlKem512X25519 { .. } => write!(f, "ml-kem-512-x25519"),
+            Self::MlKem768X25519 { .. } => write!(f, "ml-kem-768-x25519"),
+            Self::MlKem1024X25519 { .. } => write!(f, "ml-kem-1024-x25519"),
         }
+    }
+}
+
+impl fmt::Debug for MlKemKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        <Self as fmt::Display>::fmt(self, f)
     }
 }
 
@@ -138,20 +180,15 @@ struct OutboundKeyContext {
 /// Inbound key context.
 #[derive(Clone)]
 struct InboundContext {
-    /// Chaining key for one of the ML-KEM variants.
-    ml_kem_chaining_key: Bytes,
+    /// Chaining key and outobund state for ML-KEM.
+    ///
+    /// `None` if not enabled.
+    ml_kem: Option<MlKemKind>,
 
-    /// Outbound state for one of the ML-KEM variants.
-    ml_kem_inbound_state: Bytes,
-
-    /// ML-KEM kind.
-    ml_kem_kind: MlKemKind,
-
-    /// Chaining key for x25519.
-    x25519_chaining_key: Bytes,
-
-    /// Outbound state for x25519.
-    x25519_inbound_state: Bytes,
+    /// Chaining key and outbound state for x25519.
+    ///
+    /// `None` if not enabled
+    x25519: Option<(Bytes, Bytes)>,
 }
 
 /// Decryption state for ML-KEM NS messages.
@@ -174,20 +211,8 @@ struct MlKemNsState {
 
 /// Key context for an ECIES-X25519-AEAD-Ratchet session.
 ///
-/// Outbound connections can be established over any supported protocol:
-/// * x25519
-/// * ML-KEM-512-x25519
-/// * ML-KEM-768-x25519
-/// * ML-KEM-1024-x25519
-///
-/// Inbound connections are supported over two protocols:
-/// * x25519 + ML-KEM-512-x25519
-/// * x25519 + ML-KEM-768-x25519
-/// * x25519 + ML-KEM-1024-x25519
-///
-/// If the private key passed into `KeyContext::from_private_key()` is `StaticPrivateKey::x25519`,
-/// `KeyContext` creates inbound contexts for x25519 and ML-KEM-768-x25519. If the private key is
-/// one of the ML-KEM variants, `KeyContext` creates inbound contexts for that variant and x25519.
+/// Inbound connections/outbound connections use the protocol specified in the list of supported
+/// keys. The used protocol is chosen based on locally available keys and remote's preferences.
 #[derive(Clone)]
 pub struct KeyContext<R: Runtime> {
     /// Key context for x25519.
@@ -218,10 +243,14 @@ pub struct KeyContext<R: Runtime> {
 }
 
 impl<R: Runtime> KeyContext<R> {
-    /// Create new [`KeyContext`] from `StaticPrivateKey`.
+    /// Create new `KeyContext` from a private key and supported public keys.
     ///
-    /// https://geti2p.net/spec/ecies#f-kdfs-for-new-session-message
-    pub fn from_private_key(private_key: StaticPrivateKey) -> Self {
+    /// `public_keys` is guaranteed to contain at least one element corresponding to the private key
+    /// but may contain two elements where the order in the vector specifies the preference.
+    ///
+    /// <https://i2p.net/en/docs/specs/ecies/#1f-kdfs-for-new-session-message>
+    /// <https://i2p.net/en/docs/specs/ecies-hybrid/#noise-identifiers>
+    pub fn from_keys(private_key: StaticPrivateKey, public_keys: Vec<StaticPublicKey>) -> Self {
         let public_key = private_key.public();
         let make_key_context = |protocol_name: &str| -> (Bytes, Bytes, Bytes) {
             let chaining_key = Sha256::new().update(protocol_name.as_bytes()).finalize();
@@ -243,42 +272,49 @@ impl<R: Runtime> KeyContext<R> {
         let ml_kem_768_x25519 = make_key_context(constants::ml_kem_768::PROTOCOL_NAME);
         let ml_kem_1024_x25519 = make_key_context(constants::ml_kem_1024::PROTOCOL_NAME);
 
-        // create inbound key contexts
+        // `public_keys` has been validated by the caller to contain 1 or 2 keys, no more no less
         //
-        // if `private_key` was x25519, create additional context for ml-kem-768-x25519
-        // if `private_key` was ml-kem-*, create additional context for x25519
-        let inbound_context = match public_key {
-            StaticPublicKey::X25519(_) => InboundContext {
-                ml_kem_chaining_key: ml_kem_768_x25519.0.clone(),
-                ml_kem_inbound_state: ml_kem_768_x25519.2,
-                ml_kem_kind: MlKemKind::MlKem768X25519,
-                x25519_chaining_key: x25519.0.clone(),
-                x25519_inbound_state: x25519.2.clone(),
-            },
-            StaticPublicKey::MlKem512X25519(_) => InboundContext {
-                ml_kem_chaining_key: ml_kem_512_x25519.0.clone(),
-                ml_kem_inbound_state: ml_kem_512_x25519.2,
-                ml_kem_kind: MlKemKind::MlKem512X25519,
-                x25519_chaining_key: x25519.0.clone(),
-                x25519_inbound_state: x25519.2.clone(),
-            },
-            StaticPublicKey::MlKem768X25519(_) => InboundContext {
-                ml_kem_chaining_key: ml_kem_768_x25519.0.clone(),
-                ml_kem_inbound_state: ml_kem_768_x25519.2,
-                ml_kem_kind: MlKemKind::MlKem768X25519,
-                x25519_chaining_key: x25519.0.clone(),
-                x25519_inbound_state: x25519.2.clone(),
-            },
-            StaticPublicKey::MlKem1024X25519(_) => InboundContext {
-                ml_kem_chaining_key: ml_kem_1024_x25519.0.clone(),
-                ml_kem_inbound_state: ml_kem_1024_x25519.2,
-                ml_kem_kind: MlKemKind::MlKem1024X25519,
-                x25519_chaining_key: x25519.0.clone(),
-                x25519_inbound_state: x25519.2.clone(),
-            },
+        // caller has also validated that the combination is valid, i.e., if there are two keys, one
+        // of them is x25519 and the other is an ml-kem variant but that there are never two ml-kem
+        // keys
+        //
+        // TODO: revisit this logic in the future, it's no good
+        let (x25519_enaled, ml_kem) = match (&public_keys[0], public_keys.get(1)) {
+            (StaticPublicKey::X25519(_), key) => (true, key),
+            (key @ StaticPublicKey::MlKem512X25519(_), x25519) => (x25519.is_some(), Some(key)),
+            (key @ StaticPublicKey::MlKem768X25519(_), x25519) => (x25519.is_some(), Some(key)),
+            (key @ StaticPublicKey::MlKem1024X25519(_), x25519) => (x25519.is_some(), Some(key)),
+        };
+        let inbound_context = InboundContext {
+            ml_kem: ml_kem.map(|key| match key {
+                StaticPublicKey::X25519(_) => unreachable!(),
+                StaticPublicKey::MlKem512X25519(_) => MlKemKind::MlKem512X25519 {
+                    chaining_key: ml_kem_512_x25519.0.clone(),
+                    inbound_state: ml_kem_512_x25519.2.clone(),
+                },
+                StaticPublicKey::MlKem768X25519(_) => MlKemKind::MlKem768X25519 {
+                    chaining_key: ml_kem_768_x25519.0.clone(),
+                    inbound_state: ml_kem_768_x25519.2.clone(),
+                },
+                StaticPublicKey::MlKem1024X25519(_) => MlKemKind::MlKem1024X25519 {
+                    chaining_key: ml_kem_1024_x25519.0.clone(),
+                    inbound_state: ml_kem_1024_x25519.2.clone(),
+                },
+            }),
+            x25519: x25519_enaled.then(|| (x25519.0.clone(), x25519.2.clone())),
         };
 
+        tracing::debug!(
+            target: LOG_TARGET,
+            x25519 = ?inbound_context.x25519.is_some(),
+            ml_kem = ?inbound_context.ml_kem,
+            "session key context created",
+        );
+
         Self {
+            inbound_context,
+            private_key,
+            public_key,
             x25519: OutboundKeyContext {
                 chaining_key: x25519.0,
                 outbound_state: x25519.1,
@@ -295,9 +331,6 @@ impl<R: Runtime> KeyContext<R> {
                 chaining_key: ml_kem_1024_x25519.0,
                 outbound_state: ml_kem_1024_x25519.1,
             },
-            inbound_context,
-            private_key,
-            public_key,
             _runtime: PhantomData,
         }
     }
@@ -597,31 +630,31 @@ impl<R: Runtime> KeyContext<R> {
         public_key: &StaticPublicKey,
         message: &[u8],
     ) -> Result<MlKemNsState, SessionError> {
+        let Some(ref kind) = self.inbound_context.ml_kem else {
+            return Err(SessionError::MlKemNotEnabled);
+        };
+
         // encapsulation key is right after the elligator2-encoded public key
         //
         // the section is variable length and ends in a poly1305 mac
-        let encap_offset = 4 + 32 + self.inbound_context.ml_kem_kind.key_size() + POLY1035_MAC_SIZE;
+        let encap_offset = 4 + 32 + kind.key_size() + POLY1035_MAC_SIZE;
         if message.len() <= encap_offset {
             return Err(SessionError::TooShortForMlKem);
         }
 
         tracing::trace!(
             target: LOG_TARGET,
-            kind = %self.inbound_context.ml_kem_kind,
+            %kind,
             "trying to decrypt with ml-kem",
         );
 
         // calculate new state based on remote's ephemeral public key
-        let state = Sha256::new()
-            .update(&self.inbound_context.ml_kem_inbound_state)
-            .update(&public_key)
-            .finalize();
+        let state = Sha256::new().update(&kind.inbound_state()).update(&public_key).finalize();
 
         // generate chaining key and cipher key for decrypting remote's public key
         let (chaining_key, cipher_key) = {
             let mut shared = self.private_key.diffie_hellman(&public_key);
-            let mut temp_key =
-                Hmac::new(&self.inbound_context.ml_kem_chaining_key).update(&shared).finalize();
+            let mut temp_key = Hmac::new(kind.chaining_key()).update(&shared).finalize();
             let chaining_key = Hmac::new(&temp_key).update(b"").update([0x01]).finalize_new();
             let cipher_key = Hmac::new(&temp_key)
                 .update(&chaining_key)
@@ -650,11 +683,8 @@ impl<R: Runtime> KeyContext<R> {
         Ok(MlKemNsState {
             chaining_key,
             cipher_key,
-            ml_kem_context: InboundMlKemContext::new::<R>(
-                self.inbound_context.ml_kem_kind,
-                encap_key,
-            )
-            .ok_or(SessionError::EncapsulationFailure)?,
+            ml_kem_context: InboundMlKemContext::new::<R>(&kind, encap_key)
+                .ok_or(SessionError::EncapsulationFailure)?,
             offset: encap_offset,
             state: Sha256::new()
                 .update(&state)
@@ -735,6 +765,16 @@ impl<R: Runtime> KeyContext<R> {
                 return Err(SessionError::EncapsulationFailure);
             }
             Err(error) => {
+                // user may have specified pq-only so bail out early if x25519 is not enabled
+                let Some((chaining_key, inbound_state)) = &self.inbound_context.x25519 else {
+                    tracing::trace!(
+                        target: LOG_TARGET,
+                        ?error,
+                        "x25519 not enabled, unable to handle NewSession",
+                    );
+                    return Err(error);
+                };
+
                 tracing::debug!(
                     target: LOG_TARGET,
                     ?error,
@@ -742,15 +782,11 @@ impl<R: Runtime> KeyContext<R> {
                 );
 
                 // calculate new state based on remote's ephemeral public key
-                let state = Sha256::new()
-                    .update(&self.inbound_context.x25519_inbound_state)
-                    .update(&public_key)
-                    .finalize_new();
+                let state = Sha256::new().update(inbound_state).update(&public_key).finalize_new();
 
                 // generate chaining key and cipher key for decrypting remote's public key
                 let mut shared = self.private_key.diffie_hellman(&public_key);
-                let mut temp_key =
-                    Hmac::new(&self.inbound_context.x25519_chaining_key).update(&shared).finalize();
+                let mut temp_key = Hmac::new(chaining_key).update(&shared).finalize();
                 let chaining_key = Hmac::new(&temp_key).update(b"").update([0x01]).finalize_new();
                 let cipher_key = Hmac::new(&temp_key)
                     .update(&chaining_key)
@@ -846,54 +882,368 @@ mod tests {
     use super::*;
     use crate::runtime::mock::MockRuntime;
 
+    fn extract_public_key(message: &[u8]) -> StaticPublicKey {
+        let representative =
+            TryInto::<[u8; 32]>::try_into(message[NS_EPHEMERAL_PUBKEY_OFFSET].to_vec()).unwrap();
+
+        let new_pubkey = Randomized::from_representative(&representative)
+            .into_option()
+            .unwrap()
+            .to_montgomery();
+
+        StaticPublicKey::from_bytes(new_pubkey.0)
+    }
+
     #[test]
-    fn make_key_context_with_preference() {
-        // x25519 + default (ml-kem-768)
-        {
-            let key_contxt = KeyContext::<MockRuntime>::from_private_key(StaticPrivateKey::random(
-                MockRuntime::rng(),
-            ));
+    fn ml_kem_512_x25519() {
+        let outbound_private_key = StaticPrivateKey::random(MockRuntime::rng());
+        let mut outbound_key_context = KeyContext::<MockRuntime>::from_keys(
+            outbound_private_key.clone(),
+            vec![
+                outbound_private_key.public(),
+                StaticPublicKey::try_from_bytes_ml_kem_512(outbound_private_key.public().as_ref())
+                    .unwrap(),
+            ],
+        );
+        let inbound_private_key = StaticPrivateKey::random(MockRuntime::rng());
+        let inbound_key_context = KeyContext::<MockRuntime>::from_keys(
+            inbound_private_key.clone(),
+            vec![
+                inbound_private_key.public(),
+                StaticPublicKey::try_from_bytes_ml_kem_512(inbound_private_key.public().as_ref())
+                    .unwrap(),
+            ],
+        );
 
-            assert!(std::matches!(
-                key_contxt.inbound_context.ml_kem_kind,
-                MlKemKind::MlKem768X25519
-            ));
+        // create outbound session with dummy data
+        let (_, message) = outbound_key_context.create_outbound_session(
+            DestinationId::random(),
+            DestinationId::random(),
+            // force x25519
+            &StaticPublicKey::try_from_bytes(inbound_key_context.public_key.as_ref()).unwrap(),
+            Bytes::new(),
+            &[],
+        );
+        let mut out = BytesMut::with_capacity(4 + message.len());
+        out.put_u32(message.len() as u32);
+        out.put_slice(&message);
+
+        // verify that the message is rejected as too short
+        match inbound_key_context.create_inbound_session_ml_kem(&extract_public_key(&out), &out) {
+            Err(SessionError::TooShortForMlKem) => {}
+            _ => panic!("unexpected result"),
         }
 
-        // ml-kem-512 + default (x25519)
-        {
-            let key_contxt = KeyContext::<MockRuntime>::from_private_key(
-                StaticPrivateKey::random_ml_kem_512(MockRuntime::rng()),
-            );
+        // verify that fallback to x25519 works
+        assert!(inbound_key_context.create_inbound_session(out.to_vec()).is_ok());
+    }
 
-            assert!(std::matches!(
-                key_contxt.inbound_context.ml_kem_kind,
-                MlKemKind::MlKem512X25519
-            ));
+    #[test]
+    fn ml_kem_512_ml_kem_512() {
+        let outbound_private_key = StaticPrivateKey::random_ml_kem_512(MockRuntime::rng());
+        let mut outbound_key_context = KeyContext::<MockRuntime>::from_keys(
+            outbound_private_key.clone(),
+            vec![outbound_private_key.public()],
+        );
+        let inbound_private_key = StaticPrivateKey::random_ml_kem_512(MockRuntime::rng());
+        let inbound_key_context = KeyContext::<MockRuntime>::from_keys(
+            inbound_private_key.clone(),
+            vec![inbound_private_key.public()],
+        );
+
+        // create outbound session with dummy data
+        let (_, message) = outbound_key_context.create_outbound_session(
+            DestinationId::random(),
+            DestinationId::random(),
+            &inbound_key_context.public_key,
+            Bytes::new(),
+            &[],
+        );
+        let mut out = BytesMut::with_capacity(4 + message.len());
+        out.put_u32(message.len() as u32);
+        out.put_slice(&message);
+
+        // verify the encap key section is parsed correctly
+        let public_key = extract_public_key(&out);
+        assert!(inbound_key_context.create_inbound_session_ml_kem(&public_key, &out).is_ok());
+        assert!(inbound_key_context.create_inbound_session(out.to_vec()).is_ok());
+    }
+
+    #[test]
+    fn ml_kem_768_x25519() {
+        let outbound_private_key = StaticPrivateKey::random(MockRuntime::rng());
+        let mut outbound_key_context = KeyContext::<MockRuntime>::from_keys(
+            outbound_private_key.clone(),
+            vec![
+                outbound_private_key.public(),
+                StaticPublicKey::try_from_bytes_ml_kem_768(outbound_private_key.public().as_ref())
+                    .unwrap(),
+            ],
+        );
+        let inbound_private_key = StaticPrivateKey::random(MockRuntime::rng());
+        let inbound_key_context = KeyContext::<MockRuntime>::from_keys(
+            inbound_private_key.clone(),
+            vec![
+                inbound_private_key.public(),
+                StaticPublicKey::try_from_bytes_ml_kem_768(inbound_private_key.public().as_ref())
+                    .unwrap(),
+            ],
+        );
+
+        // create outbound session with dummy data
+        let (_, message) = outbound_key_context.create_outbound_session(
+            DestinationId::random(),
+            DestinationId::random(),
+            // force x25519
+            &StaticPublicKey::try_from_bytes(inbound_key_context.public_key.as_ref()).unwrap(),
+            Bytes::new(),
+            &[],
+        );
+        let mut out = BytesMut::with_capacity(4 + message.len());
+        out.put_u32(message.len() as u32);
+        out.put_slice(&message);
+
+        // verify that the message is rejected as too short
+        match inbound_key_context.create_inbound_session_ml_kem(&extract_public_key(&out), &out) {
+            Err(SessionError::TooShortForMlKem) => {}
+            _ => panic!("unexpected result"),
         }
 
-        // ml-kem-768 + default (x25519)
-        {
-            let key_contxt = KeyContext::<MockRuntime>::from_private_key(
-                StaticPrivateKey::random_ml_kem_768(MockRuntime::rng()),
-            );
+        // verify that fallback to x25519 works
+        assert!(inbound_key_context.create_inbound_session(out.to_vec()).is_ok());
+    }
 
-            assert!(std::matches!(
-                key_contxt.inbound_context.ml_kem_kind,
-                MlKemKind::MlKem768X25519
-            ));
+    #[test]
+    fn ml_kem_768_ml_kem_768() {
+        let outbound_private_key = StaticPrivateKey::random_ml_kem_768(MockRuntime::rng());
+        let mut outbound_key_context = KeyContext::<MockRuntime>::from_keys(
+            outbound_private_key.clone(),
+            vec![outbound_private_key.public()],
+        );
+        let inbound_private_key = StaticPrivateKey::random_ml_kem_768(MockRuntime::rng());
+        let inbound_key_context = KeyContext::<MockRuntime>::from_keys(
+            inbound_private_key.clone(),
+            vec![inbound_private_key.public()],
+        );
+
+        // create outbound session with dummy data
+        let (_, message) = outbound_key_context.create_outbound_session(
+            DestinationId::random(),
+            DestinationId::random(),
+            &inbound_key_context.public_key,
+            Bytes::new(),
+            &[],
+        );
+        let mut out = BytesMut::with_capacity(4 + message.len());
+        out.put_u32(message.len() as u32);
+        out.put_slice(&message);
+
+        // verify the encap key section is parsed correctly
+        let public_key = extract_public_key(&out);
+        assert!(inbound_key_context.create_inbound_session_ml_kem(&public_key, &out).is_ok());
+        assert!(inbound_key_context.create_inbound_session(out.to_vec()).is_ok());
+    }
+
+    #[test]
+    fn ml_kem_1024_x25519() {
+        let outbound_private_key = StaticPrivateKey::random(MockRuntime::rng());
+        let mut outbound_key_context = KeyContext::<MockRuntime>::from_keys(
+            outbound_private_key.clone(),
+            vec![
+                outbound_private_key.public(),
+                StaticPublicKey::try_from_bytes_ml_kem_1024(outbound_private_key.public().as_ref())
+                    .unwrap(),
+            ],
+        );
+        let inbound_private_key = StaticPrivateKey::random(MockRuntime::rng());
+        let inbound_key_context = KeyContext::<MockRuntime>::from_keys(
+            inbound_private_key.clone(),
+            vec![
+                inbound_private_key.public(),
+                StaticPublicKey::try_from_bytes_ml_kem_1024(inbound_private_key.public().as_ref())
+                    .unwrap(),
+            ],
+        );
+
+        // create outbound session with dummy data
+        let (_, message) = outbound_key_context.create_outbound_session(
+            DestinationId::random(),
+            DestinationId::random(),
+            // force x25519
+            &StaticPublicKey::try_from_bytes(inbound_key_context.public_key.as_ref()).unwrap(),
+            Bytes::new(),
+            &[],
+        );
+        let mut out = BytesMut::with_capacity(4 + message.len());
+        out.put_u32(message.len() as u32);
+        out.put_slice(&message);
+
+        // verify that the message is rejected as too short
+        match inbound_key_context.create_inbound_session_ml_kem(&extract_public_key(&out), &out) {
+            Err(SessionError::TooShortForMlKem) => {}
+            _ => panic!("unexpected result"),
         }
 
-        // ml-kem-1024 + default (x25519)
-        {
-            let key_contxt = KeyContext::<MockRuntime>::from_private_key(
-                StaticPrivateKey::random_ml_kem_1024(MockRuntime::rng()),
-            );
+        // verify that fallback to x25519 works
+        assert!(inbound_key_context.create_inbound_session(out.to_vec()).is_ok());
+    }
 
-            assert!(std::matches!(
-                key_contxt.inbound_context.ml_kem_kind,
-                MlKemKind::MlKem1024X25519
-            ));
+    #[test]
+    fn ml_kem_1024_ml_kem_1024() {
+        let outbound_private_key = StaticPrivateKey::random_ml_kem_1024(MockRuntime::rng());
+        let mut outbound_key_context = KeyContext::<MockRuntime>::from_keys(
+            outbound_private_key.clone(),
+            vec![outbound_private_key.public()],
+        );
+        let inbound_private_key = StaticPrivateKey::random_ml_kem_1024(MockRuntime::rng());
+        let inbound_key_context = KeyContext::<MockRuntime>::from_keys(
+            inbound_private_key.clone(),
+            vec![inbound_private_key.public()],
+        );
+
+        // create outbound session with dummy data
+        let (_, message) = outbound_key_context.create_outbound_session(
+            DestinationId::random(),
+            DestinationId::random(),
+            &inbound_key_context.public_key,
+            Bytes::new(),
+            &[],
+        );
+        let mut out = BytesMut::with_capacity(4 + message.len());
+        out.put_u32(message.len() as u32);
+        out.put_slice(&message);
+
+        // verify the encap key section is parsed correctly
+        let public_key = extract_public_key(&out);
+        assert!(inbound_key_context.create_inbound_session_ml_kem(&public_key, &out).is_ok());
+    }
+
+    #[test]
+    fn large_ns_ml_kem_512() {
+        let outbound_private_key = StaticPrivateKey::random(MockRuntime::rng());
+        let mut outbound_key_context = KeyContext::<MockRuntime>::from_keys(
+            outbound_private_key.clone(),
+            vec![
+                outbound_private_key.public(),
+                StaticPublicKey::try_from_bytes_ml_kem_512(outbound_private_key.public().as_ref())
+                    .unwrap(),
+            ],
+        );
+        let inbound_private_key = StaticPrivateKey::random(MockRuntime::rng());
+        let inbound_key_context = KeyContext::<MockRuntime>::from_keys(
+            inbound_private_key.clone(),
+            vec![
+                inbound_private_key.public(),
+                StaticPublicKey::try_from_bytes_ml_kem_512(inbound_private_key.public().as_ref())
+                    .unwrap(),
+            ],
+        );
+
+        // create outbound session with dummy data
+        let (_, message) = outbound_key_context.create_outbound_session(
+            DestinationId::random(),
+            DestinationId::random(),
+            &StaticPublicKey::try_from_bytes(inbound_key_context.public_key.as_ref()).unwrap(),
+            Bytes::new(),
+            &vec![0xaa; constants::ml_kem_512::KEY_SIZE + 16],
+        );
+        let mut out = BytesMut::with_capacity(4 + message.len());
+        out.put_u32(message.len() as u32);
+        out.put_slice(&message);
+
+        // verify that the message is rejected as too short
+        match inbound_key_context.create_inbound_session_ml_kem(&extract_public_key(&out), &out) {
+            Err(SessionError::Chacha) => {}
+            _ => panic!("unexpected result"),
         }
+
+        // verify that fallback to x25519 works
+        assert!(inbound_key_context.create_inbound_session(out.to_vec()).is_ok());
+    }
+
+    #[test]
+    fn large_ns_ml_kem_768() {
+        let outbound_private_key = StaticPrivateKey::random(MockRuntime::rng());
+        let mut outbound_key_context = KeyContext::<MockRuntime>::from_keys(
+            outbound_private_key.clone(),
+            vec![
+                outbound_private_key.public(),
+                StaticPublicKey::try_from_bytes_ml_kem_768(outbound_private_key.public().as_ref())
+                    .unwrap(),
+            ],
+        );
+        let inbound_private_key = StaticPrivateKey::random(MockRuntime::rng());
+        let inbound_key_context = KeyContext::<MockRuntime>::from_keys(
+            inbound_private_key.clone(),
+            vec![
+                inbound_private_key.public(),
+                StaticPublicKey::try_from_bytes_ml_kem_768(inbound_private_key.public().as_ref())
+                    .unwrap(),
+            ],
+        );
+
+        // create outbound session with dummy data
+        let (_, message) = outbound_key_context.create_outbound_session(
+            DestinationId::random(),
+            DestinationId::random(),
+            &StaticPublicKey::try_from_bytes(inbound_key_context.public_key.as_ref()).unwrap(),
+            Bytes::new(),
+            &vec![0xaa; constants::ml_kem_768::KEY_SIZE + 16],
+        );
+        let mut out = BytesMut::with_capacity(4 + message.len());
+        out.put_u32(message.len() as u32);
+        out.put_slice(&message);
+
+        // verify that the message is rejected as too short
+        match inbound_key_context.create_inbound_session_ml_kem(&extract_public_key(&out), &out) {
+            Err(SessionError::Chacha) => {}
+            _ => panic!("unexpected result"),
+        }
+
+        // verify that fallback to x25519 works
+        assert!(inbound_key_context.create_inbound_session(out.to_vec()).is_ok());
+    }
+
+    #[test]
+    fn large_ns_ml_kem_1024() {
+        let outbound_private_key = StaticPrivateKey::random(MockRuntime::rng());
+        let mut outbound_key_context = KeyContext::<MockRuntime>::from_keys(
+            outbound_private_key.clone(),
+            vec![
+                outbound_private_key.public(),
+                StaticPublicKey::try_from_bytes_ml_kem_1024(outbound_private_key.public().as_ref())
+                    .unwrap(),
+            ],
+        );
+        let inbound_private_key = StaticPrivateKey::random(MockRuntime::rng());
+        let inbound_key_context = KeyContext::<MockRuntime>::from_keys(
+            inbound_private_key.clone(),
+            vec![
+                inbound_private_key.public(),
+                StaticPublicKey::try_from_bytes_ml_kem_1024(inbound_private_key.public().as_ref())
+                    .unwrap(),
+            ],
+        );
+
+        // create outbound session with dummy data
+        let (_, message) = outbound_key_context.create_outbound_session(
+            DestinationId::random(),
+            DestinationId::random(),
+            &StaticPublicKey::try_from_bytes(inbound_key_context.public_key.as_ref()).unwrap(),
+            Bytes::new(),
+            &vec![0xaa; constants::ml_kem_1024::KEY_SIZE + 16],
+        );
+        let mut out = BytesMut::with_capacity(4 + message.len());
+        out.put_u32(message.len() as u32);
+        out.put_slice(&message);
+
+        // verify that the message is rejected as too short
+        match inbound_key_context.create_inbound_session_ml_kem(&extract_public_key(&out), &out) {
+            Err(SessionError::Chacha) => {}
+            _ => panic!("unexpected result"),
+        }
+
+        // verify that fallback to x25519 works
+        assert!(inbound_key_context.create_inbound_session(out.to_vec()).is_ok());
     }
 }

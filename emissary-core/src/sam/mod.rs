@@ -34,7 +34,8 @@ use crate::{
             connection::{ConnectionKind, PendingSamConnection},
             session::{PendingSamSession, SamSessionContext},
         },
-        session::{SamSession, SamSessionCommand, SamSessionCommandRecycle},
+        session::SamSession,
+        types::{SamSessionCommand, SamSessionCommandRecycle},
     },
     tunnel::{TunnelManagerHandle, TunnelPoolConfig},
     util::udp::{UdpSocket, UdpSocketHandle},
@@ -63,6 +64,7 @@ mod pending;
 mod protocol;
 mod session;
 mod socket;
+mod types;
 
 #[cfg(not(feature = "fuzz"))]
 use parser::Datagram;

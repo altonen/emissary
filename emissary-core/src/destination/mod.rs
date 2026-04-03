@@ -17,7 +17,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    crypto::StaticPrivateKey,
+    crypto::{StaticPrivateKey, StaticPublicKey},
     destination::{
         lease_set::LeaseSetManager,
         routing_path::{
@@ -204,10 +204,11 @@ pub struct Destination<R: Runtime> {
     /// Handle to [`NetDb`].
     netdb_handle: NetDbHandle,
 
-    // /// Inbound tunnels waiting to be published to `NetDb`.
-    // pending_inbound: Vec<(Lease, R::Instant)>,
     /// Pending lease set queries:
     pending_queries: HashSet<DestinationId>,
+
+    /// Public keys.
+    public_keys: Vec<StaticPublicKey>,
 
     /// Pending `LeaseSet2` query futures.
     query_futures: R::JoinSet<(DestinationId, Result<LeaseSet2, QueryError>)>,
@@ -236,6 +237,7 @@ impl<R: Runtime> Destination<R> {
     pub fn new(
         destination_id: DestinationId,
         private_key: StaticPrivateKey,
+        public_keys: Vec<StaticPublicKey>,
         lease_set: Bytes,
         netdb_handle: NetDbHandle,
         tunnel_pool_handle: TunnelPoolHandle,
@@ -261,10 +263,16 @@ impl<R: Runtime> Destination<R> {
             lease_set_prune_timer: R::timer(LEASE_SET_PRUNE_INTERVAL),
             netdb_handle,
             pending_queries: HashSet::new(),
+            public_keys: public_keys.clone(),
             query_futures: R::join_set(),
             remote_destinations: HashMap::new(),
             routing_path_manager: RoutingPathManager::new(destination_id.clone(), outbound_tunnels),
-            session_manager: SessionManager::new(destination_id, private_key, lease_set),
+            session_manager: SessionManager::new(
+                destination_id,
+                private_key,
+                public_keys,
+                lease_set,
+            ),
             tunnel_pool_handle,
             waker: None,
         }
@@ -861,10 +869,29 @@ impl<R: Runtime> Stream for Destination<R> {
                     }
                     Ok(lease_set) => {
                         self.pending_queries.remove(&destination_id);
-                        self.session_manager.add_remote_destination(
-                            destination_id.clone(),
-                            lease_set.public_keys[0].clone(),
-                        );
+
+                        match lease_set.public_keys.iter().find(|&remote_key| {
+                            self.public_keys
+                                .iter()
+                                .any(|key| mem::discriminant(remote_key) == mem::discriminant(key))
+                        }) {
+                            Some(key) => {
+                                self.session_manager
+                                    .add_remote_destination(destination_id.clone(), key.clone());
+                            }
+                            None => {
+                                tracing::warn!(
+                                    target: LOG_TARGET,
+                                    local = %self.destination_id,
+                                    "no compatible key found",
+                                );
+
+                                return Poll::Ready(Some(DestinationEvent::LeaseSetNotFound {
+                                    destination_id,
+                                    error: QueryError::ValueNotFound,
+                                }));
+                            }
+                        }
 
                         // add new lease set for destination or create new destination of it didn't
                         // exist
@@ -983,9 +1010,11 @@ mod tests {
     async fn query_lease_set_found() {
         let (netdb_handle, _rx) = NetDbHandle::create();
         let (tp_handle, _tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let mut destination = Destination::<MockRuntime>::new(
             DestinationId::random(),
-            StaticPrivateKey::random(MockRuntime::rng()),
+            private_key.clone(),
+            vec![private_key.public()],
             Bytes::new(),
             netdb_handle,
             tp_handle,
@@ -1015,9 +1044,11 @@ mod tests {
     async fn query_lease_set_expired() {
         let (netdb_handle, _rx) = NetDbHandle::create();
         let (tp_handle, _tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let mut destination = Destination::<MockRuntime>::new(
             DestinationId::random(),
-            StaticPrivateKey::random(MockRuntime::rng()),
+            private_key.clone(),
+            vec![private_key.public()],
             Bytes::new(),
             netdb_handle,
             tp_handle,
@@ -1054,9 +1085,11 @@ mod tests {
     async fn query_lease_set_not_found() {
         let (netdb_handle, _rx) = NetDbHandle::create();
         let (tp_handle, _tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let mut destination = Destination::<MockRuntime>::new(
             DestinationId::random(),
-            StaticPrivateKey::random(MockRuntime::rng()),
+            private_key.clone(),
+            vec![private_key.public()],
             Bytes::new(),
             netdb_handle,
             tp_handle,
@@ -1082,9 +1115,11 @@ mod tests {
     async fn query_lease_set_pending() {
         let (netdb_handle, _rx) = NetDbHandle::create();
         let (tp_handle, _tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let mut destination = Destination::<MockRuntime>::new(
             DestinationId::random(),
-            StaticPrivateKey::random(MockRuntime::rng()),
+            private_key.clone(),
+            vec![private_key.public()],
             Bytes::new(),
             netdb_handle,
             tp_handle,
@@ -1116,9 +1151,11 @@ mod tests {
     async fn query_lease_set_channel_clogged() {
         let (netdb_handle, _rx) = NetDbHandle::create();
         let (tp_handle, _tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let mut destination = Destination::<MockRuntime>::new(
             DestinationId::random(),
-            StaticPrivateKey::random(MockRuntime::rng()),
+            private_key.clone(),
+            vec![private_key.public()],
             Bytes::new(),
             netdb_handle.clone(),
             tp_handle,
@@ -1162,9 +1199,11 @@ mod tests {
     fn encrypt_message_lease_set_not_found() {
         let (netdb_handle, _rx) = NetDbHandle::create();
         let (tp_handle, _tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let mut destination = Destination::<MockRuntime>::new(
             DestinationId::random(),
-            StaticPrivateKey::random(MockRuntime::rng()),
+            private_key.clone(),
+            vec![private_key.public()],
             Bytes::new(),
             netdb_handle,
             tp_handle,
@@ -1191,9 +1230,11 @@ mod tests {
             num_inbound: 1usize,
             ..Default::default()
         });
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let mut destination = Destination::<MockRuntime>::new(
             DestinationId::random(),
-            StaticPrivateKey::random(MockRuntime::rng()),
+            private_key.clone(),
+            vec![private_key.public()],
             Bytes::new(),
             netdb_handle.clone(),
             tp_handle,
@@ -1237,9 +1278,11 @@ mod tests {
     async fn send_message_expired_lease_set() {
         let (netdb_handle, rx) = NetDbHandle::create();
         let (tp_handle, tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
+        let private_key = StaticPrivateKey::random(MockRuntime::rng());
         let mut destination = Destination::<MockRuntime>::new(
             DestinationId::random(),
-            StaticPrivateKey::random(MockRuntime::rng()),
+            private_key.clone(),
+            vec![private_key.public()],
             Bytes::new(),
             netdb_handle,
             tp_handle,
@@ -1349,7 +1392,8 @@ mod tests {
         let public_key = private_key.public();
         let mut destination = Destination::<MockRuntime>::new(
             destination_id.clone(),
-            private_key,
+            private_key.clone(),
+            vec![private_key.public()],
             Bytes::new(),
             netdb_handle,
             tp_handle,
@@ -1393,6 +1437,7 @@ mod tests {
         let mut session_manager = SessionManager::<MockRuntime>::new(
             remote_dest_id.clone(),
             encryption_key.clone(),
+            vec![encryption_key.public()],
             lease_set,
         );
         session_manager.add_remote_destination(destination_id.clone(), public_key);

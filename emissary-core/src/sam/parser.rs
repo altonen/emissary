@@ -484,15 +484,100 @@ impl<'a, R: Runtime> TryFrom<ParsedCommand<'a, R>> for SamCommand {
                     }
                 };
 
+                // parse lease set encryption type
+                //
+                // default to 6,4 if the user didn't specify anything
+                let mut options = parsed_cmd
+                    .key_value_pairs
+                    .into_iter()
+                    .map(|(key, value)| (key.to_string(), value.to_string()))
+                    .collect::<HashMap<_, _>>();
+
+                let Some(encryption_type) = options.get("i2cp.leaseSetEncType") else {
+                    options.insert("i2cp.leaseSetEncType".to_string(), "6,4".to_string());
+
+                    tracing::info!(
+                        target: LOG_TARGET,
+                        "i2cp.leaseSetEncType missing, defaulting to 6,4",
+                    );
+
+                    return Ok(SamCommand::CreateSession {
+                        session_id,
+                        session_kind,
+                        destination: Box::new(destination),
+                        options,
+                    });
+                };
+
+                let mut encryption_types = encryption_type
+                    .split(",")
+                    .filter_map(|enc_type| {
+                        let encryption_type = enc_type.parse::<usize>().ok()?;
+
+                        if encryption_type < 3 || encryption_type > 7 {
+                            tracing::warn!(
+                                target: LOG_TARGET,
+                                ?encryption_type,
+                                "ignoring unsupported encryption type",
+                            );
+                            return None;
+                        }
+
+                        Some(encryption_type)
+                    })
+                    .collect::<Vec<_>>();
+                encryption_types.dedup();
+
+                match encryption_types.len() {
+                    0 => {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            %encryption_type,
+                            "i2cp.leaseSetEncType did not parse into any valid encryption types, defaulting to 6,4",
+                        );
+                        options.insert("i2cp.leaseSetEncType".to_string(), "6,4".to_string());
+                    }
+                    1 => {
+                        options.insert(
+                            "i2cp.leaseSetEncType".to_string(),
+                            format!("{}", encryption_types[0]),
+                        );
+                    }
+                    2 => {
+                        // make sure there's only one ml-kem variant
+                        if encryption_types[0] != 4 && encryption_types[1] != 4 {
+                            tracing::warn!(
+                                target: LOG_TARGET,
+                                ?encryption_types,
+                                "two simultaneous ml-kem variants not supported, defaulting to 6,4",
+                            );
+                            options.insert("i2cp.leaseSetEncType".to_string(), "6,4".to_string());
+                        } else {
+                            options.insert(
+                                "i2cp.leaseSetEncType".to_string(),
+                                format!("{},{}", encryption_types[0], encryption_types[1]),
+                            );
+                        }
+                    }
+                    _ => {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            ?encryption_types,
+                            "too many encryption types, trimming to first two",
+                        );
+
+                        options.insert(
+                            "i2cp.leaseSetEncType".to_string(),
+                            format!("{},{}", encryption_types[0], encryption_types[1]),
+                        );
+                    }
+                }
+
                 Ok(SamCommand::CreateSession {
                     session_id,
                     session_kind,
                     destination: Box::new(destination),
-                    options: parsed_cmd
-                        .key_value_pairs
-                        .into_iter()
-                        .map(|(key, value)| (key.to_string(), value.to_string()))
-                        .collect(),
+                    options,
                 })
             }
             ("SESSION", Some("ADD")) => {
@@ -931,10 +1016,7 @@ mod tests {
                 ..
             }) => {
                 assert_eq!(session_id.as_str(), "test");
-                assert_eq!(
-                    options.get("i2cp.leaseSetEncType"),
-                    Some(&"4,0".to_string())
-                );
+                assert_eq!(options.get("i2cp.leaseSetEncType"), Some(&"4".to_string()));
             }
             response => panic!("invalid response: {response:?}"),
         }
@@ -962,10 +1044,7 @@ mod tests {
                 ..
             }) => {
                 assert_eq!(session_id.as_str(), "test");
-                assert_eq!(
-                    options.get("i2cp.leaseSetEncType"),
-                    Some(&"4,0".to_string())
-                );
+                assert_eq!(options.get("i2cp.leaseSetEncType"), Some(&"4".to_string()));
             }
             response => panic!("invalid response: {response:?}"),
         }
@@ -1738,10 +1817,7 @@ mod tests {
                 ..
             }) => {
                 assert_eq!(session_id.as_str(), "test");
-                assert_eq!(
-                    options.get("i2cp.leaseSetEncType"),
-                    Some(&"4,0".to_string())
-                );
+                assert_eq!(options.get("i2cp.leaseSetEncType"), Some(&"4".to_string()));
             }
             response => panic!("invalid response: {response:?}"),
         }
@@ -1760,10 +1836,7 @@ mod tests {
                 ..
             }) => {
                 assert_eq!(session_id.as_str(), "test");
-                assert_eq!(
-                    options.get("i2cp.leaseSetEncType"),
-                    Some(&"4,0".to_string())
-                );
+                assert_eq!(options.get("i2cp.leaseSetEncType"), Some(&"4".to_string()));
             }
             response => panic!("invalid response: {response:?}"),
         }
@@ -1857,6 +1930,91 @@ mod tests {
         match SamCommand::parse::<MockRuntime>("STOP") {
             Some(SamCommand::Quit) => {}
             _ => panic!("invalid command"),
+        }
+    }
+
+    #[test]
+    fn parse_session_create_with_encryption_type() {
+        // no preference specified
+        match SamCommand::parse::<MockRuntime>(
+            "SESSION CREATE STYLE=STREAM ID=test DESTINATION=TRANSIENT",
+        ) {
+            Some(SamCommand::CreateSession { options, .. }) => {
+                assert_eq!(
+                    options.get("i2cp.leaseSetEncType"),
+                    Some(&"6,4".to_string())
+                );
+            }
+            response => panic!("invalid response: {response:?}"),
+        }
+
+        // 0 not recognized as valid encryption type
+        match SamCommand::parse::<MockRuntime>(
+            "SESSION CREATE STYLE=STREAM ID=test DESTINATION=TRANSIENT i2cp.leaseSetEncType=4,0",
+        ) {
+            Some(SamCommand::CreateSession { options, .. }) => {
+                assert_eq!(options.get("i2cp.leaseSetEncType"), Some(&"4".to_string()));
+            }
+            response => panic!("invalid response: {response:?}"),
+        }
+
+        // 0,0 not recognized as valid encryption type
+        match SamCommand::parse::<MockRuntime>(
+            "SESSION CREATE STYLE=STREAM ID=test DESTINATION=TRANSIENT i2cp.leaseSetEncType=0,0",
+        ) {
+            Some(SamCommand::CreateSession { options, .. }) => {
+                assert_eq!(
+                    options.get("i2cp.leaseSetEncType"),
+                    Some(&"6,4".to_string())
+                );
+            }
+            response => panic!("invalid response: {response:?}"),
+        }
+
+        // encryption types are deduped correctly
+        match SamCommand::parse::<MockRuntime>(
+            "SESSION CREATE STYLE=STREAM ID=test DESTINATION=TRANSIENT i2cp.leaseSetEncType=4,4",
+        ) {
+            Some(SamCommand::CreateSession { options, .. }) => {
+                assert_eq!(options.get("i2cp.leaseSetEncType"), Some(&"4".to_string()));
+            }
+            response => panic!("invalid response: {response:?}"),
+        }
+
+        // too many encryption types
+        match SamCommand::parse::<MockRuntime>(
+            "SESSION CREATE STYLE=STREAM ID=test DESTINATION=TRANSIENT i2cp.leaseSetEncType=4,5,6,7",
+        ) {
+            Some(SamCommand::CreateSession { options, .. }) => {
+                assert_eq!(
+                    options.get("i2cp.leaseSetEncType"),
+                    Some(&"4,5".to_string())
+                );
+            }
+            response => panic!("invalid response: {response:?}"),
+        }
+
+        // two ml-kem encryption types
+        match SamCommand::parse::<MockRuntime>(
+            "SESSION CREATE STYLE=STREAM ID=test DESTINATION=TRANSIENT i2cp.leaseSetEncType=5,6",
+        ) {
+            Some(SamCommand::CreateSession { options, .. }) => {
+                assert_eq!(
+                    options.get("i2cp.leaseSetEncType"),
+                    Some(&"6,4".to_string())
+                );
+            }
+            response => panic!("invalid response: {response:?}"),
+        }
+
+        // invalid encrytion types
+        match SamCommand::parse::<MockRuntime>(
+            "SESSION CREATE STYLE=STREAM ID=test DESTINATION=TRANSIENT i2cp.leaseSetEncType=hello,world",
+        ) {
+            Some(SamCommand::CreateSession { options, .. }) => {
+                assert_eq!(options.get("i2cp.leaseSetEncType"), Some(&"6,4".to_string()));
+            }
+            response => panic!("invalid response: {response:?}"),
         }
     }
 }

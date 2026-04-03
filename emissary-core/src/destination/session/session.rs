@@ -68,6 +68,9 @@ const NUM_EXTRA_TAGS_TO_GENERATE: usize = 128usize;
 
 /// Event emitted by [`PendingSession`].
 pub enum PendingSessionEvent<R: Runtime> {
+    /// Do nothing.
+    DoNothing,
+
     /// Send message to remote destination.
     SendMessage {
         /// Serialized message.
@@ -608,7 +611,7 @@ impl<R: Runtime> PendingSession<R> {
                             local = %self.local,
                             remote = %self.remote,
                             ?garlic_tag,
-                            "`TagSetEntry` doesn't exist for NSR",
+                            "TagSetEntry doesn't exist for NSR",
                         );
 
                         debug_assert!(false);
@@ -617,10 +620,35 @@ impl<R: Runtime> PendingSession<R> {
                 let tag_set_id = tag_set_entry.tag_set_id;
                 let tag_index = tag_set_entry.tag_index;
 
-                let (message, _send_tag_set, mut _recv_tag_set) = outbound
+                let message = match outbound
                     .get_mut(&session_idx)
                     .expect("to exist")
-                    .handle_new_session_reply(tag_set_entry, message, ratchet_threshold)?;
+                    .handle_new_session_reply(tag_set_entry, message, ratchet_threshold)
+                {
+                    Ok((message, ..)) => message,
+                    Err(error) => {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            local = %self.local,
+                            remote = %self.remote,
+                            ?garlic_tag,
+                            ?error,
+                            "failed to handle NSR",
+                        );
+
+                        self.state = PendingSessionState::AwaitingEsTransmit {
+                            outbound,
+                            send_tag_set,
+                            recv_tag_set,
+                            garlic_tags,
+                            tag_set_entries,
+                            remote_public_key,
+                            nsr_tag_set_entries,
+                        };
+
+                        return Ok(PendingSessionEvent::DoNothing);
+                    }
+                };
 
                 self.state = PendingSessionState::AwaitingEsTransmit {
                     outbound,

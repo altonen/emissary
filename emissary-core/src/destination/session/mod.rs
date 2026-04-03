@@ -231,11 +231,13 @@ impl<R: Runtime> SessionManager<R> {
     pub fn new(
         destination_id: DestinationId,
         private_key: StaticPrivateKey,
+        public_keys: Vec<StaticPublicKey>,
         lease_set: Bytes,
     ) -> Self {
         Self::with_ratchet_threshold(
             destination_id,
             private_key,
+            public_keys,
             lease_set,
             SESSION_DH_RATCHET_THRESHOLD,
         )
@@ -245,6 +247,7 @@ impl<R: Runtime> SessionManager<R> {
     pub fn with_ratchet_threshold(
         destination_id: DestinationId,
         private_key: StaticPrivateKey,
+        public_keys: Vec<StaticPublicKey>,
         lease_set: Bytes,
         ratchet_threshold: u16,
     ) -> Self {
@@ -252,7 +255,7 @@ impl<R: Runtime> SessionManager<R> {
             active: HashMap::new(),
             destination_id,
             garlic_tags: Default::default(),
-            key_context: KeyContext::from_private_key(private_key),
+            key_context: KeyContext::from_keys(private_key, public_keys),
             lease_set,
             lease_set_publish_timers: R::join_set(),
             protocol_response_timers: R::join_set(),
@@ -572,6 +575,7 @@ impl<R: Runtime> SessionManager<R> {
                             Ok(out.freeze().to_vec())
                         }
                         PendingSessionEvent::ReturnMessage { .. } => unreachable!(),
+                        PendingSessionEvent::DoNothing => unreachable!(),
                     }
                 }
                 // no pending nor active session for `destination_id`, create new outbound session
@@ -836,6 +840,7 @@ impl<R: Runtime> SessionManager<R> {
                         self.ratchet_threshold,
                     )? {
                         PendingSessionEvent::SendMessage { .. } => unreachable!(),
+                        PendingSessionEvent::DoNothing => return Ok(vec![].into_iter()),
                         PendingSessionEvent::CreateSession {
                             message,
                             context,
@@ -1195,8 +1200,12 @@ mod tests {
         let destination_id = DestinationId::random();
         let (leaseset, signing_key) = LeaseSet2::random();
         let leaseset = Bytes::from(leaseset.serialize(&signing_key));
-        let mut session =
-            SessionManager::<MockRuntime>::new(destination_id.clone(), private_key, leaseset);
+        let mut session = SessionManager::<MockRuntime>::new(
+            destination_id.clone(),
+            private_key,
+            vec![public_key.clone()],
+            leaseset,
+        );
 
         // create outbound `SessionManager`
         let (outbound_leaseset, outbound_destination_id) = {
@@ -1210,7 +1219,8 @@ mod tests {
         };
         let mut outbound_session = SessionManager::<MockRuntime>::new(
             outbound_destination_id.clone(),
-            outbound_private_key,
+            outbound_private_key.clone(),
+            vec![outbound_private_key.public()],
             outbound_leaseset,
         );
         outbound_session.add_remote_destination(destination_id.clone(), public_key);
@@ -1319,8 +1329,12 @@ mod tests {
         let destination_id = DestinationId::random();
         let (leaseset, signing_key) = LeaseSet2::random();
         let leaseset = Bytes::from(leaseset.serialize(&signing_key));
-        let mut session =
-            SessionManager::<MockRuntime>::new(destination_id.clone(), private_key, leaseset);
+        let mut session = SessionManager::<MockRuntime>::new(
+            destination_id.clone(),
+            private_key,
+            vec![public_key.clone()],
+            leaseset,
+        );
 
         // create outbound `SessionManager`
         let (outbound_leaseset, outbound_destination_id) = {
@@ -1334,7 +1348,8 @@ mod tests {
         };
         let mut outbound_session = SessionManager::<MockRuntime>::new(
             outbound_destination_id.clone(),
-            outbound_private_key,
+            outbound_private_key.clone(),
+            vec![outbound_private_key.public()],
             outbound_leaseset,
         );
         outbound_session.add_remote_destination(destination_id.clone(), public_key);
@@ -1496,6 +1511,7 @@ mod tests {
         let mut inbound_session = SessionManager::<MockRuntime>::new(
             inbound_destination_id.clone(),
             inbound_private_key,
+            vec![inbound_public_key.clone()],
             inbound_leaseset,
         );
 
@@ -1511,7 +1527,8 @@ mod tests {
         };
         let mut outbound_session = SessionManager::<MockRuntime>::new(
             outbound_destination_id.clone(),
-            outbound_private_key,
+            outbound_private_key.clone(),
+            vec![outbound_private_key.public()],
             outbound_leaseset,
         );
         outbound_session.add_remote_destination(inbound_destination_id.clone(), inbound_public_key);
@@ -1653,6 +1670,7 @@ mod tests {
         let mut inbound_session = SessionManager::<MockRuntime>::new(
             inbound_destination_id.clone(),
             inbound_private_key,
+            vec![inbound_public_key.clone()],
             inbound_leaseset,
         );
 
@@ -1668,7 +1686,8 @@ mod tests {
         };
         let mut outbound1_session = SessionManager::<MockRuntime>::new(
             outbound1_destination_id.clone(),
-            outbound1_private_key,
+            outbound1_private_key.clone(),
+            vec![outbound1_private_key.public()],
             outbound1_leaseset,
         );
         outbound1_session
@@ -1686,7 +1705,8 @@ mod tests {
         };
         let mut outbound2_session = SessionManager::<MockRuntime>::new(
             outbound2_destination_id.clone(),
-            outbound2_private_key,
+            outbound2_private_key.clone(),
+            vec![outbound2_private_key.public()],
             outbound2_leaseset,
         );
         outbound2_session
@@ -1923,7 +1943,8 @@ mod tests {
         };
         let mut inbound1_session = SessionManager::<MockRuntime>::new(
             inbound1_destination_id.clone(),
-            inbound1_private_key,
+            inbound1_private_key.clone(),
+            vec![inbound1_private_key.public()],
             inbound1_leaseset,
         );
 
@@ -1940,7 +1961,8 @@ mod tests {
         };
         let mut inbound2_session = SessionManager::<MockRuntime>::new(
             inbound2_destination_id.clone(),
-            inbound2_private_key,
+            inbound2_private_key.clone(),
+            vec![inbound2_private_key.public()],
             inbound2_leaseset,
         );
 
@@ -1956,7 +1978,8 @@ mod tests {
         };
         let mut outbound_session = SessionManager::<MockRuntime>::new(
             outbound_destination_id.clone(),
-            outbound_private_key,
+            outbound_private_key.clone(),
+            vec![outbound_private_key.public()],
             outbound_leaseset,
         );
         outbound_session
@@ -2158,6 +2181,7 @@ mod tests {
         let mut inbound_session = SessionManager::<MockRuntime>::new(
             inbound_destination_id.clone(),
             inbound_private_key,
+            vec![inbound_public_key.clone()],
             inbound_leaseset,
         );
 
@@ -2173,7 +2197,8 @@ mod tests {
         };
         let mut outbound_session = SessionManager::<MockRuntime>::new(
             outbound_destination_id.clone(),
-            outbound_private_key,
+            outbound_private_key.clone(),
+            vec![outbound_private_key.public()],
             outbound_leaseset,
         );
         outbound_session.add_remote_destination(inbound_destination_id.clone(), inbound_public_key);
@@ -2316,6 +2341,7 @@ mod tests {
         let mut inbound_session = SessionManager::<MockRuntime>::with_ratchet_threshold(
             inbound_destination_id.clone(),
             inbound_private_key,
+            vec![inbound_public_key.clone()],
             inbound_leaseset,
             TEST_THRESHOLD,
         );
@@ -2332,7 +2358,8 @@ mod tests {
         };
         let mut outbound_session = SessionManager::<MockRuntime>::with_ratchet_threshold(
             outbound_destination_id.clone(),
-            outbound_private_key,
+            outbound_private_key.clone(),
+            vec![outbound_private_key.public()],
             outbound_leaseset,
             TEST_THRESHOLD,
         );
@@ -2495,6 +2522,7 @@ mod tests {
         let mut inbound_session = SessionManager::<MockRuntime>::new(
             inbound_destination_id.clone(),
             inbound_private_key,
+            vec![inbound_public_key.clone()],
             inbound_leaseset,
         );
 
@@ -2518,7 +2546,8 @@ mod tests {
         };
         let mut outbound_session = SessionManager::<MockRuntime>::new(
             outbound_destination_id.clone(),
-            outbound_private_key.clone(),
+            outbound_private_key.clone().clone(),
+            vec![outbound_private_key.public()],
             outbound_leaseset,
         );
         outbound_session.add_remote_destination(inbound_destination_id.clone(), inbound_public_key);
@@ -2762,6 +2791,7 @@ mod tests {
         let mut inbound_session = SessionManager::<MockRuntime>::new(
             inbound_destination_id.clone(),
             inbound_private_key,
+            vec![inbound_public_key.clone()],
             inbound_leaseset,
         );
 
@@ -2785,7 +2815,8 @@ mod tests {
         };
         let mut outbound_session = SessionManager::<MockRuntime>::new(
             outbound_destination_id.clone(),
-            outbound_private_key.clone(),
+            outbound_private_key.clone().clone(),
+            vec![outbound_private_key.public()],
             outbound_leaseset,
         );
         outbound_session.add_remote_destination(inbound_destination_id.clone(), inbound_public_key);
@@ -3039,6 +3070,7 @@ mod tests {
         let mut inbound_session = SessionManager::<MockRuntime>::new(
             inbound_destination_id.clone(),
             inbound_private_key,
+            vec![inbound_public_key.clone()],
             inbound_leaseset,
         );
 
@@ -3062,7 +3094,8 @@ mod tests {
         };
         let mut outbound_session = SessionManager::<MockRuntime>::new(
             outbound_destination_id.clone(),
-            outbound_private_key.clone(),
+            outbound_private_key.clone().clone(),
+            vec![outbound_private_key.public()],
             outbound_leaseset,
         );
         outbound_session.add_remote_destination(inbound_destination_id.clone(), inbound_public_key);
@@ -3154,6 +3187,7 @@ mod tests {
         let mut inbound_session = SessionManager::<MockRuntime>::new(
             inbound_destination_id.clone(),
             inbound_private_key,
+            vec![inbound_public_key.clone()],
             inbound_leaseset,
         );
 
@@ -3177,7 +3211,8 @@ mod tests {
         };
         let mut outbound_session = SessionManager::<MockRuntime>::new(
             outbound_destination_id.clone(),
-            outbound_private_key.clone(),
+            outbound_private_key.clone().clone(),
+            vec![outbound_private_key.public()],
             outbound_leaseset,
         );
         outbound_session.add_remote_destination(inbound_destination_id.clone(), inbound_public_key);
@@ -3267,6 +3302,7 @@ mod tests {
         let mut inbound_session = SessionManager::<MockRuntime>::new(
             inbound_destination_id.clone(),
             inbound_private_key,
+            vec![inbound_public_key.clone()],
             inbound_leaseset,
         );
 
@@ -3290,7 +3326,8 @@ mod tests {
         };
         let mut outbound_session = SessionManager::<MockRuntime>::new(
             outbound_destination_id.clone(),
-            outbound_private_key.clone(),
+            outbound_private_key.clone().clone(),
+            vec![outbound_private_key.public()],
             outbound_leaseset,
         );
         outbound_session.add_remote_destination(inbound_destination_id.clone(), inbound_public_key);
@@ -3387,6 +3424,7 @@ mod tests {
         let mut inbound_session = SessionManager::<MockRuntime>::new(
             inbound_destination_id.clone(),
             inbound_private_key,
+            vec![inbound_public_key.clone()],
             inbound_leaseset,
         );
 
@@ -3410,7 +3448,8 @@ mod tests {
         };
         let mut outbound_session = SessionManager::<MockRuntime>::new(
             outbound_destination_id.clone(),
-            outbound_private_key.clone(),
+            outbound_private_key.clone().clone(),
+            vec![outbound_private_key.public()],
             outbound_leaseset,
         );
         outbound_session.add_remote_destination(inbound_destination_id.clone(), inbound_public_key);
@@ -3493,6 +3532,7 @@ mod tests {
         let mut inbound_session = SessionManager::<MockRuntime>::new(
             inbound_destination_id.clone(),
             inbound_private_key,
+            vec![inbound_public_key.clone()],
             inbound_leaseset,
         );
 
@@ -3516,7 +3556,8 @@ mod tests {
         };
         let mut outbound_session = SessionManager::<MockRuntime>::new(
             outbound_destination_id.clone(),
-            outbound_private_key.clone(),
+            outbound_private_key.clone().clone(),
+            vec![outbound_private_key.public()],
             outbound_leaseset,
         );
         outbound_session.add_remote_destination(inbound_destination_id.clone(), inbound_public_key);
@@ -3601,6 +3642,7 @@ mod tests {
         let mut inbound_session = SessionManager::<MockRuntime>::new(
             inbound_destination_id.clone(),
             inbound_private_key,
+            vec![inbound_public_key.clone()],
             inbound_leaseset,
         );
 
@@ -3624,7 +3666,8 @@ mod tests {
         };
         let mut outbound_session = SessionManager::<MockRuntime>::new(
             outbound_destination_id.clone(),
-            outbound_private_key.clone(),
+            outbound_private_key.clone().clone(),
+            vec![outbound_private_key.public()],
             outbound_leaseset,
         );
         outbound_session.add_remote_destination(inbound_destination_id.clone(), inbound_public_key);
@@ -3706,6 +3749,7 @@ mod tests {
         let mut inbound_session = SessionManager::<MockRuntime>::new(
             inbound_destination_id.clone(),
             inbound_private_key,
+            vec![inbound_public_key.clone()],
             inbound_leaseset,
         );
 
@@ -3729,7 +3773,8 @@ mod tests {
         };
         let mut outbound_session = SessionManager::<MockRuntime>::new(
             outbound_destination_id.clone(),
-            outbound_private_key.clone(),
+            outbound_private_key.clone().clone(),
+            vec![outbound_private_key.public()],
             outbound_leaseset,
         );
         outbound_session.add_remote_destination(inbound_destination_id.clone(), inbound_public_key);
@@ -3899,6 +3944,7 @@ mod tests {
         let mut inbound_session = SessionManager::<MockRuntime>::new(
             inbound_destination_id.clone(),
             inbound_private_key,
+            vec![inbound_public_key.clone()],
             inbound_leaseset,
         );
 
@@ -3922,7 +3968,8 @@ mod tests {
         };
         let mut outbound_session = SessionManager::<MockRuntime>::new(
             outbound_destination_id.clone(),
-            outbound_private_key.clone(),
+            outbound_private_key.clone().clone(),
+            vec![outbound_private_key.public()],
             outbound_leaseset,
         );
         outbound_session.add_remote_destination(inbound_destination_id.clone(), inbound_public_key);
@@ -4071,6 +4118,7 @@ mod tests {
         let mut inbound_session = SessionManager::<MockRuntime>::with_ratchet_threshold(
             inbound_destination_id.clone(),
             inbound_private_key,
+            vec![inbound_public_key.clone()],
             inbound_leaseset,
             TEST_THRESHOLD,
         );
@@ -4095,7 +4143,8 @@ mod tests {
         };
         let mut outbound_session = SessionManager::<MockRuntime>::with_ratchet_threshold(
             outbound_destination_id.clone(),
-            outbound_private_key.clone(),
+            outbound_private_key.clone().clone(),
+            vec![outbound_private_key.public()],
             outbound_leaseset,
             TEST_THRESHOLD,
         );
@@ -4236,6 +4285,7 @@ mod tests {
         let mut inbound_session = SessionManager::<MockRuntime>::with_ratchet_threshold(
             inbound_destination_id.clone(),
             inbound_private_key,
+            vec![inbound_public_key.clone()],
             inbound_leaseset,
             TEST_THRESHOLD,
         );
@@ -4260,7 +4310,8 @@ mod tests {
         };
         let mut outbound_session = SessionManager::<MockRuntime>::with_ratchet_threshold(
             outbound_destination_id.clone(),
-            outbound_private_key.clone(),
+            outbound_private_key.clone().clone(),
+            vec![outbound_private_key.public()],
             outbound_leaseset,
             TEST_THRESHOLD,
         );
@@ -4380,6 +4431,7 @@ mod tests {
         let mut inbound_session = SessionManager::<MockRuntime>::with_ratchet_threshold(
             inbound_destination_id.clone(),
             inbound_private_key,
+            vec![inbound_public_key.clone()],
             inbound_leaseset,
             TEST_THRESHOLD,
         );
@@ -4404,7 +4456,8 @@ mod tests {
         };
         let mut outbound_session = SessionManager::<MockRuntime>::with_ratchet_threshold(
             outbound_destination_id.clone(),
-            outbound_private_key.clone(),
+            outbound_private_key.clone().clone(),
+            vec![outbound_private_key.public()],
             outbound_leaseset,
             TEST_THRESHOLD,
         );
@@ -4712,8 +4765,12 @@ mod tests {
         let destination_id = DestinationId::random();
         let (leaseset, signing_key) = LeaseSet2::random();
         let leaseset = Bytes::from(leaseset.serialize(&signing_key));
-        let mut session =
-            SessionManager::<MockRuntime>::new(destination_id.clone(), private_key, leaseset);
+        let mut session = SessionManager::<MockRuntime>::new(
+            destination_id.clone(),
+            private_key.clone(),
+            vec![private_key.public()],
+            leaseset,
+        );
 
         let message = Message {
             message_type: MessageType::Garlic,
@@ -4736,8 +4793,12 @@ mod tests {
         let destination_id = DestinationId::random();
         let (leaseset, signing_key) = LeaseSet2::random();
         let leaseset = Bytes::from(leaseset.serialize(&signing_key));
-        let mut session =
-            SessionManager::<MockRuntime>::new(destination_id.clone(), private_key, leaseset);
+        let mut session = SessionManager::<MockRuntime>::new(
+            destination_id.clone(),
+            private_key.clone(),
+            vec![private_key.public()],
+            leaseset,
+        );
 
         let message = Message {
             message_type: MessageType::Garlic,
@@ -4764,8 +4825,12 @@ mod tests {
         let destination_id = DestinationId::random();
         let (leaseset, signing_key) = LeaseSet2::random();
         let leaseset = Bytes::from(leaseset.serialize(&signing_key));
-        let mut session =
-            SessionManager::<MockRuntime>::new(destination_id.clone(), private_key, leaseset);
+        let mut session = SessionManager::<MockRuntime>::new(
+            destination_id.clone(),
+            private_key.clone(),
+            vec![private_key.public()],
+            leaseset,
+        );
 
         let message = Message {
             message_type: MessageType::Garlic,
@@ -4785,6 +4850,147 @@ mod tests {
             Err(SessionError::Timestamp) => {}
             Err(error) => panic!("unexpected error: {error:?}"),
             Ok(_) => panic!("unexpected success"),
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn malformed_new_session_reply_x25519() {
+        malformed_new_session_reply(
+            StaticPrivateKey::random(MockRuntime::rng()),
+            StaticPrivateKey::random(MockRuntime::rng()),
+        )
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn malformed_new_session_reply_ml_kem_512() {
+        malformed_new_session_reply(
+            StaticPrivateKey::random_ml_kem_512(MockRuntime::rng()),
+            StaticPrivateKey::random_ml_kem_512(MockRuntime::rng()),
+        )
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn malformed_new_session_reply_ml_kem_768() {
+        malformed_new_session_reply(
+            StaticPrivateKey::random_ml_kem_768(MockRuntime::rng()),
+            StaticPrivateKey::random_ml_kem_768(MockRuntime::rng()),
+        )
+        .await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn malformed_new_session_reply_ml_kem_1024() {
+        malformed_new_session_reply(
+            StaticPrivateKey::random_ml_kem_1024(MockRuntime::rng()),
+            StaticPrivateKey::random_ml_kem_1024(MockRuntime::rng()),
+        )
+        .await;
+    }
+
+    // first NSR is decrypted successfully but the second NSR is malformed
+    //
+    // verify the NSR is discarded and the session can still finish the handshake
+    async fn malformed_new_session_reply(
+        inbound_private_key: StaticPrivateKey,
+        outbound_private_key: StaticPrivateKey,
+    ) {
+        // create inbound `SessionManager`
+        let inbound_public_key = inbound_private_key.public();
+        let (inbound_leaseset, inbound_destination_id) = {
+            let (leaseset, signing_key) = LeaseSet2::random();
+            let inbound_destination_id = leaseset.header.destination.id();
+
+            (
+                Bytes::from(leaseset.serialize(&signing_key)),
+                inbound_destination_id,
+            )
+        };
+        let mut inbound_session = SessionManager::<MockRuntime>::new(
+            inbound_destination_id.clone(),
+            inbound_private_key,
+            vec![inbound_public_key.clone()],
+            inbound_leaseset,
+        );
+
+        // create outbound `SessionManager`
+        let (
+            outbound_leaseset,
+            outbound_destination_id,
+            _outbound_destination,
+            _outbound_signing_key,
+        ) = {
+            let (leaseset, signing_key) = LeaseSet2::random();
+            let destination = leaseset.header.destination.clone();
+            let outbound_destination_id = leaseset.header.destination.id();
+
+            (
+                Bytes::from(leaseset.serialize(&signing_key)),
+                outbound_destination_id,
+                destination,
+                signing_key,
+            )
+        };
+        let mut outbound_session = SessionManager::<MockRuntime>::new(
+            outbound_destination_id.clone(),
+            outbound_private_key.clone().clone(),
+            vec![outbound_private_key.public()],
+            outbound_leaseset,
+        );
+        outbound_session.add_remote_destination(inbound_destination_id.clone(), inbound_public_key);
+
+        // initialize outbound session and create three NS messages
+        let message = outbound_session.encrypt(&inbound_destination_id, vec![1, 1, 1, 1]).unwrap();
+        decrypt_and_verify!(&mut inbound_session, message, vec![1u8; 4]);
+
+        // create multiple NSR messages
+        let mut messages = [
+            inbound_session.encrypt(&outbound_destination_id, vec![2, 2, 2, 2]).unwrap(),
+            inbound_session.encrypt(&outbound_destination_id, vec![3, 3, 3, 3]).unwrap(),
+            inbound_session.encrypt(&outbound_destination_id, vec![4, 4, 4, 4]).unwrap(),
+        ];
+
+        // for the second NSR, write garbage to section after the elligator2-encoded public key
+        //
+        // for x25519, this is the static key section and for ml-kem-* it's the kem ciphertext
+        {
+            let message = &mut messages[1];
+            for i in 50..=65 {
+                message[i] ^= 0xff;
+            }
+        }
+
+        // first message decrypts successfully
+        decrypt_and_verify!(&mut outbound_session, messages[0].clone(), vec![2u8; 4]);
+
+        // second message is
+        assert_eq!(
+            outbound_session
+                .decrypt(Message {
+                    payload: messages[1].clone(),
+                    ..Default::default()
+                })
+                .unwrap()
+                .count(),
+            0
+        );
+
+        // third message decrypts successfully
+        decrypt_and_verify!(&mut outbound_session, messages[2].clone(), vec![4u8; 4]);
+
+        // exchange few messages between the session to confirm they both work
+        for i in 5..=8 {
+            // send message from outbound to inbound
+            let message =
+                outbound_session.encrypt(&inbound_destination_id, vec![i as u8; 4]).unwrap();
+            decrypt_and_verify!(&mut inbound_session, message, vec![i as u8; 4]);
+
+            // send message from inbound to outbound
+            let message = inbound_session
+                .encrypt(&outbound_destination_id, vec![(i + 1) as u8; 4])
+                .unwrap();
+            decrypt_and_verify!(&mut outbound_session, message, vec![(i + 1) as u8; 4]);
         }
     }
 }

@@ -17,10 +17,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    crypto::{
-        base32_decode, base32_encode, base64_encode, sha256::Sha256, SigningPrivateKey,
-        StaticPrivateKey,
-    },
+    crypto::{base32_decode, base32_encode, base64_encode, sha256::Sha256, SigningPrivateKey},
     destination::{DeliveryStyle, Destination, DestinationEvent, LeaseSetStatus},
     error::QueryError,
     events::EventHandle,
@@ -36,6 +33,10 @@ use crate::{
             streaming::{Direction, ListenerKind, StreamManager, StreamManagerEvent},
         },
         socket::SamSocket,
+        types::{
+            PendingSession, PendingSessionState, PublicKeyContext, SamSessionCommand,
+            SamSessionCommandRecycle, SamSessionKind,
+        },
         SubSessionCommand,
     },
 };
@@ -54,7 +55,6 @@ use alloc::{
     vec::Vec,
 };
 use core::{
-    fmt,
     future::Future,
     pin::Pin,
     task::{Context, Poll, Waker},
@@ -63,231 +63,6 @@ use core::{
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "emissary::sam::session";
-
-/// Recycling strategy for [`SamSessionCommand`].
-#[derive(Default, Clone)]
-pub(super) struct SamSessionCommandRecycle(());
-
-impl<R: Runtime> thingbuf::Recycle<SamSessionCommand<R>> for SamSessionCommandRecycle {
-    fn new_element(&self) -> SamSessionCommand<R> {
-        SamSessionCommand::Dummy
-    }
-
-    fn recycle(&self, element: &mut SamSessionCommand<R>) {
-        *element = SamSessionCommand::Dummy;
-    }
-}
-
-/// SAMv3 session commands.
-#[derive(Default)]
-pub enum SamSessionCommand<R: Runtime> {
-    /// Open virtual stream to `destination` over this connection.
-    Connect {
-        /// SAMv3 socket associated with the outbound stream.
-        socket: Box<SamSocket<R>>,
-
-        /// Destination ID.
-        destination_id: DestinationId,
-
-        /// Options.
-        options: HashMap<String, String>,
-
-        /// Session ID.
-        session_id: Arc<str>,
-    },
-
-    /// Accept inbond virtual stream over this connection.
-    Accept {
-        /// SAMv3 socket associated with the inbound stream.
-        socket: Box<SamSocket<R>>,
-
-        /// Options.
-        options: HashMap<String, String>,
-
-        /// Session ID.
-        session_id: Arc<str>,
-    },
-
-    /// Forward incoming virtual streams to a TCP listener listening to `port`.
-    Forward {
-        /// SAMv3 socket associated with forwarding.
-        socket: Box<SamSocket<R>>,
-
-        /// Port which the TCP listener is listening.
-        port: u16,
-
-        /// Options.
-        options: HashMap<String, String>,
-
-        /// Session ID.
-        session_id: Arc<str>,
-    },
-
-    /// Send repliable datagram to remote destination.
-    SendDatagram {
-        /// Destination of the receiver.
-        destination: Box<Dest>,
-
-        /// Datagram.
-        datagram: Vec<u8>,
-
-        /// Session ID.
-        session_id: Arc<str>,
-
-        /// Options.
-        options: Option<Mapping>,
-    },
-
-    /// Dummy event, never constructed.
-    #[default]
-    Dummy,
-}
-
-/// State of a pending outbound session.
-enum PendingSessionState<R: Runtime> {
-    /// Awaiting lease set query result.
-    AwaitingLeaseSet {
-        /// SAMv3 client socket.
-        socket: Box<SamSocket<R>>,
-
-        /// Stream options.
-        options: HashMap<String, String>,
-    },
-
-    /// Awaiting session to be created
-    AwaitingSession {
-        /// Stream ID assigned by [`StreamManager`].
-        stream_id: u32,
-    },
-}
-
-impl<R: Runtime> fmt::Debug for PendingSessionState<R> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::AwaitingLeaseSet { .. } =>
-                f.debug_struct("PendingSessionState::AwaitingLeaseSet").finish_non_exhaustive(),
-            Self::AwaitingSession { stream_id } => f
-                .debug_struct("PendingSessionState::AwaitingSession")
-                .field("stream_id", &stream_id)
-                .finish(),
-        }
-    }
-}
-
-/// Pending sessions.
-///
-/// Session is considered pending if it's lease set is being queried.
-///
-/// Streams are also considered pending if one or more `SYN`s have been sent but no response
-/// has been received yet.
-#[derive(Default)]
-pub struct PendingSession<R: Runtime> {
-    /// Pending streams.
-    ///
-    /// Contains one or more pending streams for the remote destination.
-    streams: Vec<PendingSessionState<R>>,
-
-    /// Pending datagrams.
-    ///
-    /// Only set if there are pending datagrams for the remote destination.
-    datagrams: Option<(Dest, Vec<(Protocol, Vec<u8>, Option<Mapping>)>)>,
-}
-
-impl<R: Runtime> PendingSession<R> {
-    /// Create new [`PendingSession`].
-    fn new() -> Self {
-        Self {
-            streams: Vec::new(),
-            datagrams: None,
-        }
-    }
-}
-
-/// Session kind for [`SamSession`].
-enum SamSessionKind {
-    /// [`SamSession`] is configured to be a primary sessions, supporting multiple sub-sessions.
-    Primary {
-        /// Registered sub-sessions.
-        sub_sessions: HashMap<Arc<str>, SessionKind>,
-    },
-
-    /// [`SamSession`] is configured to be a stream session.
-    Stream,
-
-    /// [`SamSession`] is configured to be a datagram session.
-    Datagram {
-        /// Datagram kind.
-        kind: SessionKind,
-    },
-}
-
-impl SamSessionKind {
-    /// Does [`SamSession`] support `STREAM CONNECT`/`STREAM ACCEPT`/`STREAM FORWARD`
-    ///
-    /// `session_id` is the ID that the client gave when it sent the command and it's either the ID
-    /// that was given in `SESSION CREATE` or a ID of the sub-session given in `SESSION ADD`.
-    fn supports_streams(&self, session_id: &Arc<str>) -> bool {
-        match self {
-            Self::Stream => true,
-            Self::Datagram { .. } => false,
-            Self::Primary { sub_sessions } => sub_sessions
-                .get(session_id)
-                .is_some_and(|kind| core::matches!(kind, SessionKind::Stream)),
-        }
-    }
-
-    /// Does [`SamSession`] support datagrams.
-    ///
-    /// `session_id` is the ID that the client gave when it sent the command and it's either the ID
-    /// that was given in `SESSION CREATE` or a ID of the sub-session given in `SESSION ADD`.
-    fn supports_datagrams(&self, session_id: &Arc<str>) -> bool {
-        match self {
-            Self::Stream => false,
-            Self::Datagram { .. } => true,
-            Self::Primary { sub_sessions } => sub_sessions.get(session_id).is_some_and(|kind| {
-                core::matches!(
-                    kind,
-                    SessionKind::Datagram | SessionKind::Anonymous | SessionKind::Datagram2,
-                )
-            }),
-        }
-    }
-
-    /// Convert [`SamSessionKind`] into [`Protocol`].
-    ///
-    /// Panics if [`SamSessionKind`] is `Primary` and `session_id` doesn't exist.
-    fn as_protocol(&self, session_id: &Arc<str>) -> Protocol {
-        match self {
-            Self::Stream => Protocol::Streaming,
-            Self::Datagram { kind } => match kind {
-                SessionKind::Datagram => Protocol::Datagram,
-                SessionKind::Anonymous => Protocol::Anonymous,
-                SessionKind::Datagram2 => Protocol::Datagram2,
-                _ => unreachable!(),
-            },
-            Self::Primary { sub_sessions } => match sub_sessions.get(session_id).expect("to exist")
-            {
-                SessionKind::Stream => Protocol::Streaming,
-                SessionKind::Datagram => Protocol::Datagram,
-                SessionKind::Anonymous => Protocol::Anonymous,
-                SessionKind::Datagram2 => Protocol::Datagram2,
-                _ => unreachable!(),
-            },
-        }
-    }
-}
-
-impl fmt::Debug for SamSessionKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Stream => f.debug_struct("SamSessionKind::Stream").finish(),
-            Self::Datagram { .. } =>
-                f.debug_struct("SamSessionKind::Datagram").finish_non_exhaustive(),
-            Self::Primary { .. } =>
-                f.debug_struct("SamSessionKind::Primary").finish_non_exhaustive(),
-        }
-    }
-}
 
 /// Active SAMv3 session.
 pub struct SamSession<R: Runtime> {
@@ -304,9 +79,6 @@ pub struct SamSession<R: Runtime> {
 
     /// [`Destination`] of the session.
     destination: Destination<R>,
-
-    /// Encryption key.
-    encryption_key: StaticPrivateKey,
 
     /// Event handle.
     #[allow(unused)]
@@ -336,6 +108,9 @@ pub struct SamSession<R: Runtime> {
     /// is marked as pending until the lease set is found and all datagrams sent while the lease
     /// set is being queried are stored in the pending session state.
     pending_outbound: HashMap<DestinationId, PendingSession<R>>,
+
+    /// Public key context for the session.
+    public_key_context: PublicKeyContext,
 
     /// Receiver for commands sent for this session.
     ///
@@ -390,7 +165,7 @@ impl<R: Runtime> SamSession<R> {
             tunnel_pool_handle,
         } = context;
 
-        let (session_destination, dest, privkey, encryption_key, signing_key) = {
+        let (session_destination, dest, privkey, public_key_context, signing_key) = {
             let DestinationContext {
                 destination,
                 private_key,
@@ -413,13 +188,10 @@ impl<R: Runtime> SamSession<R> {
                 base64_encode(out)
             };
 
-            // generate new private key for the session
-            //
-            // the key extracted from `$privkey` is not used
-            let private_key = StaticPrivateKey::random(R::rng());
+            // create public key context for the session.
+            let public_key_context = PublicKeyContext::new::<R>(&options);
 
             // create leaseset for the destination and store it in `NetDb`
-            let public_key = private_key.public();
             let is_unpublished = options
                 .get("i2cp.dontPublishLeaseSet")
                 .map(|value| value.parse::<bool>().unwrap_or(false))
@@ -434,7 +206,7 @@ impl<R: Runtime> SamSession<R> {
                         offline_signature: None,
                         published: R::time_since_epoch().as_secs() as u32,
                     },
-                    public_keys: vec![public_key],
+                    public_keys: public_key_context.public_keys(),
                     leases: inbound.values().cloned().collect(),
                 }
                 .serialize(&signing_key),
@@ -452,7 +224,8 @@ impl<R: Runtime> SamSession<R> {
 
             let mut session_destination = Destination::new(
                 destination_id.clone(),
-                private_key.clone(),
+                public_key_context.private_key(),
+                public_key_context.public_keys(),
                 local_leaseset.clone(),
                 netdb_handle,
                 tunnel_pool_handle,
@@ -475,7 +248,7 @@ impl<R: Runtime> SamSession<R> {
                 session_destination,
                 destination,
                 privkey,
-                private_key,
+                public_key_context,
                 signing_key,
             )
         };
@@ -494,7 +267,7 @@ impl<R: Runtime> SamSession<R> {
             ),
             dest: dest.clone(),
             destination: session_destination,
-            encryption_key,
+            public_key_context,
             event_handle,
             lookup_futures: R::join_set(),
             options,
@@ -1555,7 +1328,7 @@ impl<R: Runtime> Future for SamSession<R> {
                                 offline_signature: None,
                                 published: R::time_since_epoch().as_secs() as u32,
                             },
-                            public_keys: vec![self.encryption_key.public()],
+                            public_keys: self.public_key_context.public_keys(),
                             leases,
                         }
                         .serialize(&self.signing_key),
@@ -1677,6 +1450,8 @@ mod tests {
 
         let socket = Box::new(SamSocket::<MockRuntime>::new(stream1.unwrap()));
         let (client_socket, _) = stream2.unwrap();
+        let options =
+            HashMap::from_iter([(String::from("i2cp.leaseSetEncType"), String::from("6,4"))]);
 
         (
             SamSession::new(SamSessionContext {
@@ -1690,7 +1465,7 @@ mod tests {
                 event_handle,
                 inbound: Default::default(),
                 netdb_handle,
-                options: Default::default(),
+                options,
                 outbound: Default::default(),
                 profile_storage: ProfileStorage::new(&[], &[]),
                 receiver: rx,

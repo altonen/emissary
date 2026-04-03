@@ -25,8 +25,8 @@ use crate::{
     runtime::{AddressBook, Runtime},
     sam::{
         parser::{DestinationContext, SessionKind},
-        session::{SamSessionCommand, SamSessionCommandRecycle},
         socket::SamSocket,
+        types::{SamSessionCommand, SamSessionCommandRecycle},
         SubSessionCommand,
     },
     tunnel::{TunnelPoolEvent, TunnelPoolHandle},

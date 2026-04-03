@@ -202,8 +202,11 @@ impl<R: Runtime> OutboundSession<R> {
             // the payload has been confirmed to be large enough to hold the public key
             let public_key = TryInto::<[u8; 32]>::try_into(&message[NSR_EPHEMERAL_PUBKEY_OFFSET])
                 .expect("to succeed");
-            let new_pubkey =
-                Randomized::from_representative(&public_key).unwrap().to_montgomery().to_bytes();
+            let new_pubkey = Randomized::from_representative(&public_key)
+                .into_option()
+                .ok_or(SessionError::Malformed)?
+                .to_montgomery()
+                .to_bytes();
 
             StaticPublicKey::from_bytes(new_pubkey)
         };
@@ -257,7 +260,7 @@ impl<R: Runtime> OutboundSession<R> {
                         + POLY1035_MAC_SIZE;
                 let mut kem_ciphertext = message[kem_ciphertext_offset.clone()].to_vec();
 
-                ChaChaPoly::new(&keydata).decrypt_with_ad(&state, &mut kem_ciphertext).unwrap();
+                ChaChaPoly::new(&keydata).decrypt_with_ad(&state, &mut kem_ciphertext)?;
                 keydata.zeroize();
 
                 // decapsulate and acquire shared key.

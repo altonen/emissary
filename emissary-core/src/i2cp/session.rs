@@ -17,7 +17,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    crypto::base64_decode,
+    crypto::{base64_decode, StaticPublicKey},
     destination::{DeliveryStyle, Destination, DestinationEvent, LeaseSetStatus},
     i2cp::{
         message::{
@@ -120,14 +120,17 @@ impl<R: Runtime> I2cpSession<R> {
             "start active i2cp session",
         );
 
-        // TODO: remove
-        for (key, value) in options.iter() {
-            tracing::info!("{key}={value}");
-        }
-
         let mut destination = Destination::new(
             destination_id.clone(),
             private_keys[0].clone(),
+            // default to 6,4
+            //
+            // TODO: respect client configuration
+            vec![
+                StaticPublicKey::try_from_bytes_ml_kem_768(private_keys[0].public().as_ref())
+                    .expect("valid public key"),
+                private_keys[0].public(),
+            ],
             leaseset.clone(),
             netdb_handle,
             tunnel_pool_handle,
