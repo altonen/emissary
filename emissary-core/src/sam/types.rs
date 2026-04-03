@@ -26,7 +26,13 @@ use crate::{
 
 use hashbrown::HashMap;
 
-use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    sync::Arc,
+    vec,
+    vec::Vec,
+};
 use core::fmt;
 
 /// Recycling strategy for [`SamSessionCommand`].
@@ -279,7 +285,6 @@ impl PublicKeyContext {
             .get(&"i2cp.leaseSetEncType".to_string())
             .expect("to exist")
             .split(",")
-            .into_iter()
             .map(|value| value.parse::<usize>().expect("valid encryption type"))
             .collect::<Vec<_>>();
 

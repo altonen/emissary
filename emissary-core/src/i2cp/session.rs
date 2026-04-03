@@ -37,7 +37,7 @@ use bytes::{Bytes, BytesMut};
 use futures::StreamExt;
 use hashbrown::HashMap;
 
-use alloc::{collections::VecDeque, string::ToString, sync::Arc, vec::Vec};
+use alloc::{collections::VecDeque, string::ToString, sync::Arc, vec, vec::Vec};
 use core::{
     future::Future,
     pin::Pin,

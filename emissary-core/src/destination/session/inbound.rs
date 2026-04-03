@@ -135,7 +135,7 @@ pub enum MlKemContext {
     /// ML-KEM-512-x25519.
     MlKem512X25519 {
         /// Ciphertext.
-        ciphertext: Ciphertext<MlKem512>,
+        ciphertext: Box<Ciphertext<MlKem512>>,
 
         /// Shared key.
         shared_key: SharedKey,
@@ -144,7 +144,7 @@ pub enum MlKemContext {
     /// ML-KEM-512-x25519.
     MlKem768X25519 {
         /// Ciphertext.
-        ciphertext: Ciphertext<MlKem768>,
+        ciphertext: Box<Ciphertext<MlKem768>>,
 
         /// Shared key.
         shared_key: SharedKey,
@@ -153,7 +153,7 @@ pub enum MlKemContext {
     /// ML-KEM-512-x25519.
     MlKem1024X25519 {
         /// Ciphertext.
-        ciphertext: Ciphertext<MlKem1024>,
+        ciphertext: Box<Ciphertext<MlKem1024>>,
 
         /// Shared key.
         shared_key: SharedKey,
@@ -172,7 +172,7 @@ impl MlKemContext {
                 let (ciphertext, shared_key) = key.encapsulate_with_rng(&mut R::rng());
 
                 Some(Self::MlKem512X25519 {
-                    ciphertext,
+                    ciphertext: Box::new(ciphertext),
                     shared_key,
                 })
             }
@@ -182,7 +182,7 @@ impl MlKemContext {
                 let (ciphertext, shared_key) = key.encapsulate_with_rng(&mut R::rng());
 
                 Some(Self::MlKem768X25519 {
-                    ciphertext,
+                    ciphertext: Box::new(ciphertext),
                     shared_key,
                 })
             }
@@ -192,7 +192,7 @@ impl MlKemContext {
                 let (ciphertext, shared_key) = key.encapsulate_with_rng(&mut R::rng());
 
                 Some(Self::MlKem1024X25519 {
-                    ciphertext,
+                    ciphertext: Box::new(ciphertext),
                     shared_key,
                 })
             }
@@ -218,7 +218,7 @@ impl MlKemContext {
             } => (shared_key, ciphertext.0.to_vec()),
         };
 
-        let mut temp_key = Hmac::new(&chaining_key).update(&shared_key).finalize_new();
+        let mut temp_key = Hmac::new(&chaining_key).update(shared_key).finalize_new();
         let chaining_key = Hmac::new(&temp_key).update(b"").update([0x01]).finalize_new();
 
         temp_key.zeroize();
@@ -334,7 +334,7 @@ impl<R: Runtime> InboundSession<R> {
                     let chaining_key =
                         Hmac::new(&temp_key).update(b"").update([0x01]).finalize_new();
                     let keydata = Hmac::new(&temp_key)
-                        .update(&chaining_key)
+                        .update(chaining_key)
                         .update(b"")
                         .update([0x02])
                         .finalize_new();
@@ -363,7 +363,7 @@ impl<R: Runtime> InboundSession<R> {
                     temp_key = Hmac::new(&chaining_key).update(&shared).finalize_new();
                     chaining_key = Hmac::new(&temp_key).update(b"").update([0x01]).finalize_new();
                     let keydata = Hmac::new(&temp_key)
-                        .update(&chaining_key)
+                        .update(chaining_key)
                         .update(b"")
                         .update([0x02])
                         .finalize_new();
@@ -385,7 +385,7 @@ impl<R: Runtime> InboundSession<R> {
                 let send_key = Hmac::new(&temp_key).update(&recv_key).update([0x02]).finalize();
 
                 // initialize send and receive tag sets
-                let send_tag_set = TagSet::new(&chaining_key, &send_key, ratchet_threshold);
+                let send_tag_set = TagSet::new(chaining_key, &send_key, ratchet_threshold);
                 let mut recv_tag_set = TagSet::new(chaining_key, recv_key, ratchet_threshold);
 
                 // encrypt payload of the `NewSessionReply` message
@@ -507,7 +507,7 @@ impl<R: Runtime> InboundSession<R> {
                     let chaining_key =
                         Hmac::new(&temp_key).update(b"").update([0x01]).finalize_new();
                     let keydata = Hmac::new(&temp_key)
-                        .update(&chaining_key)
+                        .update(chaining_key)
                         .update(b"")
                         .update([0x02])
                         .finalize_new();
@@ -536,7 +536,7 @@ impl<R: Runtime> InboundSession<R> {
                     temp_key = Hmac::new(&chaining_key).update(&shared).finalize();
                     chaining_key = Hmac::new(&temp_key).update(b"").update([0x01]).finalize_new();
                     let keydata = Hmac::new(&temp_key)
-                        .update(&chaining_key)
+                        .update(chaining_key)
                         .update(b"")
                         .update([0x02])
                         .finalize();
@@ -558,7 +558,7 @@ impl<R: Runtime> InboundSession<R> {
                 let send_key = Hmac::new(&temp_key).update(&recv_key).update([0x02]).finalize();
 
                 // initialize send and receive tag sets
-                let send_tag_set = TagSet::new(&chaining_key, &send_key, ratchet_threshold);
+                let send_tag_set = TagSet::new(chaining_key, &send_key, ratchet_threshold);
                 let mut recv_tag_set = TagSet::new(chaining_key, recv_key, ratchet_threshold);
 
                 // decode payload of the `NewSessionReply` message

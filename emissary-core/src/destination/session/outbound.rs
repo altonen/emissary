@@ -33,7 +33,7 @@ use curve25519_elligator2::{MapToPointVariant, Randomized};
 use ml_kem::{Decapsulate, DecapsulationKey, MlKem1024, MlKem512, MlKem768};
 use zeroize::Zeroize;
 
-use alloc::vec::Vec;
+use alloc::{boxed::Box, vec::Vec};
 use core::{fmt, marker::PhantomData, ops::Range};
 
 /// Logging target for the file.
@@ -60,13 +60,13 @@ const POLY1035_MAC_SIZE: usize = 16usize;
 /// ML-KEM context for hybrid PQ ratchet.
 pub enum MlKemContext {
     /// ML-KEM-512-x25519 ECIES-Rachet.
-    MlKem512X25519(DecapsulationKey<MlKem512>),
+    MlKem512X25519(Box<DecapsulationKey<MlKem512>>),
 
     /// ML-KEM-768-x25519 ECIES-Rachet.
-    MlKem768X25519(DecapsulationKey<MlKem768>),
+    MlKem768X25519(Box<DecapsulationKey<MlKem768>>),
 
     /// ML-KEM-1024-x25519 ECIES-Rachet.
-    MlKem1024X25519(DecapsulationKey<MlKem1024>),
+    MlKem1024X25519(Box<DecapsulationKey<MlKem1024>>),
 }
 
 impl MlKemContext {

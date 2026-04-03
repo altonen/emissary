@@ -40,7 +40,7 @@ use ml_kem::{kem::Kem, KeyExport, MlKem1024, MlKem512, MlKem768};
 use rand::Rng;
 use zeroize::Zeroize;
 
-use alloc::vec::Vec;
+use alloc::{boxed::Box, vec::Vec};
 use core::{fmt, marker::PhantomData, ops::Range};
 
 /// Logging target for the file.
@@ -162,7 +162,7 @@ impl fmt::Display for MlKemKind {
 }
 
 impl fmt::Debug for MlKemKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         <Self as fmt::Display>::fmt(self, f)
     }
 }
@@ -441,7 +441,7 @@ impl<R: Runtime> KeyContext<R> {
 
         let state = {
             let state = Sha256::new()
-                .update(&outbound_state)
+                .update(outbound_state)
                 .update::<&[u8]>(remote_public_key.as_ref())
                 .finalize();
 
@@ -450,7 +450,7 @@ impl<R: Runtime> KeyContext<R> {
 
         // derive keys for encrypting initiator's static key and possible for ml-kem section
         let mut shared = private_key.diffie_hellman(remote_public_key);
-        let mut temp_key = Hmac::new(&chaining_key).update(&shared).finalize();
+        let mut temp_key = Hmac::new(chaining_key).update(&shared).finalize();
         let chaining_key = Hmac::new(&temp_key).update(b"").update([0x01]).finalize();
         let mut cipher_key =
             Hmac::new(&temp_key).update(&chaining_key).update(b"").update([0x02]).finalize();
@@ -483,7 +483,7 @@ impl<R: Runtime> KeyContext<R> {
                     let (decap_key, encap_key) = MlKem512::generate_keypair_from_rng(&mut R::rng());
                     (
                         encap_key.to_bytes().to_vec(),
-                        Some(OutboundMlKemContext::MlKem512X25519(decap_key)),
+                        Some(OutboundMlKemContext::MlKem512X25519(Box::new(decap_key))),
                     )
                 }
                 StaticPublicKey::MlKem768X25519(_) => {
@@ -497,7 +497,7 @@ impl<R: Runtime> KeyContext<R> {
                     let (decap_key, encap_key) = MlKem768::generate_keypair_from_rng(&mut R::rng());
                     (
                         encap_key.to_bytes().to_vec(),
-                        Some(OutboundMlKemContext::MlKem768X25519(decap_key)),
+                        Some(OutboundMlKemContext::MlKem768X25519(Box::new(decap_key))),
                     )
                 }
                 StaticPublicKey::MlKem1024X25519(_) => {
@@ -512,7 +512,7 @@ impl<R: Runtime> KeyContext<R> {
                         MlKem1024::generate_keypair_from_rng(&mut R::rng());
                     (
                         encap_key.to_bytes().to_vec(),
-                        Some(OutboundMlKemContext::MlKem1024X25519(decap_key)),
+                        Some(OutboundMlKemContext::MlKem1024X25519(Box::new(decap_key))),
                     )
                 }
             };
@@ -649,7 +649,7 @@ impl<R: Runtime> KeyContext<R> {
         );
 
         // calculate new state based on remote's ephemeral public key
-        let state = Sha256::new().update(&kind.inbound_state()).update(&public_key).finalize();
+        let state = Sha256::new().update(kind.inbound_state()).update(public_key).finalize();
 
         // generate chaining key and cipher key for decrypting remote's public key
         let (chaining_key, cipher_key) = {
@@ -657,7 +657,7 @@ impl<R: Runtime> KeyContext<R> {
             let mut temp_key = Hmac::new(kind.chaining_key()).update(&shared).finalize();
             let chaining_key = Hmac::new(&temp_key).update(b"").update([0x01]).finalize_new();
             let cipher_key = Hmac::new(&temp_key)
-                .update(&chaining_key)
+                .update(chaining_key)
                 .update(b"")
                 .update([0x02])
                 .finalize_new();
@@ -683,7 +683,7 @@ impl<R: Runtime> KeyContext<R> {
         Ok(MlKemNsState {
             chaining_key,
             cipher_key,
-            ml_kem_context: InboundMlKemContext::new::<R>(&kind, encap_key)
+            ml_kem_context: InboundMlKemContext::new::<R>(kind, encap_key)
                 .ok_or(SessionError::EncapsulationFailure)?,
             offset: encap_offset,
             state: Sha256::new()
@@ -789,7 +789,7 @@ impl<R: Runtime> KeyContext<R> {
                 let mut temp_key = Hmac::new(chaining_key).update(&shared).finalize();
                 let chaining_key = Hmac::new(&temp_key).update(b"").update([0x01]).finalize_new();
                 let cipher_key = Hmac::new(&temp_key)
-                    .update(&chaining_key)
+                    .update(chaining_key)
                     .update(b"")
                     .update([0x02])
                     .finalize_new();
@@ -829,7 +829,7 @@ impl<R: Runtime> KeyContext<R> {
             (
                 StaticPublicKey::try_from_bytes(&static_key).expect("to succeed"),
                 Sha256::new()
-                    .update(&state)
+                    .update(state)
                     .update(&message[offset..offset + NS_STATIC_PUBKEY_SECTION_SIZE])
                     .finalize(),
             )

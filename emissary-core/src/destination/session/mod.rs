@@ -51,7 +51,7 @@ use parking_lot::RwLock;
 #[cfg(feature = "no_std")]
 use spin::rwlock::RwLock;
 
-use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
+use alloc::{collections::VecDeque, sync::Arc, vec, vec::Vec};
 use core::{
     mem,
     pin::Pin,

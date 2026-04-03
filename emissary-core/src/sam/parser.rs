@@ -38,6 +38,7 @@ use rand::Rng;
 use alloc::{
     borrow::ToOwned,
     boxed::Box,
+    format,
     string::{String, ToString},
     sync::Arc,
     vec,
@@ -514,7 +515,7 @@ impl<'a, R: Runtime> TryFrom<ParsedCommand<'a, R>> for SamCommand {
                     .filter_map(|enc_type| {
                         let encryption_type = enc_type.parse::<usize>().ok()?;
 
-                        if encryption_type < 3 || encryption_type > 7 {
+                        if !(3..=7).contains(&encryption_type) {
                             tracing::warn!(
                                 target: LOG_TARGET,
                                 ?encryption_type,

@@ -110,7 +110,7 @@ enum PendingSessionState<R: Runtime> {
     /// Inbound session received from remote destination.
     InboundActive {
         /// Inbound session.
-        inbound: InboundSession<R>,
+        inbound: Box<InboundSession<R>>,
 
         /// Garlic tags, global mapping for all active and pending sessions.
         garlic_tags: Arc<RwLock<HashMap<u64, DestinationId>>>,
@@ -218,7 +218,7 @@ impl<R: Runtime> PendingSession<R> {
             local,
             remote,
             state: PendingSessionState::InboundActive {
-                inbound,
+                inbound: Box::new(inbound),
                 tag_set_entries: HashMap::new(),
                 garlic_tags,
             },
