@@ -271,14 +271,28 @@ impl<R: Runtime> ExploratorySelector<R> {
 
 impl<R: Runtime> TunnelSelector for ExploratorySelector<R> {
     fn select_outbound_tunnel(&self) -> Option<(TunnelId, &TunnelPoolContextHandle)> {
-        self.outbound.read().keys().next().map(|tunnel_id| (*tunnel_id, &self.handle))
+        let inner = self.outbound.read();
+        if inner.is_empty() {
+            return None;
+        }
+
+        inner
+            .keys()
+            .cycle()
+            .nth((R::rng().next_u32() as usize) % inner.len())
+            .map(|tunnel_id| (*tunnel_id, &self.handle))
     }
 
     fn select_inbound_tunnel(&self) -> Option<(TunnelId, RouterId, &TunnelPoolContextHandle)> {
-        self.inbound
-            .read()
+        let inner = self.inbound.read();
+        if inner.is_empty() {
+            return None;
+        }
+
+        inner
             .iter()
-            .next()
+            .cycle()
+            .nth((R::rng().next_u32() as usize) % inner.len())
             .map(|(tunnel_id, (router_id, _))| (*tunnel_id, router_id.clone(), &self.handle))
     }
 
@@ -678,17 +692,27 @@ impl<R: Runtime> ClientSelector<R> {
 
 impl<R: Runtime> TunnelSelector for ClientSelector<R> {
     fn select_outbound_tunnel(&self) -> Option<(TunnelId, &TunnelPoolContextHandle)> {
-        self.outbound.keys().next().map_or_else(
-            || self.exploratory.select_outbound_tunnel(),
-            |tunnel_id| Some((*tunnel_id, &self.handle)),
-        )
+        if self.outbound.is_empty() {
+            return self.exploratory.select_outbound_tunnel();
+        }
+
+        self.outbound
+            .keys()
+            .cycle()
+            .nth((R::rng().next_u32() as usize) % self.outbound.len())
+            .map(|tunnel_id| (*tunnel_id, &self.handle))
     }
 
     fn select_inbound_tunnel(&self) -> Option<(TunnelId, RouterId, &TunnelPoolContextHandle)> {
-        self.inbound.iter().next().map_or_else(
-            || self.exploratory.select_inbound_tunnel(),
-            |(tunnel_id, (router_id, _))| Some((*tunnel_id, router_id.clone(), &self.handle)),
-        )
+        if self.inbound.is_empty() {
+            return self.exploratory.select_inbound_tunnel();
+        }
+
+        self.inbound
+            .iter()
+            .cycle()
+            .nth((R::rng().next_u32() as usize) % self.inbound.len())
+            .map(|(tunnel_id, (router_id, _))| (*tunnel_id, router_id.clone(), &self.handle))
     }
 
     fn add_outbound_tunnel(&mut self, tunnel_id: TunnelId, hops: HashSet<RouterId>) {
