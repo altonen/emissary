@@ -68,12 +68,17 @@ impl NoiseContext {
         secret_key: &S,
         public_key: &P,
     ) -> [u8; 32] {
-        let mut shared = secret_key.diffie_hellman(public_key);
-        let mut temp_key = Hmac::new(&self.chaining_key).update(shared).finalize_new();
+        self.mix_key_from_shared_secret(&secret_key.diffie_hellman(public_key))
+    }
+
+    /// Perform `MixKey()` from pre-computed shared secet
+    //
+    // TODO: merge this and `Self::mix_key()`
+    pub fn mix_key_from_shared_secret(&mut self, shared_secret: &[u8]) -> [u8; 32] {
+        let mut temp_key = Hmac::new(&self.chaining_key).update(shared_secret).finalize_new();
         self.chaining_key = Hmac::new(&temp_key).update([0x01]).finalize_new();
         let key = Hmac::new(&temp_key).update(self.chaining_key).update([0x02]).finalize_new();
 
-        shared.zeroize();
         temp_key.zeroize();
 
         key

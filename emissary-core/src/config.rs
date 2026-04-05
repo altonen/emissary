@@ -80,6 +80,18 @@ pub struct Ntcp2Config {
 
     /// Should NTCP2 be published in router info.
     pub publish: bool,
+
+    /// ML-KEM variant used for inbound PQ.
+    ///
+    /// If `None`, only x25519 is used.
+    pub ml_kem: Option<usize>,
+
+    /// Disable both inbound and outbound PQ connections.
+    ///
+    /// PQ connections are enabled if `None`/`Some(false)`.
+    ///
+    /// This option will be removed in the future.
+    pub disable_pq: Option<bool>,
 }
 
 /// SSU2 configuration.

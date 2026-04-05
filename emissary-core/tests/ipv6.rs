@@ -57,6 +57,8 @@ async fn make_router(
                 ipv4_host: mixed.then_some("127.0.0.1".parse().unwrap()),
                 ipv6_host: Some("::1".parse().unwrap()),
                 publish: true,
+                ml_kem: None,
+                disable_pq: None,
                 ipv4: mixed,
                 ipv6: true,
             }),

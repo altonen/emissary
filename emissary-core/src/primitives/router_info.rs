@@ -517,6 +517,8 @@ pub(crate) mod builder {
                 key,
                 port,
                 publish,
+                ml_kem,
+                disable_pq,
             }) = self.ntcp2.take()
             {
                 if ipv4 {
@@ -524,6 +526,8 @@ pub(crate) mod builder {
                         (true, Some(host)) => addresses.push(RouterAddress::new_published_ntcp2(
                             key,
                             iv,
+                            ml_kem,
+                            None,
                             IpAddr::V4(host),
                             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
                         )),
@@ -539,6 +543,8 @@ pub(crate) mod builder {
                         (true, Some(host)) => addresses.push(RouterAddress::new_published_ntcp2(
                             key,
                             iv,
+                            ml_kem,
+                            None,
                             IpAddr::V6(host),
                             SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), port),
                         )),
@@ -635,6 +641,8 @@ pub(crate) mod builder {
                     addresses.push(RouterAddress::new_published_ntcp2(
                         ntcp2_key,
                         ntcp2_iv,
+                        None,
+                        None,
                         ntcp2_host.parse().unwrap(),
                         SocketAddr::new(IpAddr::V4(ntcp2_host.parse().unwrap()), ntcp2_port),
                     ));
@@ -645,6 +653,8 @@ pub(crate) mod builder {
                     addresses.push(RouterAddress::new_published_ntcp2(
                         ntcp2_key,
                         ntcp2_iv,
+                        None,
+                        None,
                         ntcp2_host.parse().unwrap(),
                         SocketAddr::new(IpAddr::V6(ntcp2_host.parse().unwrap()), ntcp2_port),
                     ));
@@ -655,6 +665,8 @@ pub(crate) mod builder {
                     addresses.push(RouterAddress::new_published_ntcp2(
                         ntcp2_key,
                         ntcp2_iv,
+                        None,
+                        None,
                         ntcp2_host.parse().unwrap(),
                         SocketAddr::new(IpAddr::V6(ntcp2_host.parse().unwrap()), ntcp2_port),
                     ));
@@ -678,6 +690,8 @@ pub(crate) mod builder {
                     addresses.push(RouterAddress::new_published_ntcp2(
                         ntcp2_key,
                         ntcp2_iv,
+                        None,
+                        None,
                         ntcp2_host.parse().unwrap(),
                         SocketAddr::new(IpAddr::V4(ntcp2_host.parse().unwrap()), ntcp2_port),
                     ));
@@ -871,6 +885,8 @@ mod tests {
             addresses: Vec::from_iter([RouterAddress::new_published_ntcp2(
                 [1u8; 32],
                 [2u8; 16],
+                None,
+                None,
                 "127.0.0.1".parse().unwrap(),
                 SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
             )]),
@@ -898,6 +914,8 @@ mod tests {
             addresses: Vec::from_iter([RouterAddress::new_published_ntcp2(
                 [1u8; 32],
                 [2u8; 16],
+                None,
+                None,
                 "127.0.0.1".parse().unwrap(),
                 SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
             )]),
@@ -925,6 +943,8 @@ mod tests {
             addresses: Vec::from_iter([RouterAddress::new_published_ntcp2(
                 [1u8; 32],
                 [2u8; 16],
+                None,
+                None,
                 "127.0.0.1".parse().unwrap(),
                 SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
             )]),
@@ -1002,6 +1022,8 @@ mod tests {
             addresses: Vec::from_iter([RouterAddress::new_published_ntcp2(
                 [1u8; 32],
                 [2u8; 16],
+                None,
+                None,
                 "127.0.0.1".parse().unwrap(),
                 SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
             )]),
@@ -1030,6 +1052,8 @@ mod tests {
             addresses: Vec::from_iter([RouterAddress::new_published_ntcp2(
                 [1u8; 32],
                 [2u8; 16],
+                None,
+                None,
                 "127.0.0.1".parse().unwrap(),
                 SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
             )]),
@@ -1092,6 +1116,8 @@ mod tests {
                 RouterAddress::new_published_ntcp2(
                     [1u8; 32],
                     [2u8; 16],
+                    None,
+                    None,
                     "127.0.0.1".parse().unwrap(),
                     SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
                 ),

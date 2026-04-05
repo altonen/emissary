@@ -54,6 +54,8 @@ async fn make_router(
         TransportKind::Ntcp2 => (
             Some(Ntcp2Config {
                 port: 0u16,
+                ml_kem: None,
+                disable_pq: None,
                 iv: {
                     let mut iv = [0u8; 16];
                     TokioRuntime::rng().fill_bytes(&mut iv);
@@ -1622,6 +1624,8 @@ async fn host_lookup(kind: TransportKind) {
         TransportKind::Ntcp2 => (
             Some(Ntcp2Config {
                 port: 0u16,
+                ml_kem: None,
+                disable_pq: None,
                 iv: {
                     let mut iv = [0u8; 16];
                     TokioRuntime::rng().fill_bytes(&mut iv);

@@ -20,7 +20,7 @@ use crate::{
     constants,
     crypto::{base64_decode, base64_encode, StaticPrivateKey, StaticPublicKey},
     error::parser::RouterAddressParseError,
-    primitives::{Date, Mapping, RouterId, Str},
+    primitives::{Date, Mapping, RouterId, Str, LOG_TARGET},
     runtime::Runtime,
 };
 
@@ -145,10 +145,25 @@ impl RouterAddress {
     pub fn new_published_ntcp2(
         key: [u8; 32],
         iv: [u8; 16],
+        ml_kem: Option<usize>,
+        disable_pq: Option<bool>,
         host: IpAddr,
         address: SocketAddr,
     ) -> Self {
-        let static_key = StaticPrivateKey::from_bytes(key).public();
+        let static_key = match (ml_kem, disable_pq.unwrap_or(false)) {
+            (None, _) | (_, true) => StaticPrivateKey::from_bytes(key).public(),
+            (Some(3), false) => StaticPrivateKey::from_bytes_ml_kem_512(key).public(),
+            (Some(4), false) => StaticPrivateKey::from_bytes_ml_kem_768(key).public(),
+            (Some(5), false) => StaticPrivateKey::from_bytes_ml_kem_1024(key).public(),
+            (ml_kem, _) => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?ml_kem,
+                    "unrecognized ml-kem variant, defaulting to x25519",
+                );
+                StaticPrivateKey::from_bytes(key).public()
+            }
+        };
 
         let mut options = Mapping::default();
         options.insert(Str::from("v"), Str::from("2"));
@@ -156,6 +171,19 @@ impl RouterAddress {
         options.insert(Str::from("host"), Str::from(host.to_string()));
         options.insert(Str::from("port"), Str::from(address.port().to_string()));
         options.insert(Str::from("i"), Str::from(base64_encode(iv)));
+
+        match static_key {
+            StaticPublicKey::X25519(_) => {}
+            StaticPublicKey::MlKem512X25519(_) => {
+                options.insert(Str::from("pq"), Str::from("3"));
+            }
+            StaticPublicKey::MlKem768X25519(_) => {
+                options.insert(Str::from("pq"), Str::from("4"));
+            }
+            StaticPublicKey::MlKem1024X25519(_) => {
+                options.insert(Str::from("pq"), Str::from("5"));
+            }
+        }
 
         Self::Ntcp2 {
             cost: 3,
@@ -651,6 +679,8 @@ mod tests {
         let serialized = RouterAddress::new_published_ntcp2(
             [1u8; 32],
             [0xaa; 16],
+            None,
+            None,
             "127.0.0.1".parse().unwrap(),
             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
         )
@@ -693,6 +723,8 @@ mod tests {
         let serialized = RouterAddress::new_published_ntcp2(
             [1u8; 32],
             [0xaa; 16],
+            None,
+            None,
             "::1".parse().unwrap(),
             SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 8888),
         )
@@ -1342,6 +1374,101 @@ mod tests {
         match RouterAddress::parse::<MockRuntime>(&address.serialize()).unwrap() {
             RouterAddress::Ssu2 { mtu, .. } => assert_eq!(mtu, constants::ssu2::MAX_MTU),
             _ => panic!("invalid address"),
+        }
+    }
+
+    #[test]
+    fn ntcp2_x25519() {
+        let serialized = RouterAddress::new_published_ntcp2(
+            [1u8; 32],
+            [2u8; 16],
+            None,
+            None,
+            "127.0.0.1".parse().unwrap(),
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 8888),
+        )
+        .serialize();
+
+        match RouterAddress::parse::<MockRuntime>(&serialized).unwrap() {
+            RouterAddress::Ntcp2 { options, .. } => {
+                assert!(options.get(&Str::from("pq")).is_none());
+            }
+            _ => panic!("invalid ntcp2 address"),
+        }
+    }
+
+    #[test]
+    fn ntcp2_ml_kem_512() {
+        ntcp2_ml_kem(3, None);
+    }
+
+    #[test]
+    fn ntcp2_ml_kem_512_pq_disabled() {
+        ntcp2_ml_kem(3, Some(true));
+    }
+
+    #[test]
+    fn ntcp2_ml_kem_768() {
+        ntcp2_ml_kem(4, None);
+    }
+
+    #[test]
+    fn ntcp2_ml_kem_768_pq_disabled() {
+        ntcp2_ml_kem(4, Some(true));
+    }
+
+    #[test]
+    fn ntcp2_ml_kem_1024() {
+        ntcp2_ml_kem(5, None);
+    }
+
+    #[test]
+    fn ntcp2_ml_kem_1024_pq_disabled() {
+        ntcp2_ml_kem(5, Some(true));
+    }
+
+    fn ntcp2_ml_kem(variant: usize, disabled: Option<bool>) {
+        let serialized = RouterAddress::new_published_ntcp2(
+            [1u8; 32],
+            [2u8; 16],
+            Some(variant),
+            disabled,
+            "127.0.0.1".parse().unwrap(),
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 8888),
+        )
+        .serialize();
+
+        match RouterAddress::parse::<MockRuntime>(&serialized).unwrap() {
+            RouterAddress::Ntcp2 { options, .. } =>
+                if disabled.unwrap_or(false) {
+                    assert!(options.get(&Str::from("pq")).is_none());
+                } else {
+                    assert_eq!(
+                        options.get(&Str::from("pq")),
+                        Some(&Str::from(variant.to_string()))
+                    );
+                },
+            _ => panic!("invalid ntcp2 address"),
+        }
+    }
+
+    #[test]
+    fn ntcp2_invalid_ml_kem_variant() {
+        let serialized = RouterAddress::new_published_ntcp2(
+            [1u8; 32],
+            [2u8; 16],
+            Some(1337),
+            None,
+            "127.0.0.1".parse().unwrap(),
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 8888),
+        )
+        .serialize();
+
+        match RouterAddress::parse::<MockRuntime>(&serialized).unwrap() {
+            RouterAddress::Ntcp2 { options, .. } => {
+                assert!(options.get(&Str::from("pq")).is_none());
+            }
+            _ => panic!("invalid ntcp2 address"),
         }
     }
 }

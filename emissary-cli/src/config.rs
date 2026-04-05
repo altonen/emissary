@@ -85,6 +85,8 @@ pub struct Ntcp2Config {
     pub publish: Option<bool>,
     pub ipv4: Option<bool>,
     pub ipv6: Option<bool>,
+    pub ml_kem: Option<usize>,
+    pub disable_pq: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -293,6 +295,8 @@ impl EmissaryConfig {
                 ipv4: Some(true),
                 ipv6: Some(true),
                 publish: Some(true),
+                ml_kem: Some(4),
+                disable_pq: Some(false),
             }),
             port_forwarding: Some(PortForwardingConfig {
                 nat_pmp: true,
@@ -655,6 +659,8 @@ impl Config {
                 publish: config.publish.unwrap_or(false),
                 key: ntcp2_key,
                 iv: ntcp2_iv,
+                ml_kem: config.ml_kem,
+                disable_pq: config.disable_pq,
             }),
             port_forwarding: config.port_forwarding.map(From::from),
             profiles: Vec::new(),
@@ -1096,6 +1102,8 @@ mod tests {
                 ipv4: Some(true),
                 ipv6: Some(false),
                 publish: None,
+                ml_kem: None,
+                disable_pq: None,
             }),
             ..EmissaryConfig::new::<TokioRuntime>()
         };

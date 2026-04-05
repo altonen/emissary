@@ -18,6 +18,7 @@
 
 use crate::{
     config::Ntcp2Config,
+    crypto::StaticPrivateKey,
     error::{ConnectionError, DialError, Error, Ntcp2Error},
     primitives::{RouterAddress, RouterId, RouterInfo, TransportKind},
     router::context::RouterContext,
@@ -75,6 +76,9 @@ pub struct Ntcp2Context<R: Runtime> {
 
     /// IPv6 socket address.
     ipv6_socket_address: Option<SocketAddr>,
+
+    /// Static private key.
+    static_key: StaticPrivateKey,
 }
 
 impl<R: Runtime> Ntcp2Context<R> {
@@ -151,13 +155,15 @@ impl<R: Runtime> Ntcp2Transport<R> {
             ipv4_socket_address,
             ipv6_listener,
             ipv6_socket_address,
+            static_key,
         } = context;
 
         let session_manager = SessionManager::new(
-            config.key,
+            static_key,
             config.iv,
             router_ctx.clone(),
             allow_local,
+            !config.disable_pq.unwrap_or(false),
             transport_tx,
         );
 
@@ -166,6 +172,7 @@ impl<R: Runtime> Ntcp2Transport<R> {
             ipv4_address = ?ipv4_socket_address,
             ipv6_address = ?ipv6_socket_address,
             ?allow_local,
+            allow_pq = ?(!config.disable_pq.unwrap_or(false)),
             "starting ntcp2",
         );
 
@@ -243,6 +250,8 @@ impl<R: Runtime> Ntcp2Transport<R> {
                 (true, Some(host)) => RouterAddress::new_published_ntcp2(
                     config.key,
                     config.iv,
+                    config.ml_kem,
+                    config.disable_pq,
                     IpAddr::V4(host),
                     socket_address,
                 ),
@@ -294,6 +303,8 @@ impl<R: Runtime> Ntcp2Transport<R> {
                 (true, Some(host)) => RouterAddress::new_published_ntcp2(
                     config.key,
                     config.iv,
+                    config.ml_kem,
+                    config.disable_pq,
                     IpAddr::V6(host),
                     socket_address,
                 ),
@@ -312,6 +323,37 @@ impl<R: Runtime> Ntcp2Transport<R> {
             (None, None, None)
         };
 
+        let static_key = match (config.ml_kem, config.disable_pq.unwrap_or(false)) {
+            (Some(3), false) => {
+                tracing::info!(
+                    target: LOG_TARGET,
+                    "running ntcp2 as ml-kem-512-x25519/x25519 hybrid",
+                );
+                StaticPrivateKey::from_bytes_ml_kem_512(config.key)
+            }
+            (Some(4), false) => {
+                tracing::info!(
+                    target: LOG_TARGET,
+                    "running ntcp2 as ml-kem-768-x25519/x25519 hybrid",
+                );
+                StaticPrivateKey::from_bytes_ml_kem_768(config.key)
+            }
+            (Some(5), false) => {
+                tracing::info!(
+                    target: LOG_TARGET,
+                    "running ntcp2 as ml-kem-1024-x25519/x25519 hybrid",
+                );
+                StaticPrivateKey::from_bytes_ml_kem_1024(config.key)
+            }
+            _ => {
+                tracing::info!(
+                    target: LOG_TARGET,
+                    "running ntcp2 as x25519 only",
+                );
+                StaticPrivateKey::from_bytes(config.key)
+            }
+        };
+
         Ok((
             Some(Ntcp2Context {
                 config,
@@ -319,6 +361,7 @@ impl<R: Runtime> Ntcp2Transport<R> {
                 ipv4_socket_address,
                 ipv6_listener,
                 ipv6_socket_address,
+                static_key,
             }),
             ipv4_address,
             ipv6_address,
@@ -557,6 +600,8 @@ mod tests {
             ipv4_host: Some("8.8.8.8".parse().unwrap()),
             ipv6_host: None,
             publish: true,
+            ml_kem: None,
+            disable_pq: None,
             key: [0xaa; 32],
             iv: [0xbb; 16],
             ipv4: true,
@@ -593,6 +638,76 @@ mod tests {
             port: 0u16,
             ipv4_host: None,
             ipv6_host: Some("::1".parse().unwrap()),
+            ipv4: false,
+            ipv6: true,
+            publish: false,
+            ml_kem: None,
+            disable_pq: None,
+            key: [0xaa; 32],
+            iv: [0xbb; 16],
+        });
+        let (context, ipv4_address, ipv6_address) =
+            Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
+
+        match ipv6_address.unwrap() {
+            RouterAddress::Ntcp2 {
+                options,
+                socket_address,
+                ..
+            } => {
+                assert!(options.get(&Str::from("host")).is_none());
+                assert!(options.get(&Str::from("port")).is_none());
+                assert!(options.get(&Str::from("i")).is_none());
+                assert!(socket_address.is_some());
+            }
+            _ => panic!("invalid ntcp2 address"),
+        }
+        assert!(ipv4_address.is_none());
+        assert!(context.is_some());
+    }
+
+    #[tokio::test]
+    async fn dont_publish_ntcp_host_specified() {
+        let config = Some(Ntcp2Config {
+            port: 0u16,
+            ipv4_host: Some("8.8.8.8".parse().unwrap()),
+            ipv6_host: None,
+            ipv4: true,
+            ipv6: false,
+            ml_kem: None,
+            disable_pq: None,
+            publish: false,
+            key: [0xaa; 32],
+            iv: [0xbb; 16],
+        });
+        let (context, ipv4_address, ipv6_address) =
+            Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
+
+        match ipv4_address.unwrap() {
+            RouterAddress::Ntcp2 {
+                options,
+                socket_address,
+                ..
+            } => {
+                assert!(options.get(&Str::from("host")).is_none());
+                assert!(options.get(&Str::from("port")).is_none());
+                assert!(options.get(&Str::from("i")).is_none());
+                assert!(socket_address.is_some());
+            }
+            _ => panic!("invalid ntcp2 address"),
+        }
+        assert!(context.is_some());
+        assert!(ipv6_address.is_none());
+    }
+
+    #[tokio::test]
+    async fn publish_ntcp_but_no_host() {
+        let config = Some(Ntcp2Config {
+            port: 0u16,
+            ipv4_host: None,
+            ipv6_host: Some("::1".parse().unwrap()),
+            ml_kem: None,
+            disable_pq: None,
             publish: true,
             key: [0xaa; 32],
             iv: [0xbb; 16],
@@ -637,6 +752,8 @@ mod tests {
             iv: [0xbb; 16],
             ipv4: true,
             ipv6: true,
+            ml_kem: None,
+            disable_pq: None,
         });
         let (context, ipv4_address, ipv6_address) =
             Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
@@ -696,6 +813,8 @@ mod tests {
             iv: [0xbb; 16],
             ipv4: true,
             ipv6: false,
+            ml_kem: None,
+            disable_pq: None,
         });
         let (context, ipv4_address, ipv6_address) =
             Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
@@ -728,6 +847,8 @@ mod tests {
             iv: [0xbb; 16],
             ipv4: true,
             ipv6: false,
+            ml_kem: None,
+            disable_pq: None,
         });
         let (context, ipv4_address, ipv6_address) =
             Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
@@ -760,6 +881,8 @@ mod tests {
             iv: [0xbb; 16],
             ipv4: true,
             ipv6: false,
+            ml_kem: None,
+            disable_pq: None,
         });
         let (context, ipv4_address, ipv6_address) =
             Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
@@ -787,6 +910,8 @@ mod tests {
             port: 0u16,
             ipv4_host: None,
             ipv6_host: None,
+            ml_kem: None,
+            disable_pq: None,
             publish: true,
             key: [0xaa; 32],
             iv: [0xbb; 16],
@@ -820,6 +945,8 @@ mod tests {
             port: 0u16,
             ipv4_host: Some("8.8.8.8".parse().unwrap()),
             ipv6_host: None,
+            ml_kem: None,
+            disable_pq: None,
             publish: true,
             key: [0xaa; 32],
             iv: [0xbb; 16],

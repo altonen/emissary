@@ -34,7 +34,7 @@ use crate::{
     crypto::{noise::NoiseContext, sha256::Sha256, siphash::SipHash, StaticPrivateKey},
     error::Ntcp2Error,
     events::EventHandle,
-    primitives::{RouterAddress, RouterId, RouterInfo},
+    primitives::{RouterAddress, RouterId, RouterInfo, Str},
     profile::ProfileStorage,
     router::context::RouterContext,
     runtime::{Runtime, TcpStream},
@@ -47,10 +47,12 @@ use crate::{
 };
 
 use bytes::Bytes;
+use ml_kem::{array::Array, Encapsulate, EncapsulationKey, MlKem1024, MlKem512, MlKem768};
 use thingbuf::mpsc::Sender;
 
-use alloc::{vec, vec::Vec};
+use alloc::{sync::Arc, vec, vec::Vec};
 use core::{
+    fmt,
     future::Future,
     net::{IpAddr, SocketAddr},
     time::Duration,
@@ -65,11 +67,189 @@ pub use active::Ntcp2Session;
 /// Logging target for the file.
 const LOG_TARGET: &str = "emissary::ntcp2::session";
 
-/// Noise protocol name;.
-const PROTOCOL_NAME: &str = "Noise_XKaesobfse+hs2+hs3_25519_ChaChaPoly_SHA256";
-
 /// Maximum allowed clock skew.
 const MAX_CLOCK_SKEW: Duration = Duration::from_secs(60);
+
+mod constants {
+    pub mod x25519 {
+        /// Noise protocol name.
+        pub const PROTOCOL_NAME: &str = "Noise_XKaesobfse+hs2+hs3_25519_ChaChaPoly_SHA256";
+    }
+
+    pub mod ml_kem_512 {
+        /// Noise protocol name.
+        pub const PROTOCOL_NAME: &str =
+            "Noise_XKhfsaesobfse+hs2+hs3_25519+MLKEM512_ChaChaPoly_SHA256";
+    }
+
+    pub mod ml_kem_768 {
+        /// Noise protocol name.
+        pub const PROTOCOL_NAME: &str =
+            "Noise_XKhfsaesobfse+hs2+hs3_25519+MLKEM768_ChaChaPoly_SHA256";
+    }
+
+    pub mod ml_kem_1024 {
+        /// Noise protocol name.
+        pub const PROTOCOL_NAME: &str =
+            "Noise_XKhfsaesobfse+hs2+hs3_25519+MLKEM1024_ChaChaPoly_SHA256";
+    }
+}
+
+/// ML-KEM context.
+#[derive(Clone)]
+enum MlKemContext<T> {
+    /// ML-KEM-512-x25519
+    MlKem512X25519(T),
+
+    /// ML-KEM-768-x25519
+    MlKem768X25519(T),
+
+    /// ML-KEM-1024-x25519
+    MlKem1024X25519(T),
+}
+
+/// Inbound state.
+#[derive(Clone)]
+struct InboundState {
+    /// Protocol state for the selected ML-KEM variant.
+    ///
+    /// First value is chaining key and second value is inbound state.
+    ///
+    /// `None` if ML-KEM has not been enabled.
+    ml_kem: Option<MlKemContext<([u8; 32], [u8; 32])>>,
+
+    /// Protocol state for x25519.
+    ///
+    /// First value is chaining key and second value is inbound state.
+    x25519: ([u8; 32], [u8; 32]),
+}
+
+/// Outbound states for all supportd protocols.
+// TODO: not good
+struct OutboundState {
+    /// Outbound state for ML-KEM-1024.
+    ml_kem_1024: ([u8; 32], [u8; 32]),
+
+    /// Outbound state for ML-KEM-512.
+    ml_kem_512: ([u8; 32], [u8; 32]),
+
+    /// Outbound state for ML-KEM-768.
+    ml_kem_768: ([u8; 32], [u8; 32]),
+
+    /// Outbound state for X25519.
+    x25519: ([u8; 32], [u8; 32]),
+}
+
+/// Encryption context for outbound connections.
+enum EncryptionContext {
+    /// X25519.
+    X25519(NoiseContext),
+
+    /// ML-KEM-512-x25519
+    MlKem512X25519(NoiseContext),
+
+    /// ML-KEM-768-x25519
+    MlKem768X25519(NoiseContext),
+
+    /// ML-KEM-1024-x25519
+    MlKem1024X25519(NoiseContext),
+}
+
+impl TryFrom<InboundState> for EncryptionContext {
+    type Error = ();
+
+    fn try_from(value: InboundState) -> Result<Self, Self::Error> {
+        match value.ml_kem {
+            None => Err(()),
+            Some(MlKemContext::MlKem512X25519((chaining_key, inbound_state))) => Ok(
+                EncryptionContext::MlKem512X25519(NoiseContext::new(chaining_key, inbound_state)),
+            ),
+            Some(MlKemContext::MlKem768X25519((chaining_key, inbound_state))) => Ok(
+                EncryptionContext::MlKem768X25519(NoiseContext::new(chaining_key, inbound_state)),
+            ),
+            Some(MlKemContext::MlKem1024X25519((chaining_key, inbound_state))) => Ok(
+                EncryptionContext::MlKem1024X25519(NoiseContext::new(chaining_key, inbound_state)),
+            ),
+        }
+    }
+}
+
+impl EncryptionContext {
+    /// Get mutable reference to inner `NoiseContext`.
+    pub fn noise_ctx(&mut self) -> &mut NoiseContext {
+        match self {
+            Self::X25519(ctx) => ctx,
+            Self::MlKem512X25519(ctx) => ctx,
+            Self::MlKem768X25519(ctx) => ctx,
+            Self::MlKem1024X25519(ctx) => ctx,
+        }
+    }
+
+    /// Get the size of ML-KEM encapsulation key.
+    ///
+    /// Returns `0` for x25519.
+    pub fn encapsulation_key_size(&self) -> usize {
+        match self {
+            Self::X25519(_) => 0,
+            Self::MlKem512X25519(_) => 800,
+            Self::MlKem768X25519(_) => 1184,
+            Self::MlKem1024X25519(_) => 1568,
+        }
+    }
+
+    /// Get ML-KEM ciphertext length.
+    ///
+    /// Panics if called for x25519.
+    pub fn kem_ciphertext_size(&self) -> usize {
+        match self {
+            Self::X25519(_) => unreachable!(),
+            Self::MlKem512X25519(_) => 768,
+            Self::MlKem768X25519(_) => 1088,
+            Self::MlKem1024X25519(_) => 1568,
+        }
+    }
+
+    /// Encapsulate and derive KEM ciphertext and shared secret.
+    ///
+    /// Panics if called for x25519.
+    pub fn encapsulate<R: Runtime>(&self, encapsulation_key: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
+        match self {
+            Self::X25519(_) => unreachable!(),
+            Self::MlKem512X25519(_) => {
+                let key = Array::try_from(encapsulation_key).ok()?;
+                let key = EncapsulationKey::<MlKem512>::new(&key).ok()?;
+                let (ciphertext, shared_key) = key.encapsulate_with_rng(&mut R::rng());
+
+                Some((ciphertext.to_vec(), shared_key.to_vec()))
+            }
+            Self::MlKem768X25519(_) => {
+                let key = Array::try_from(encapsulation_key).ok()?;
+                let key = EncapsulationKey::<MlKem768>::new(&key).ok()?;
+                let (ciphertext, shared_key) = key.encapsulate_with_rng(&mut R::rng());
+
+                Some((ciphertext.to_vec(), shared_key.to_vec()))
+            }
+            Self::MlKem1024X25519(_) => {
+                let key = Array::try_from(encapsulation_key).ok()?;
+                let key = EncapsulationKey::<MlKem1024>::new(&key).ok()?;
+                let (ciphertext, shared_key) = key.encapsulate_with_rng(&mut R::rng());
+
+                Some((ciphertext.to_vec(), shared_key.to_vec()))
+            }
+        }
+    }
+}
+
+impl fmt::Display for EncryptionContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::X25519(_) => write!(f, "x25519"),
+            Self::MlKem512X25519(_) => write!(f, "ml-kem-512-x25519"),
+            Self::MlKem768X25519(_) => write!(f, "ml-kem-768-x25519"),
+            Self::MlKem1024X25519(_) => write!(f, "ml-kem-1024-x25519"),
+        }
+    }
+}
 
 /// Role of the session.
 #[derive(Debug, Clone, Copy)]
@@ -111,23 +291,23 @@ pub struct SessionManager<R: Runtime> {
     /// Allow local addresses.
     allow_local: bool,
 
-    /// Chaining key.
-    chaining_key: [u8; 32],
+    /// Allow inbound and outbond PQ connections.
+    allow_pq: bool,
 
-    /// State that is common for all inbound connections.
-    inbound_initial_state: [u8; 32],
+    /// Inbound state.
+    inbound: InboundState,
+
+    /// Outbound state.
+    outbound: Arc<OutboundState>,
 
     /// Local NTCP2 IV.
     local_iv: [u8; 16],
 
-    /// Local NTCP2 static key.
-    local_key: StaticPrivateKey,
-
-    /// State that is common for all outbound connections.
-    outbound_initial_state: [u8; 32],
-
     /// Router context.
     router_ctx: RouterContext<R>,
+
+    /// Local NTCP2 static key.
+    static_key: StaticPrivateKey,
 
     /// TX channel for sending events to `SubsystemManager`.
     transport_tx: Sender<SubsystemEvent>,
@@ -142,28 +322,54 @@ impl<R: Runtime> SessionManager<R> {
     ///
     /// [1]: https://geti2p.net/spec/ntcp2#key-derivation-function-kdf-for-handshake-message-1
     pub fn new(
-        local_key: [u8; 32],
+        static_key: StaticPrivateKey,
         local_iv: [u8; 16],
         router_ctx: RouterContext<R>,
         allow_local: bool,
+        allow_pq: bool,
         transport_tx: Sender<SubsystemEvent>,
     ) -> Self {
-        let local_key = StaticPrivateKey::from_bytes(local_key);
-        let state = Sha256::new().update(PROTOCOL_NAME.as_bytes()).finalize_new();
-        let chaining_key = state;
-        let outbound_initial_state = Sha256::new().update(state).finalize_new();
-        let inbound_initial_state = Sha256::new()
-            .update(outbound_initial_state)
-            .update(local_key.public().to_vec())
-            .finalize_new();
+        let public_key = static_key.public();
+        let make_key_context = |protocol_name: &str| -> ([u8; 32], [u8; 32], [u8; 32]) {
+            let chaining_key = Sha256::new().update(protocol_name.as_bytes()).finalize_new();
+
+            let outbound_state = Sha256::new().update(chaining_key).finalize_new();
+            let inbound_state =
+                Sha256::new().update(outbound_state).update(&public_key).finalize_new();
+
+            (chaining_key, outbound_state, inbound_state)
+        };
+
+        let x25519 = make_key_context(constants::x25519::PROTOCOL_NAME);
+        let ml_kem_512 = make_key_context(constants::ml_kem_512::PROTOCOL_NAME);
+        let ml_kem_768 = make_key_context(constants::ml_kem_768::PROTOCOL_NAME);
+        let ml_kem_1024 = make_key_context(constants::ml_kem_1024::PROTOCOL_NAME);
 
         Self {
             allow_local,
-            chaining_key,
-            inbound_initial_state,
+            allow_pq,
+            inbound: InboundState {
+                ml_kem: match static_key {
+                    StaticPrivateKey::X25519(_) => None,
+                    StaticPrivateKey::MlKem512X25519(_) =>
+                        Some(MlKemContext::MlKem512X25519((ml_kem_512.0, ml_kem_512.2))),
+                    StaticPrivateKey::MlKem768X25519(_) =>
+                        Some(MlKemContext::MlKem768X25519((ml_kem_768.0, ml_kem_768.2))),
+                    StaticPrivateKey::MlKem1024X25519(_) => Some(MlKemContext::MlKem1024X25519((
+                        ml_kem_1024.0,
+                        ml_kem_1024.2,
+                    ))),
+                },
+                x25519: (x25519.0, x25519.2),
+            },
+            outbound: Arc::new(OutboundState {
+                x25519: (x25519.0, x25519.1),
+                ml_kem_512: (ml_kem_512.0, ml_kem_512.1),
+                ml_kem_768: (ml_kem_768.0, ml_kem_768.1),
+                ml_kem_1024: (ml_kem_1024.0, ml_kem_1024.1),
+            }),
             local_iv,
-            local_key,
-            outbound_initial_state,
+            static_key,
             router_ctx,
             transport_tx,
         }
@@ -175,8 +381,9 @@ impl<R: Runtime> SessionManager<R> {
         net_id: u8,
         local_info: Bytes,
         local_key: StaticPrivateKey,
-        noise_ctx: NoiseContext,
+        outbound_state: Arc<OutboundState>,
         allow_local: bool,
+        allow_pq: bool,
         event_handle: EventHandle<R>,
         transport_tx: Sender<SubsystemEvent>,
         started: R::Instant,
@@ -186,11 +393,12 @@ impl<R: Runtime> SessionManager<R> {
     ) -> Result<Ntcp2Session<R>, Ntcp2Error> {
         let router_id = router_info.identity.id();
 
-        let (remote_key, iv, socket_address) = {
+        let (remote_key, iv, socket_address, noise_ctx) = {
             let Some(RouterAddress::Ntcp2 {
                 socket_address: Some(socket_address),
                 static_key,
                 iv: Some(iv),
+                options,
                 ..
             }) = router_info.addresses().find(|address| match address {
                 RouterAddress::Ntcp2 {
@@ -246,7 +454,32 @@ impl<R: Runtime> SessionManager<R> {
                 return Err(Ntcp2Error::NoAddress);
             };
 
-            (static_key, iv, socket_address)
+            let noise_ctx = match (options.get(&Str::from("pq")), allow_pq) {
+                (Some(option), true) => match &**option {
+                    "3" => EncryptionContext::MlKem512X25519(NoiseContext::new(
+                        outbound_state.ml_kem_512.0,
+                        outbound_state.ml_kem_512.1,
+                    )),
+                    "4" => EncryptionContext::MlKem768X25519(NoiseContext::new(
+                        outbound_state.ml_kem_768.0,
+                        outbound_state.ml_kem_768.1,
+                    )),
+                    "5" => EncryptionContext::MlKem1024X25519(NoiseContext::new(
+                        outbound_state.ml_kem_1024.0,
+                        outbound_state.ml_kem_1024.1,
+                    )),
+                    _ => EncryptionContext::X25519(NoiseContext::new(
+                        outbound_state.x25519.0,
+                        outbound_state.x25519.1,
+                    )),
+                },
+                _ => EncryptionContext::X25519(NoiseContext::new(
+                    outbound_state.x25519.0,
+                    outbound_state.x25519.1,
+                )),
+            };
+
+            (static_key, iv, socket_address, noise_ctx)
         };
 
         tracing::trace!(
@@ -281,11 +514,11 @@ impl<R: Runtime> SessionManager<R> {
         tracing::trace!(
             target: LOG_TARGET,
             %router_id,
-            "`SessionRequest` sent, read `SessonCreated`",
+            "SessionRequest sent, read SessonCreated",
         );
 
         // read `SessionCreated` and decrypt & parse it to find padding length
-        let mut reply = alloc::vec![0u8; 64];
+        let mut reply = alloc::vec![0u8; initiator.session_created_size()?];
         stream.read_exact::<R>(&mut reply).await.map_err(|_| Ntcp2Error::IoError)?;
 
         let padding_len = initiator.register_session_created::<R>(&reply)?;
@@ -297,7 +530,7 @@ impl<R: Runtime> SessionManager<R> {
         tracing::trace!(
             target: LOG_TARGET,
             %router_id,
-            "padding for `SessionCreated` read, create and send `SessionConfirmed`",
+            "padding for SessionCreated read, create and send SessionConfirmed",
         );
 
         let (key_context, message) = initiator.finalize(&reply)?;
@@ -335,14 +568,14 @@ impl<R: Runtime> SessionManager<R> {
     ) -> impl Future<Output = Result<Ntcp2Session<R>, (Option<RouterId>, Ntcp2Error)>> {
         let net_id = self.router_ctx.net_id();
         let local_info = self.router_ctx.router_info();
-        let local_key = self.local_key.clone();
-        let outbound_initial_state = self.outbound_initial_state;
-        let chaining_key = self.chaining_key;
+        let local_key = self.static_key.clone();
         let allow_local = self.allow_local;
+        let allow_pq = self.allow_pq;
         let event_handle = self.router_ctx.event_handle().clone();
         let router_id = router.identity.id();
         let transport_tx = self.transport_tx.clone();
         let metrics_handle = self.router_ctx.metrics_handle().clone();
+        let outbound_state = Arc::clone(&self.outbound);
         let started = R::now();
 
         async move {
@@ -351,8 +584,9 @@ impl<R: Runtime> SessionManager<R> {
                 net_id,
                 local_info,
                 local_key,
-                NoiseContext::new(chaining_key, outbound_initial_state),
+                outbound_state,
                 allow_local,
+                allow_pq,
                 event_handle,
                 transport_tx.clone(),
                 started,
@@ -397,7 +631,7 @@ impl<R: Runtime> SessionManager<R> {
         address: SocketAddr,
         net_id: u8,
         local_router_hash: Vec<u8>,
-        noise_ctx: NoiseContext,
+        inbound_state: InboundState,
         local_key: StaticPrivateKey,
         iv: [u8; 16],
         profile_storage: ProfileStorage<R>,
@@ -408,21 +642,30 @@ impl<R: Runtime> SessionManager<R> {
     ) -> Result<Ntcp2Session<R>, Ntcp2Error> {
         tracing::trace!(
             target: LOG_TARGET,
-            "read `SessionRequest` from socket",
+            "read SessionRequest from socket",
         );
 
-        // read first part of `SessionRequest` which has fixed length
-        let mut message = vec![0u8; 64];
+        // read public key which is fixed 32-bytes long
+        let mut message = vec![0u8; 32];
         stream.read_exact::<R>(&mut message).await.map_err(|_| Ntcp2Error::IoError)?;
 
-        let (mut responder, padding_len) = Responder::new::<R>(
-            noise_ctx,
+        // initialize responder state and get the size of payload
+        //
+        // payload size is not fixed since ml-kem encapsulation keys are variable-sized
+        let (mut responder, payload_size) = Responder::new(
+            inbound_state,
+            local_key,
             local_router_hash,
-            local_key.clone(),
             iv,
-            message,
             net_id,
+            message,
         )?;
+
+        let mut message = vec![0u8; payload_size];
+        stream.read_exact::<R>(&mut message).await.map_err(|_| Ntcp2Error::IoError)?;
+
+        // process `SessionRequest` and receive padding length
+        let padding_len = responder.handle_session_request::<R>(message)?;
 
         // read padding and create session if the peer is accepted
         let mut padding = alloc::vec![0u8; padding_len];
@@ -486,14 +729,13 @@ impl<R: Runtime> SessionManager<R> {
     ) -> impl Future<Output = Result<Ntcp2Session<R>, (Option<RouterId>, Ntcp2Error)>> {
         let net_id = self.router_ctx.net_id();
         let local_router_hash = self.router_ctx.router_id().to_vec();
-        let inbound_initial_state = self.inbound_initial_state;
-        let chaining_key = self.chaining_key;
-        let local_key = self.local_key.clone();
+        let local_key = self.static_key.clone();
         let iv = self.local_iv;
         let profile_storage = self.router_ctx.profile_storage().clone();
         let event_handle = self.router_ctx.event_handle().clone();
         let transport_tx = self.transport_tx.clone();
         let metrics_handle = self.router_ctx.metrics_handle().clone();
+        let inbound_state = self.inbound.clone();
         let started = R::now();
 
         async move {
@@ -502,7 +744,7 @@ impl<R: Runtime> SessionManager<R> {
                 address,
                 net_id,
                 local_router_hash,
-                NoiseContext::new(chaining_key, inbound_initial_state),
+                inbound_state,
                 local_key,
                 iv,
                 profile_storage,
@@ -551,6 +793,7 @@ mod tests {
         ntcp2_iv: [u8; 16],
         ntcp2_key: [u8; 32],
         ipv6: bool,
+        ml_kem: Option<usize>,
         _runtime: PhantomData<R>,
     }
 
@@ -575,6 +818,7 @@ mod tests {
                 ntcp2_iv,
                 ntcp2_key,
                 ipv6: false,
+                ml_kem: None,
                 _runtime: PhantomData::default(),
             }
         }
@@ -589,10 +833,17 @@ mod tests {
             self
         }
 
+        fn with_ml_kem(mut self, ml_kem: Option<usize>) -> Self {
+            self.ml_kem = ml_kem;
+            self
+        }
+
         fn with_router_address(mut self, port: u16) -> Self {
             self.router_address = Some(RouterAddress::new_published_ntcp2(
                 self.ntcp2_key.clone(),
                 self.ntcp2_iv,
+                self.ml_kem,
+                None,
                 "127.0.0.1".parse().unwrap(),
                 SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port),
             ));
@@ -603,6 +854,8 @@ mod tests {
             self.router_address = Some(RouterAddress::new_published_ntcp2(
                 self.ntcp2_key.clone(),
                 self.ntcp2_iv,
+                self.ml_kem,
+                None,
                 "::1".parse().unwrap(),
                 SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port),
             ));
@@ -660,13 +913,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn connection_succeeds() {
+    async fn connection_succeeds_x25519() {
+        connection_succeeds(None).await;
+    }
+
+    #[tokio::test]
+    async fn connection_succeeds_ml_kem_512() {
+        connection_succeeds(Some(3)).await;
+    }
+
+    #[tokio::test]
+    async fn connection_succeeds_ml_kem_768() {
+        connection_succeeds(Some(4)).await;
+    }
+
+    #[tokio::test]
+    async fn connection_succeeds_ml_kem_1024() {
+        connection_succeeds(Some(5)).await;
+    }
+
+    async fn connection_succeeds(kind: Option<usize>) {
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let (transport_tx1, _transport_rx1) = channel(16);
-        let local = Ntcp2Builder::<MockRuntime>::new().build();
+        let local = Ntcp2Builder::<MockRuntime>::new().with_ml_kem(kind).build();
         let local_manager = SessionManager::new(
-            local.ntcp2_key,
+            match kind {
+                None => StaticPrivateKey::from_bytes(local.ntcp2_key),
+                Some(3) => StaticPrivateKey::from_bytes_ml_kem_512(local.ntcp2_key),
+                Some(4) => StaticPrivateKey::from_bytes_ml_kem_768(local.ntcp2_key),
+                Some(5) => StaticPrivateKey::from_bytes_ml_kem_1024(local.ntcp2_key),
+                _ => unreachable!(),
+            },
             local.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
@@ -679,16 +957,24 @@ mod tests {
                 event_handle.clone(),
             ),
             true,
+            true,
             transport_tx1,
         );
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let remote = Ntcp2Builder::<MockRuntime>::new()
+            .with_ml_kem(kind)
             .with_router_address(listener.local_addr().unwrap().port())
             .build();
         let (transport_tx2, _transport_rx2) = channel(16);
         let remote_manager = SessionManager::new(
-            remote.ntcp2_key,
+            match kind {
+                None => StaticPrivateKey::from_bytes(remote.ntcp2_key),
+                Some(3) => StaticPrivateKey::from_bytes_ml_kem_512(remote.ntcp2_key),
+                Some(4) => StaticPrivateKey::from_bytes_ml_kem_768(remote.ntcp2_key),
+                Some(5) => StaticPrivateKey::from_bytes_ml_kem_1024(remote.ntcp2_key),
+                _ => unreachable!(),
+            },
             remote.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
@@ -700,6 +986,7 @@ mod tests {
                 2u8,
                 event_handle.clone(),
             ),
+            true,
             true,
             transport_tx2,
         );
@@ -719,13 +1006,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn invalid_network_id_initiator() {
+    async fn invalid_network_id_initiator_x25519() {
+        invalid_network_id_initiator(None).await;
+    }
+
+    #[tokio::test]
+    async fn invalid_network_id_initiator_ml_kem_512() {
+        invalid_network_id_initiator(Some(3)).await;
+    }
+
+    #[tokio::test]
+    async fn invalid_network_id_initiator_ml_kem_768() {
+        invalid_network_id_initiator(Some(4)).await;
+    }
+
+    #[tokio::test]
+    async fn invalid_network_id_initiator_ml_kem_1024() {
+        invalid_network_id_initiator(Some(5)).await;
+    }
+
+    async fn invalid_network_id_initiator(kind: Option<usize>) {
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
-        let local = Ntcp2Builder::<MockRuntime>::new().with_net_id(128).build();
+        let local = Ntcp2Builder::<MockRuntime>::new().with_ml_kem(kind).with_net_id(128).build();
         let (transport_tx1, _transport_rx1) = channel(16);
         let local_manager = SessionManager::new(
-            local.ntcp2_key,
+            match kind {
+                None => StaticPrivateKey::from_bytes(local.ntcp2_key),
+                Some(3) => StaticPrivateKey::from_bytes_ml_kem_512(local.ntcp2_key),
+                Some(4) => StaticPrivateKey::from_bytes_ml_kem_768(local.ntcp2_key),
+                Some(5) => StaticPrivateKey::from_bytes_ml_kem_1024(local.ntcp2_key),
+                _ => unreachable!(),
+            },
             local.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
@@ -738,16 +1050,24 @@ mod tests {
                 event_handle.clone(),
             ),
             true,
+            true,
             transport_tx1,
         );
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let (transport_tx2, _transport_rx2) = channel(16);
         let remote = Ntcp2Builder::<MockRuntime>::new()
+            .with_ml_kem(kind)
             .with_router_address(listener.local_addr().unwrap().port())
             .build();
         let remote_manager = SessionManager::new(
-            remote.ntcp2_key,
+            match kind {
+                None => StaticPrivateKey::from_bytes(remote.ntcp2_key),
+                Some(3) => StaticPrivateKey::from_bytes_ml_kem_512(remote.ntcp2_key),
+                Some(4) => StaticPrivateKey::from_bytes_ml_kem_768(remote.ntcp2_key),
+                Some(5) => StaticPrivateKey::from_bytes_ml_kem_1024(remote.ntcp2_key),
+                _ => unreachable!(),
+            },
             remote.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
@@ -759,6 +1079,7 @@ mod tests {
                 2u8,
                 event_handle.clone(),
             ),
+            true,
             true,
             transport_tx2,
         );
@@ -776,13 +1097,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn invalid_network_id_responder() {
+    async fn invalid_network_id_responder_x25519() {
+        invalid_network_id_responder(None).await;
+    }
+
+    #[tokio::test]
+    async fn invalid_network_id_responder_ml_kem_512() {
+        invalid_network_id_responder(Some(3)).await;
+    }
+
+    #[tokio::test]
+    async fn invalid_network_id_responder_ml_kem_768() {
+        invalid_network_id_responder(Some(4)).await;
+    }
+
+    #[tokio::test]
+    async fn invalid_network_id_responder_ml_kem_1024() {
+        invalid_network_id_initiator(Some(5)).await;
+    }
+
+    async fn invalid_network_id_responder(kind: Option<usize>) {
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
-        let local = Ntcp2Builder::<MockRuntime>::new().build();
+        let local = Ntcp2Builder::<MockRuntime>::new().with_ml_kem(kind).build();
         let (transport_tx1, _transport_rx1) = channel(16);
         let local_manager = SessionManager::new(
-            local.ntcp2_key,
+            match kind {
+                None => StaticPrivateKey::from_bytes(local.ntcp2_key),
+                Some(3) => StaticPrivateKey::from_bytes_ml_kem_512(local.ntcp2_key),
+                Some(4) => StaticPrivateKey::from_bytes_ml_kem_768(local.ntcp2_key),
+                Some(5) => StaticPrivateKey::from_bytes_ml_kem_1024(local.ntcp2_key),
+                _ => unreachable!(),
+            },
             local.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
@@ -795,17 +1141,25 @@ mod tests {
                 event_handle.clone(),
             ),
             true,
+            true,
             transport_tx1,
         );
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let remote = Ntcp2Builder::<MockRuntime>::new()
             .with_net_id(128)
+            .with_ml_kem(kind)
             .with_router_address(listener.local_addr().unwrap().port())
             .build();
         let (transport_tx2, _transport_rx2) = channel(16);
         let remote_manager = SessionManager::new(
-            remote.ntcp2_key,
+            match kind {
+                None => StaticPrivateKey::from_bytes(remote.ntcp2_key),
+                Some(3) => StaticPrivateKey::from_bytes_ml_kem_512(remote.ntcp2_key),
+                Some(4) => StaticPrivateKey::from_bytes_ml_kem_768(remote.ntcp2_key),
+                Some(5) => StaticPrivateKey::from_bytes_ml_kem_1024(remote.ntcp2_key),
+                _ => unreachable!(),
+            },
             remote.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
@@ -817,6 +1171,7 @@ mod tests {
                 128u8,
                 event_handle.clone(),
             ),
+            true,
             true,
             transport_tx2,
         );
@@ -840,7 +1195,7 @@ mod tests {
         let (transport_tx1, _transport_rx1) = channel(16);
         let local = Ntcp2Builder::<MockRuntime>::new().build();
         let local_manager = SessionManager::new(
-            local.ntcp2_key,
+            StaticPrivateKey::from_bytes(local.ntcp2_key),
             local.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
@@ -853,6 +1208,7 @@ mod tests {
                 event_handle.clone(),
             ),
             false,
+            true,
             transport_tx1,
         );
 
@@ -863,7 +1219,7 @@ mod tests {
             .build();
         let (transport_tx2, _transport_rx2) = channel(16);
         let remote_manager = SessionManager::new(
-            remote.ntcp2_key,
+            StaticPrivateKey::from_bytes(remote.ntcp2_key),
             remote.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
@@ -875,6 +1231,7 @@ mod tests {
                 2u8,
                 event_handle.clone(),
             ),
+            true,
             true,
             transport_tx2,
         );
@@ -897,7 +1254,7 @@ mod tests {
         let (transport_tx1, _transport_rx1) = channel(16);
         let local = Ntcp2Builder::<MockRuntime>::new().build();
         let local_manager = SessionManager::new(
-            local.ntcp2_key,
+            StaticPrivateKey::from_bytes(local.ntcp2_key),
             local.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
@@ -909,6 +1266,7 @@ mod tests {
                 2u8,
                 event_handle.clone(),
             ),
+            true,
             true,
             transport_tx1,
         );
@@ -929,13 +1287,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn received_expired_message() {
-        let local = Ntcp2Builder::<MockRuntime>::new().build();
+    async fn received_expired_message_x25519() {
+        received_expired_message(None).await;
+    }
+
+    #[tokio::test]
+    async fn received_expired_message_ml_kem_512() {
+        received_expired_message(Some(3)).await;
+    }
+
+    #[tokio::test]
+    async fn received_expired_message_ml_kem_768() {
+        received_expired_message(Some(4)).await;
+    }
+
+    #[tokio::test]
+    async fn received_expired_message_ml_kem_1024() {
+        received_expired_message(Some(5)).await;
+    }
+
+    async fn received_expired_message(kind: Option<usize>) {
+        let local = Ntcp2Builder::<MockRuntime>::new().with_ml_kem(kind).build();
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let (local_tx, local_rx) = channel(16);
         let local_manager = SessionManager::new(
-            local.ntcp2_key,
+            match kind {
+                None => StaticPrivateKey::from_bytes(local.ntcp2_key),
+                Some(3) => StaticPrivateKey::from_bytes_ml_kem_512(local.ntcp2_key),
+                Some(4) => StaticPrivateKey::from_bytes_ml_kem_768(local.ntcp2_key),
+                Some(5) => StaticPrivateKey::from_bytes_ml_kem_1024(local.ntcp2_key),
+                _ => unreachable!(),
+            },
             local.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
@@ -948,17 +1331,25 @@ mod tests {
                 event_handle.clone(),
             ),
             true,
+            true,
             local_tx,
         );
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let remote = Ntcp2Builder::<MockRuntime>::new()
+            .with_ml_kem(kind)
             .with_router_address(listener.local_addr().unwrap().port())
             .build();
         let (remote_tx, remote_rx) = channel(16);
 
         let remote_manager = SessionManager::new(
-            remote.ntcp2_key,
+            match kind {
+                None => StaticPrivateKey::from_bytes(remote.ntcp2_key),
+                Some(3) => StaticPrivateKey::from_bytes_ml_kem_512(remote.ntcp2_key),
+                Some(4) => StaticPrivateKey::from_bytes_ml_kem_768(remote.ntcp2_key),
+                Some(5) => StaticPrivateKey::from_bytes_ml_kem_1024(remote.ntcp2_key),
+                _ => unreachable!(),
+            },
             remote.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
@@ -970,6 +1361,7 @@ mod tests {
                 2u8,
                 event_handle.clone(),
             ),
+            true,
             true,
             remote_tx,
         );
@@ -1084,16 +1476,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn clock_skew_too_far_in_the_future() {
+    async fn clock_skew_too_far_in_the_future_x25519() {
+        clock_skew_too_far_in_the_future(None).await;
+    }
+
+    #[tokio::test]
+    async fn clock_skew_too_far_in_the_future_ml_kem_512() {
+        clock_skew_too_far_in_the_future(Some(3)).await;
+    }
+
+    #[tokio::test]
+    async fn clock_skew_too_far_in_the_future_ml_kem_768() {
+        clock_skew_too_far_in_the_future(Some(4)).await;
+    }
+
+    #[tokio::test]
+    async fn clock_skew_too_far_in_the_future_ml_kem_1024() {
+        clock_skew_too_far_in_the_future(Some(5)).await;
+    }
+
+    async fn clock_skew_too_far_in_the_future(kind: Option<usize>) {
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let (transport_tx1, _transport_rx1) = channel(16);
         let remote = Ntcp2Builder::<MockRuntime>::new()
+            .with_ml_kem(kind)
             .with_router_address(listener.local_addr().unwrap().port())
             .build();
         let remote_manager = SessionManager::new(
-            remote.ntcp2_key,
+            match kind {
+                None => StaticPrivateKey::from_bytes(remote.ntcp2_key),
+                Some(3) => StaticPrivateKey::from_bytes_ml_kem_512(remote.ntcp2_key),
+                Some(4) => StaticPrivateKey::from_bytes_ml_kem_768(remote.ntcp2_key),
+                Some(5) => StaticPrivateKey::from_bytes_ml_kem_1024(remote.ntcp2_key),
+                _ => unreachable!(),
+            },
             remote.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
@@ -1105,6 +1523,7 @@ mod tests {
                 2u8,
                 event_handle.clone(),
             ),
+            true,
             true,
             transport_tx1,
         );
@@ -1120,9 +1539,15 @@ mod tests {
                 ));
 
                 let (transport_tx1, _transport_rx1) = channel(16);
-                let local = Ntcp2Builder::<MockRuntime>::new().build();
+                let local = Ntcp2Builder::<MockRuntime>::new().with_ml_kem(kind).build();
                 let local_manager = SessionManager::new(
-                    local.ntcp2_key,
+                    match kind {
+                        None => StaticPrivateKey::from_bytes(local.ntcp2_key),
+                        Some(3) => StaticPrivateKey::from_bytes_ml_kem_512(local.ntcp2_key),
+                        Some(4) => StaticPrivateKey::from_bytes_ml_kem_768(local.ntcp2_key),
+                        Some(5) => StaticPrivateKey::from_bytes_ml_kem_1024(local.ntcp2_key),
+                        _ => unreachable!(),
+                    },
                     local.ntcp2_iv,
                     RouterContext::new(
                         MockRuntime::register_metrics(Vec::new(), None),
@@ -1134,6 +1559,7 @@ mod tests {
                         2u8,
                         event_handle.clone(),
                     ),
+                    true,
                     true,
                     transport_tx1,
                 );
@@ -1153,16 +1579,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn clock_skew_too_far_in_the_past() {
+    async fn clock_skew_too_far_in_the_past_x25519() {
+        clock_skew_too_far_in_the_past(None).await;
+    }
+
+    #[tokio::test]
+    async fn clock_skew_too_far_in_the_past_ml_kem_512() {
+        clock_skew_too_far_in_the_past(Some(3)).await;
+    }
+
+    #[tokio::test]
+    async fn clock_skew_too_far_in_the_past_ml_kem_768() {
+        clock_skew_too_far_in_the_past(Some(4)).await;
+    }
+
+    #[tokio::test]
+    async fn clock_skew_too_far_in_the_past_ml_kem_1024() {
+        clock_skew_too_far_in_the_past(Some(5)).await;
+    }
+
+    async fn clock_skew_too_far_in_the_past(kind: Option<usize>) {
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let (transport_tx1, _transport_rx1) = channel(16);
         let remote = Ntcp2Builder::<MockRuntime>::new()
+            .with_ml_kem(kind)
             .with_router_address(listener.local_addr().unwrap().port())
             .build();
         let remote_manager = SessionManager::new(
-            remote.ntcp2_key,
+            match kind {
+                None => StaticPrivateKey::from_bytes(remote.ntcp2_key),
+                Some(3) => StaticPrivateKey::from_bytes_ml_kem_512(remote.ntcp2_key),
+                Some(4) => StaticPrivateKey::from_bytes_ml_kem_768(remote.ntcp2_key),
+                Some(5) => StaticPrivateKey::from_bytes_ml_kem_1024(remote.ntcp2_key),
+                _ => unreachable!(),
+            },
             remote.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
@@ -1174,6 +1626,7 @@ mod tests {
                 2u8,
                 event_handle.clone(),
             ),
+            true,
             true,
             transport_tx1,
         );
@@ -1189,9 +1642,15 @@ mod tests {
                 ));
 
                 let (transport_tx1, _transport_rx1) = channel(16);
-                let local = Ntcp2Builder::<MockRuntime>::new().build();
+                let local = Ntcp2Builder::<MockRuntime>::new().with_ml_kem(kind).build();
                 let local_manager = SessionManager::new(
-                    local.ntcp2_key,
+                    match kind {
+                        None => StaticPrivateKey::from_bytes(local.ntcp2_key),
+                        Some(3) => StaticPrivateKey::from_bytes_ml_kem_512(local.ntcp2_key),
+                        Some(4) => StaticPrivateKey::from_bytes_ml_kem_768(local.ntcp2_key),
+                        Some(5) => StaticPrivateKey::from_bytes_ml_kem_1024(local.ntcp2_key),
+                        _ => unreachable!(),
+                    },
                     local.ntcp2_iv,
                     RouterContext::new(
                         MockRuntime::register_metrics(Vec::new(), None),
@@ -1203,6 +1662,7 @@ mod tests {
                         2u8,
                         event_handle.clone(),
                     ),
+                    true,
                     true,
                     transport_tx1,
                 );
@@ -1228,7 +1688,7 @@ mod tests {
         let (transport_tx1, transport_rx1) = channel(16);
         let local = Ntcp2Builder::<MockRuntime>::new().build();
         let local_manager = SessionManager::new(
-            local.ntcp2_key,
+            StaticPrivateKey::from_bytes(local.ntcp2_key),
             local.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
@@ -1241,6 +1701,7 @@ mod tests {
                 event_handle.clone(),
             ),
             true,
+            true,
             transport_tx1,
         );
 
@@ -1250,7 +1711,7 @@ mod tests {
             .build();
         let (transport_tx2, transport_rx2) = channel(16);
         let remote_manager = SessionManager::new(
-            remote.ntcp2_key,
+            StaticPrivateKey::from_bytes(remote.ntcp2_key),
             remote.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
@@ -1262,6 +1723,7 @@ mod tests {
                 2u8,
                 event_handle.clone(),
             ),
+            true,
             true,
             transport_tx2,
         );
@@ -1317,7 +1779,7 @@ mod tests {
         let local = Ntcp2Builder::<MockRuntime>::new().with_net_id(128).build();
         let (transport_tx1, _transport_rx1) = channel(16);
         let local_manager = SessionManager::new(
-            local.ntcp2_key,
+            StaticPrivateKey::from_bytes(local.ntcp2_key),
             local.ntcp2_iv,
             RouterContextBuilder::default()
                 .with_router_info(
@@ -1326,6 +1788,7 @@ mod tests {
                     local.signing_key.clone(),
                 )
                 .build(),
+            true,
             true,
             transport_tx1,
         );
@@ -1347,7 +1810,7 @@ mod tests {
         let local = Ntcp2Builder::<MockRuntime>::new().with_ipv6().with_net_id(128).build();
         let (transport_tx1, _transport_rx1) = channel(16);
         let local_manager = SessionManager::new(
-            local.ntcp2_key,
+            StaticPrivateKey::from_bytes(local.ntcp2_key),
             local.ntcp2_iv,
             RouterContextBuilder::default()
                 .with_router_info(
@@ -1356,6 +1819,7 @@ mod tests {
                     local.signing_key.clone(),
                 )
                 .build(),
+            true,
             true,
             transport_tx1,
         );
@@ -1377,7 +1841,7 @@ mod tests {
         let local = Ntcp2Builder::<MockRuntime>::new().with_ipv6().with_net_id(128).build();
         let (transport_tx1, _transport_rx1) = channel(16);
         let local_manager = SessionManager::new(
-            local.ntcp2_key,
+            StaticPrivateKey::from_bytes(local.ntcp2_key),
             local.ntcp2_iv,
             RouterContextBuilder::default()
                 .with_router_info(
@@ -1387,6 +1851,7 @@ mod tests {
                 )
                 .with_net_id(128)
                 .build(),
+            true,
             true,
             transport_tx1,
         );
@@ -1398,7 +1863,7 @@ mod tests {
             .with_router_address_ipv6(listener.local_addr().unwrap().port())
             .build();
         let remote_manager = SessionManager::new(
-            remote.ntcp2_key,
+            StaticPrivateKey::from_bytes(remote.ntcp2_key),
             remote.ntcp2_iv,
             RouterContextBuilder::default()
                 .with_router_info(
@@ -1408,6 +1873,7 @@ mod tests {
                 )
                 .with_net_id(128)
                 .build(),
+            true,
             true,
             transport_tx1,
         );
@@ -1432,7 +1898,7 @@ mod tests {
         let local = Ntcp2Builder::<MockRuntime>::new().with_ipv6().with_net_id(128).build();
         let (transport_tx1, _transport_rx1) = channel(16);
         let local_manager = SessionManager::new(
-            local.ntcp2_key,
+            StaticPrivateKey::from_bytes(local.ntcp2_key),
             local.ntcp2_iv,
             RouterContextBuilder::default()
                 .with_router_info(
@@ -1442,6 +1908,7 @@ mod tests {
                 )
                 .with_net_id(128)
                 .build(),
+            true,
             true,
             transport_tx1,
         );
@@ -1453,7 +1920,7 @@ mod tests {
             .with_router_address(listener.local_addr().unwrap().port())
             .build();
         let remote_manager = SessionManager::new(
-            remote.ntcp2_key,
+            StaticPrivateKey::from_bytes(remote.ntcp2_key),
             remote.ntcp2_iv,
             RouterContextBuilder::default()
                 .with_router_info(
@@ -1463,6 +1930,7 @@ mod tests {
                 )
                 .with_net_id(128)
                 .build(),
+            true,
             true,
             transport_tx1,
         );
