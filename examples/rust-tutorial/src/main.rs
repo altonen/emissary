@@ -119,6 +119,10 @@ async fn main() -> anyhow::Result<()> {
             // enable both IPv4 and IPv6
             ipv4: true,
             ipv6: true,
+
+            // enable PQ and use ML-KEM-768
+            ml_kem: Some(4),
+            disable_pq: Some(false),
         }),
 
         // enable SAMv3 and bind TCP and UDP to random, OS-assigned ports

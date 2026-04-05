@@ -129,6 +129,8 @@ impl TryInto<Option<crate::config::Ntcp2Config>> for Ntcp2Config {
             ipv4: self.ipv4,
             ipv6: self.ipv6,
             publish: self.publish,
+            ml_kem: Some(4),
+            disable_pq: None,
         }))
     }
 }

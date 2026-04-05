@@ -89,6 +89,7 @@ impl Server {
             //  * don't publish the router info to NetDb
             //  * generate random NTCP2 key and IV
             //  * enable both IPv4 and IPv6
+            //  * enable PQ and use ML-KEM-768
             ntcp2: Some(Ntcp2Config {
                 port: 0,
                 ipv4_host: None,
@@ -106,6 +107,8 @@ impl Server {
                     rng.fill_bytes(&mut key);
                     key
                 },
+                ml_kem: Some(4),
+                disable_pq: Some(false),
             }),
 
             // enable SAMv3 and bind TCP and UDP to random, OS-assigned ports
