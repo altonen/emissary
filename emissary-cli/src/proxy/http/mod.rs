@@ -43,6 +43,16 @@ mod response;
 /// Logging target for the file.
 const LOG_TARGET: &str = "emissary::proxy::http";
 
+/// Outproxy kind.
+#[derive(Debug, PartialEq, Eq)]
+enum OutproxyKind {
+    /// Bare host, e.g., `outproxy.i2p`
+    Host(String),
+
+    /// Host with port, e.g., `outproxy.i2p:8888`.
+    HostWithPort(String, u16),
+}
+
 /// Request context.
 #[derive(Debug)]
 struct RequestContext {
@@ -68,7 +78,7 @@ pub struct HttpProxy {
     session: Session<style::Stream>,
 
     /// HTTP outproxy, if enabled.
-    outproxy: Option<String>,
+    outproxy: Option<OutproxyKind>,
 }
 
 impl HttpProxy {
@@ -110,62 +120,101 @@ impl HttpProxy {
             let _ = tx.send(());
         }
 
-        // validate outproxy
-        //
-        // if the outproxy is given as a .b32.i2p host, it can be used as-is
-        //
-        // if it's given as a .i2p host, it must be converted into a .b32.i2p host by doing a host
-        // lookup into address book
-        //
-        // if either address book is disabled or hostname is not found in it, outproxy is disabled
-        let outproxy = match config.outproxy {
-            None => None,
-            Some(outproxy) => {
-                let outproxy = outproxy.strip_prefix("http://").unwrap_or(&outproxy);
-                let outproxy = outproxy.strip_prefix("www.").unwrap_or(outproxy);
-
-                match outproxy.ends_with(".i2p") {
-                    false => {
-                        tracing::warn!(
-                            target: LOG_TARGET,
-                            %outproxy,
-                            "outproxy must be .b32.i2p or .i2p hostname",
-                        );
-                        None
-                    }
-                    true => match (outproxy.ends_with(".b32.i2p"), &address_book_handle) {
-                        (true, _) => Some(outproxy.to_owned()),
-                        (false, Some(handle)) => match handle.resolve_base32(outproxy) {
-                            Some(host) => Some(format!("{host}.b32.i2p")),
-                            None => {
-                                tracing::warn!(
-                                    target: LOG_TARGET,
-                                    %outproxy,
-                                    "outproxy not found in address book",
-                                );
-                                None
-                            }
-                        },
-                        (false, None) => {
-                            tracing::warn!(
-                                target: LOG_TARGET,
-                                %outproxy,
-                                "address book not enabled, unable to resolve outproxy hostname",
-                            );
-                            None
-                        }
-                    },
-                }
-            }
-        };
-
         Ok(Self {
+            outproxy: config
+                .outproxy
+                .and_then(|outproxy| Self::parse_outproxy(&outproxy, &address_book_handle)),
             address_book_handle,
             listener,
-            outproxy,
             requests: JoinSet::new(),
             session,
         })
+    }
+
+    /// Attempt to parse `outproxy` into an `OutproxyKind`.
+    ///
+    /// If the outproxy is given as a `.b32.i2p` host, it can be used as-is
+    ///
+    /// If it's given as a `.i2p` host, it must be converted into a `.b32.i2p` host by doing a host
+    /// lookup into address book
+    ///
+    /// If either address book is disabled or hostname is not found in it, outproxy is disabled
+    fn parse_outproxy(
+        outproxy: &str,
+        address_book_handle: &Option<Arc<dyn AddressBook>>,
+    ) -> Option<OutproxyKind> {
+        let host = outproxy.strip_prefix("http://").unwrap_or(outproxy);
+        let host = host.strip_prefix("www.").unwrap_or(host);
+
+        // split `outproxy` into host and port (if specified)
+        let (host, maybe_port) = {
+            let mut parts = host.split(":");
+
+            let Some(host) = parts.next() else {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    %outproxy,
+                    "not a valid outproxy url",
+                );
+                return None;
+            };
+
+            (host, parts.next())
+        };
+
+        if !host.ends_with(".i2p") {
+            tracing::warn!(
+                target: LOG_TARGET,
+                %outproxy,
+                "outproxy must be .b32.i2p or .i2p hostname",
+            );
+            return None;
+        }
+
+        // parse outproxy port if it was specified
+        let maybe_port = maybe_port
+            .map(|port| {
+                port.parse::<u16>().inspect_err(|error| {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        %outproxy,
+                        ?error,
+                        ?port,
+                        "invalid port given for outproxy",
+                    );
+                })
+            })
+            .transpose()
+            .ok()?;
+
+        // if outproxy is a .`i2p` address, resolve it into a .b32.i2p address
+        let host = match (host.ends_with(".b32.i2p"), address_book_handle) {
+            (true, _) => host.to_string(),
+            (false, Some(handle)) => match handle.resolve_base32(host) {
+                Some(host) => format!("{host}.b32.i2p"),
+                None => {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        %outproxy,
+                        "outproxy not found in address book",
+                    );
+                    return None;
+                }
+            },
+            (false, None) => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    %outproxy,
+                    "address book not enabled, unable to resolve outproxy hostname",
+                );
+                return None;
+            }
+        };
+
+        match maybe_port {
+            None => Some(OutproxyKind::Host(host)),
+            Some(port) => Some(OutproxyKind::HostWithPort(host, port)),
+        }
     }
 
     /// Read request from browser.
@@ -215,7 +264,7 @@ impl HttpProxy {
             request,
         } = request;
 
-        let (host, request) =
+        let ((host, port), request) =
             match request.assemble(&self.address_book_handle, &self.outproxy).await {
                 Ok((host, request)) => (host, request),
                 Err(error) => return Err((stream, error)),
@@ -224,7 +273,7 @@ impl HttpProxy {
         let future = self.session.connect_detached_with_options(
             &host,
             StreamOptions {
-                dst_port: 80,
+                dst_port: port.unwrap_or(80),
                 ..Default::default()
             },
         );
@@ -314,12 +363,18 @@ mod tests {
         Client, Proxy, StatusCode,
     };
     use tempfile::tempdir;
-    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::{
+        io::{AsyncBufReadExt, BufReader},
+        sync::mpsc::{channel, Sender},
+    };
 
     /// Fake SAMv3 server.
     struct SamServer {
         /// TCP listener for the server.
         listener: TcpListener,
+
+        /// Command sender.
+        cmd_tx: Option<Sender<String>>,
     }
 
     impl SamServer {
@@ -327,12 +382,26 @@ mod tests {
         async fn new() -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
 
-            Self { listener }
+            Self {
+                listener,
+                cmd_tx: None,
+            }
+        }
+
+        async fn with_command_tx(cmd_tx: Sender<String>) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+
+            Self {
+                listener,
+                cmd_tx: Some(cmd_tx),
+            }
         }
 
         /// Run the event loop of [`SamServer`].
         async fn run(self) {
             while let Ok((stream, _)) = self.listener.accept().await {
+                let tx = self.cmd_tx.clone();
+
                 tokio::spawn(async move {
                     let mut lines = BufReader::new(stream).lines();
 
@@ -366,7 +435,10 @@ mod tests {
                             continue;
                         }
 
-                        println!("unhandled command: {command}");
+                        match &tx {
+                            Some(cmd_tx) => cmd_tx.send(command).await.unwrap(),
+                            None => println!("unhandled command: {command}"),
+                        }
                     }
                 });
             }
@@ -782,8 +854,10 @@ mod tests {
             .unwrap();
 
             assert_eq!(
-                proxy.outproxy.as_ref().unwrap().as_str(),
-                "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p"
+                proxy.outproxy.as_ref().unwrap(),
+                &OutproxyKind::Host(
+                    "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p".to_string()
+                ),
             );
         }
 
@@ -805,8 +879,10 @@ mod tests {
             .unwrap();
 
             assert_eq!(
-                proxy.outproxy.as_ref().unwrap().as_str(),
-                "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p"
+                proxy.outproxy.as_ref().unwrap(),
+                &OutproxyKind::Host(
+                    "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p".to_string()
+                ),
             );
         }
 
@@ -828,8 +904,10 @@ mod tests {
             .unwrap();
 
             assert_eq!(
-                proxy.outproxy.as_ref().unwrap().as_str(),
-                "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p"
+                proxy.outproxy.as_ref().unwrap(),
+                &OutproxyKind::Host(
+                    "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p".to_string()
+                ),
             );
         }
 
@@ -851,8 +929,10 @@ mod tests {
             .unwrap();
 
             assert_eq!(
-                proxy.outproxy.as_ref().unwrap().as_str(),
-                "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p"
+                proxy.outproxy.as_ref().unwrap(),
+                &OutproxyKind::Host(
+                    "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p".to_string()
+                ),
             );
         }
 
@@ -877,8 +957,10 @@ mod tests {
             .unwrap();
 
             assert_eq!(
-                proxy.outproxy.as_ref().unwrap().as_str(),
-                "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p"
+                proxy.outproxy.as_ref().unwrap(),
+                &OutproxyKind::Host(
+                    "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p".to_string()
+                ),
             );
         }
 
@@ -903,8 +985,10 @@ mod tests {
             .unwrap();
 
             assert_eq!(
-                proxy.outproxy.as_ref().unwrap().as_str(),
-                "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p"
+                proxy.outproxy.as_ref().unwrap(),
+                &OutproxyKind::Host(
+                    "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p".to_string()
+                ),
             );
         }
 
@@ -929,8 +1013,10 @@ mod tests {
             .unwrap();
 
             assert_eq!(
-                proxy.outproxy.as_ref().unwrap().as_str(),
-                "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p"
+                proxy.outproxy.as_ref().unwrap(),
+                &OutproxyKind::Host(
+                    "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p".to_string()
+                ),
             );
         }
 
@@ -954,9 +1040,200 @@ mod tests {
             .unwrap();
 
             assert_eq!(
-                proxy.outproxy.as_ref().unwrap().as_str(),
-                "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p"
+                proxy.outproxy.as_ref().unwrap(),
+                &OutproxyKind::Host(
+                    "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p".to_string()
+                ),
             );
         }
+
+        // .b32.i2p host with port
+        {
+            let proxy = HttpProxy::new(
+                HttpProxyConfig {
+                    port: 0,
+                    host: "127.0.0.1".to_string(),
+                    outproxy: Some(
+                        "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p:8888"
+                            .to_string(),
+                    ),
+                    tunnel_config: None,
+                    i2cp: None,
+                },
+                sam_port,
+                None,
+                Some(address_book.clone()),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                proxy.outproxy.as_ref().unwrap(),
+                &OutproxyKind::HostWithPort(
+                    "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p".to_string(),
+                    8888,
+                ),
+            );
+        }
+
+        // .i2p host with port
+        {
+            let proxy = HttpProxy::new(
+                HttpProxyConfig {
+                    port: 0,
+                    host: "127.0.0.1".to_string(),
+                    outproxy: Some("zzz.i2p:8888".to_string()),
+                    tunnel_config: None,
+                    i2cp: None,
+                },
+                sam_port,
+                None,
+                Some(address_book.clone()),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                proxy.outproxy.as_ref().unwrap(),
+                &OutproxyKind::HostWithPort(
+                    "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p".to_string(),
+                    8888
+                ),
+            );
+        }
+
+        // port missing
+        {
+            let proxy = HttpProxy::new(
+                HttpProxyConfig {
+                    port: 0,
+                    host: "127.0.0.1".to_string(),
+                    outproxy: Some("zzz.i2p:".to_string()),
+                    tunnel_config: None,
+                    i2cp: None,
+                },
+                sam_port,
+                None,
+                Some(address_book.clone()),
+            )
+            .await
+            .unwrap();
+
+            assert!(proxy.outproxy.is_none());
+        }
+
+        // invalid port
+        {
+            let proxy = HttpProxy::new(
+                HttpProxyConfig {
+                    port: 0,
+                    host: "127.0.0.1".to_string(),
+                    outproxy: Some("zzz.i2p:hello".to_string()),
+                    tunnel_config: None,
+                    i2cp: None,
+                },
+                sam_port,
+                None,
+                Some(address_book.clone()),
+            )
+            .await
+            .unwrap();
+
+            assert!(proxy.outproxy.is_none());
+        }
+
+        // port outside valid range
+        {
+            let proxy = HttpProxy::new(
+                HttpProxyConfig {
+                    port: 0,
+                    host: "127.0.0.1".to_string(),
+                    outproxy: Some("zzz.i2p:100000".to_string()),
+                    tunnel_config: None,
+                    i2cp: None,
+                },
+                sam_port,
+                None,
+                Some(address_book.clone()),
+            )
+            .await
+            .unwrap();
+
+            assert!(proxy.outproxy.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn outproxy_with_custom_port() {
+        let (tx, mut rx) = channel(16);
+        let sam_port = {
+            let sam = SamServer::with_command_tx(tx).await;
+            let port = sam.listener.local_addr().unwrap().port();
+            tokio::spawn(sam.run());
+
+            port
+        };
+
+        let address_book = {
+            let hosts = "psi.i2p=avviiexdngd32ccoy4kuckvc3mkf53ycvzbz6vz75vzhv4tbpk5a\n\
+                    zerobin.i2p=3564erslxzaoucqasxsjerk4jz2xril7j2cbzd4p7flpb4ut67hq\n\
+                    tracker2.postman.i2p=6a4kxkg5wp33p25qqhgwl6sj4yh4xuf5b3p3qldwgclebchm3eea\n\
+                    zzz.i2p=lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua\n"
+                .to_string();
+
+            let dir = tempdir().unwrap().keep();
+            tokio::fs::create_dir_all(&dir.join("addressbook")).await.unwrap();
+            tokio::fs::write(dir.join("addressbook/addresses"), hosts).await.unwrap();
+
+            AddressBookManager::new(
+                dir.clone(),
+                AddressBookConfig {
+                    default: None,
+                    subscriptions: None,
+                },
+            )
+            .await
+            .handle()
+        };
+
+        let proxy = HttpProxy::new(
+            HttpProxyConfig {
+                port: 0,
+                host: "127.0.0.1".to_string(),
+                outproxy: Some("zzz.i2p:8888".to_string()),
+                tunnel_config: None,
+                i2cp: None,
+            },
+            sam_port,
+            None,
+            Some(address_book),
+        )
+        .await
+        .unwrap();
+        let port = proxy.listener.local_addr().unwrap().port();
+        tokio::spawn(proxy.run());
+
+        let client = Client::builder()
+            .proxy(Proxy::http(format!("http://127.0.0.1:{port}")).expect("to succeed"))
+            .http1_title_case_headers()
+            .build()
+            .expect("to succeed");
+
+        tokio::spawn(async move {
+            let _ = client
+                .get("http://google.com")
+                .headers(HeaderMap::from_iter([(
+                    CONNECTION,
+                    HeaderValue::from_static("close"),
+                )]))
+                .send()
+                .await;
+        });
+
+        let response =
+            tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.unwrap().unwrap();
+        assert!(response.contains("TO_PORT=8888"));
+        assert!(response
+            .contains("DESTINATION=lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p"));
     }
 }

@@ -16,7 +16,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::proxy::http::{HttpError, LOG_TARGET};
+use crate::proxy::http::{HttpError, OutproxyKind, LOG_TARGET};
 
 use emissary_core::runtime::AddressBook;
 
@@ -167,8 +167,8 @@ impl Request {
     pub async fn assemble(
         self,
         address_book: &Option<Arc<dyn AddressBook>>,
-        outproxy: &Option<String>,
-    ) -> Result<(String, Vec<u8>), HttpError> {
+        outproxy: &Option<OutproxyKind>,
+    ) -> Result<((String, Option<u16>), Vec<u8>), HttpError> {
         let user_agent = match &self.host {
             HostKind::Clearnet { .. } =>
                 "User-Agent: Mozilla/5.0 (Windows NT 10.0; rv:109.0) Gecko/20100101 Firefox/115.0\r\n",
@@ -184,11 +184,11 @@ impl Request {
         // if a clearnet address is used and an outproxy has been enabled, the host that is the
         // original request must be kept unmodified as the request is sent to clearnet and such
         // an address obviously doesn't need to (and cannot be) resolved to a .b32.i2p hostname
-        let (host, keep_original_host) = match (self.host, address_book, outproxy) {
-            (HostKind::B32 { host }, _, _) => (host, false),
+        let (host, port, keep_original_host) = match (self.host, address_book, outproxy) {
+            (HostKind::B32 { host }, _, _) => (host, None, false),
             (HostKind::I2p { host }, Some(address_book), _) =>
                 match address_book.resolve_base32(&host) {
-                    Some(host) => (format!("{host}.b32.i2p"), false),
+                    Some(host) => (format!("{host}.b32.i2p"), None, false),
                     None => {
                         tracing::warn!(
                             target: LOG_TARGET,
@@ -198,7 +198,10 @@ impl Request {
                         return Err(HttpError::HostNotFound);
                     }
                 },
-            (HostKind::Clearnet { .. }, _, Some(outproxy)) => (outproxy.clone(), true),
+            (HostKind::Clearnet { .. }, _, Some(OutproxyKind::Host(outproxy))) =>
+                (outproxy.clone(), None, true),
+            (HostKind::Clearnet { .. }, _, Some(OutproxyKind::HostWithPort(outproxy, port))) =>
+                (outproxy.clone(), Some(*port), true),
             (HostKind::I2p { host }, None, _) => {
                 tracing::warn!(
                     target: LOG_TARGET,
@@ -305,7 +308,7 @@ impl Request {
         sanitized.extend_from_slice("\r\n".as_bytes());
         sanitized.extend_from_slice(&self.request[body_start..]);
 
-        Ok((host, sanitized))
+        Ok(((host, port), sanitized))
     }
 }
 
@@ -390,7 +393,7 @@ mod tests {
         assert_eq!(request.path, "/".to_string());
 
         // assemble request and verify `Host` is valid
-        let (host, request) = request.assemble(&None, &None).await.unwrap();
+        let ((host, port), request) = request.assemble(&None, &None).await.unwrap();
 
         let mut headers = [httparse::EMPTY_HEADER; 64];
         let mut req = httparse::Request::new(&mut headers);
@@ -404,6 +407,7 @@ mod tests {
             host.as_str(),
             "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p",
         );
+        assert!(port.is_none());
     }
 
     #[tokio::test]
@@ -423,13 +427,14 @@ mod tests {
         assert_eq!(request.method, "GET".to_string());
         assert_eq!(request.path, "/".to_string());
 
-        let (host, request) = request.assemble(&None, &None).await.unwrap();
+        let ((host, port), request) = request.assemble(&None, &None).await.unwrap();
         let mut headers = [httparse::EMPTY_HEADER; 64];
         let mut req = httparse::Request::new(&mut headers);
         let _body_start = req.parse(&request).unwrap().unwrap();
 
         assert_eq!(req.method, Some("GET"));
         assert_eq!(req.path, Some("/"));
+        assert!(port.is_none());
         assert_eq!(
             host.as_str(),
             "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p",
@@ -455,13 +460,14 @@ mod tests {
         assert_eq!(request.method, "GET".to_string());
         assert_eq!(request.path, "/topics/new-topic?query=1".to_string());
 
-        let (host, request) = request.assemble(&None, &None).await.unwrap();
+        let ((host, port), request) = request.assemble(&None, &None).await.unwrap();
         let mut headers = [httparse::EMPTY_HEADER; 64];
         let mut req = httparse::Request::new(&mut headers);
         let _body_start = req.parse(&request).unwrap().unwrap();
 
         assert_eq!(req.method, Some("GET"));
         assert_eq!(req.path, Some("/topics/new-topic?query=1"));
+        assert!(port.is_none());
         assert_eq!(
             host.as_str(),
             "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p",
@@ -492,13 +498,14 @@ mod tests {
         assert_eq!(request.method, "POST".to_string());
         assert_eq!(request.path, "/upload".to_string());
 
-        let (host, request) = request.assemble(&None, &None).await.unwrap();
+        let ((host, port), request) = request.assemble(&None, &None).await.unwrap();
         let mut headers = [httparse::EMPTY_HEADER; 64];
         let mut req = httparse::Request::new(&mut headers);
         let _body_start = req.parse(&request).unwrap().unwrap();
 
         assert_eq!(req.method, Some("POST"));
         assert_eq!(req.path, Some("/upload"));
+        assert!(port.is_none());
         assert_eq!(
             std::str::from_utf8(&request[_body_start..]).unwrap(),
             "hello, world"
@@ -578,11 +585,12 @@ mod tests {
         assert_eq!(request.method, "GET".to_string());
         assert_eq!(request.path, "/".to_string());
 
-        let (host, request) = request.assemble(&Some(address_book), &None).await.unwrap();
+        let ((host, port), request) = request.assemble(&Some(address_book), &None).await.unwrap();
         assert_eq!(
             host.as_str(),
             "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p"
         );
+        assert!(port.is_none());
 
         let mut headers = [httparse::EMPTY_HEADER; 64];
         let mut req = httparse::Request::new(&mut headers);
@@ -613,11 +621,12 @@ mod tests {
         assert_eq!(request.method, "GET".to_string());
         assert_eq!(request.path, "/topics/new-topic?query=1".to_string());
 
-        let (host, request) = request.assemble(&Some(address_book), &None).await.unwrap();
+        let ((host, port), request) = request.assemble(&Some(address_book), &None).await.unwrap();
         assert_eq!(
             host.as_str(),
             "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p"
         );
+        assert!(port.is_none());
 
         let mut headers = [httparse::EMPTY_HEADER; 64];
         let mut req = httparse::Request::new(&mut headers);
@@ -649,12 +658,13 @@ mod tests {
             assert_eq!(request.method, "GET".to_string());
             assert_eq!(request.path, "/".to_string());
 
-            let (host, request) =
+            let ((host, port), request) =
                 request.assemble(&Some(address_book.clone()), &None).await.unwrap();
             assert_eq!(
                 host.as_str(),
                 "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p"
             );
+            assert!(port.is_none());
 
             let mut headers = [httparse::EMPTY_HEADER; 64];
             let mut req = httparse::Request::new(&mut headers);
@@ -685,11 +695,13 @@ mod tests {
             assert_eq!(request.method, "GET".to_string());
             assert_eq!(request.path, "/".to_string());
 
-            let (host, request) = request.assemble(&Some(address_book), &None).await.unwrap();
+            let ((host, port), request) =
+                request.assemble(&Some(address_book), &None).await.unwrap();
             assert_eq!(
                 host.as_str(),
                 "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p"
             );
+            assert!(port.is_none());
 
             let mut headers = [httparse::EMPTY_HEADER; 64];
             let mut req = httparse::Request::new(&mut headers);
@@ -738,10 +750,12 @@ mod tests {
         assert_eq!(request.method, "GET".to_string());
         assert_eq!(request.path, "/".to_string());
 
-        let (host, request) = request
+        let ((host, port), request) = request
             .assemble(
                 &None,
-                &Some("lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p".to_string()),
+                &Some(OutproxyKind::Host(
+                    "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p".to_string(),
+                )),
             )
             .await
             .unwrap();
@@ -750,6 +764,50 @@ mod tests {
             host,
             "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p".to_string()
         );
+        assert!(port.is_none());
+
+        let mut headers = [httparse::EMPTY_HEADER; 64];
+        let mut req = httparse::Request::new(&mut headers);
+        let _body_start = req.parse(&request).unwrap().unwrap();
+
+        assert_eq!(req.method, Some("GET"));
+        assert_eq!(req.path, Some("/"));
+        assert_eq!(
+            req.headers.iter().find(|header| header.name == "Host").unwrap().value,
+            "host.com".as_bytes()
+        );
+    }
+
+    #[tokio::test]
+    async fn clearnet_host_outproxy_enabled_with_custom_port() {
+        let request = "GET / HTTP/1.1\r\nHost: host.com\r\n\r\n".as_bytes().to_vec();
+        let request = Request::parse(request).unwrap();
+
+        assert_eq!(
+            request.host,
+            HostKind::Clearnet {
+                host: "host.com".to_string()
+            }
+        );
+        assert_eq!(request.method, "GET".to_string());
+        assert_eq!(request.path, "/".to_string());
+
+        let ((host, port), request) = request
+            .assemble(
+                &None,
+                &Some(OutproxyKind::HostWithPort(
+                    "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p".to_string(),
+                    8888,
+                )),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            host,
+            "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p".to_string()
+        );
+        assert_eq!(port, Some(8888));
 
         let mut headers = [httparse::EMPTY_HEADER; 64];
         let mut req = httparse::Request::new(&mut headers);
@@ -783,10 +841,12 @@ mod tests {
         assert_eq!(request.method, "CONNECT".to_string());
         assert_eq!(request.path, "www.google.com:443".to_string());
 
-        let (host, request) = request
+        let ((host, port), request) = request
             .assemble(
                 &None,
-                &Some("lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p".to_string()),
+                &Some(OutproxyKind::Host(
+                    "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p".to_string(),
+                )),
             )
             .await
             .unwrap();
@@ -795,6 +855,7 @@ mod tests {
             host,
             "lhbd7ojcaiofbfku7ixh47qj537g572zmhdc4oilvugzxdpdghua.b32.i2p".to_string()
         );
+        assert!(port.is_none());
 
         let mut headers = [httparse::EMPTY_HEADER; 64];
         let mut req = httparse::Request::new(&mut headers);
