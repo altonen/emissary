@@ -324,23 +324,23 @@ impl AddressBookManager {
 
         // store base32-encoded addresses on disk and update `addresses`
         {
-            let base32_addresses = {
+            // update `addresses`
+            {
                 let mut inner = self.addresses.write();
-                let base32_addresses =
-                    addresses.into_iter().fold(String::new(), |acc, (hostname, address)| {
-                        inner.insert(hostname.clone(), address.clone());
 
-                        format!("{hostname}={address}\n{acc}")
-                    });
+                for (hostname, address) in addresses {
+                    inner.insert(hostname.clone(), address.clone());
+                }
+            }
 
-                base32_addresses
+            // get full list of base32 addresses
+            let base32_addresses = {
+                let inner = self.addresses.read();
+
+                inner.iter().fold(String::new(), |acc, (hostname, address)| {
+                    format!("{hostname}={address}\n{acc}")
+                })
             };
-
-            let base32_addresses =
-                match tokio::fs::read_to_string(self.address_book_path.join("addresses")).await {
-                    Ok(old_addresses) => format!("{old_addresses}{base32_addresses}"),
-                    Err(_) => base32_addresses,
-                };
 
             if let Err(error) =
                 tokio::fs::write(self.address_book_path.join("addresses"), base32_addresses).await
@@ -1186,5 +1186,122 @@ mod tests {
 
         assert!(handle.resolve_base32("zzz.i2p").is_none());
         assert!(handle.resolve_base64("zzz.i2p".to_string()).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn duplicate_entries_ignored() {
+        // create address book
+        let dir = {
+            let dir = tempdir().unwrap().keep();
+            tokio::fs::create_dir_all(&dir.join("addressbook")).await.unwrap();
+
+            let address_book = AddressBookManager::new(
+                dir.clone(),
+                AddressBookConfig {
+                    default: Some(String::from("url")),
+                    subscriptions: None,
+                },
+            )
+            .await;
+
+            let mut addresses = HashMap::<String, (String, String)>::new();
+            let hosts = "zerobin.i2p=Jf64hlpW8ILKZGDe61ljHU5wzmUYwN2klOyhM2iR-8VkUEVgDZRuaToRlXIFW4k5J1ccTzGzMxR518Bk\
+                CAE3jCFIyrbF0MjQDuXO5cwmqfBFWrIv72xgKDizu3HytE4vOF2M730rv8epSNPAJg6OpyXkf5UQW96kgL8SWcxWdTbKU-O8IpE3O\
+                01Oc6j0fp1E4wVOci7qIL8UEloNN~mulgka69MkR0uEtXWOXd6wvBjLNrZgdZi7XtT4QlDjx13jr7RGpZBJAUkk~8gLqgJwoUYhbf\
+                M7x564PIn3IlMXHK5AKRVxAbCQ5GkS8KdkvNL7FsQ~EiElGzZId4wenraHMHL0destUDmuwGdHKA7YdtovXD~OnaBvIbl36iuIduZ\
+                nGKPEBD31hVLdJuVId9RND7lQy5BZJHQss5HSxMWTszAnWJDwmxqzMHHCiL6BMpZnkz8znwPDSkUwEs3P6-ba7mDKKt8EPCG0nM6l\
+                ~BvPl2OKQIBhXIxJLOOavGyqmmYmAAAA\nzzz.i2p=GKapJ8koUcBj~jmQzHsTYxDg2tpfWj0xjQTzd8BhfC9c3OS5fwPBNajgF-e\
+                OD6eCjFTqTlorlh7Hnd8kXj1qblUGXT-tDoR9~YV8dmXl51cJn9MVTRrEqRWSJVXbUUz9t5Po6Xa247Vr0sJn27R4KoKP8QVj1GuH\
+                6dB3b6wTPbOamC3dkO18vkQkfZWUdRMDXk0d8AdjB0E0864nOT~J9Fpnd2pQE5uoFT6P0DqtQR2jsFvf9ME61aqLvKPPWpkgdn4z6\
+                Zkm-NJOcDz2Nv8Si7hli94E9SghMYRsdjU-knObKvxiagn84FIwcOpepxuG~kFXdD5NfsH0v6Uri3usE3XWD7Pw6P8qVYF39jUIq4\
+                OiNMwPnNYzy2N4mDMQdsdHO3LUVh~DEppOy9AAmEoHDjjJxt2BFBbGxfdpZCpENkwvmZeYUyNCCzASqTOOlNzdpne8cuesn3NDXIp\
+                NnqEE6Oe5Qm5YOJykrX~Vx~cFFT3QzDGkIjjxlFBsjUJyYkFjBQAEAAcAAA==".to_string();
+
+            address_book.parse_and_merge(&mut addresses, hosts).await;
+            address_book.save_to_disk(addresses).await;
+
+            dir
+        };
+
+        // simulate another boot and verify zzz.i2p is not found in the address book
+        let address_book = AddressBookManager::new(
+            dir.clone(),
+            AddressBookConfig {
+                default: None,
+                subscriptions: None,
+            },
+        )
+        .await;
+
+        // read original values from disk and verify only zerobin.i2p and zzz.i2p exist
+        let original_values =
+            tokio::fs::read_to_string(dir.join("addressbook/addresses")).await.unwrap();
+
+        assert_eq!(original_values.matches("tracker2.postman.i2p").count(), 0);
+        assert_eq!(original_values.matches("psi.i2p").count(), 0);
+        assert_eq!(original_values.matches("zerobin.i2p").count(), 1);
+        assert_eq!(original_values.matches("zzz.i2p").count(), 1);
+
+        // add new hosts, tracker2.postman.i2p is new and zerobin.i2p and zzz.i2p already
+        // exist in the address book
+        let mut addresses = HashMap::<String, (String, String)>::new();
+        let hosts = "tracker2.postman.i2p=lnQ6yoBTxQuQU8EQ1FlF395ITIQF-HGJxUeFvzETLFnoczNjQvKDbtSB7aHhn853zjVXrJBgwlB9sO57KakBDa\
+            J50lUZgVPhjlI19TgJ-CxyHhHSCeKx5JzURdEW-ucdONMynr-b2zwhsx8VQCJwCEkARvt21YkOyQDaB9IdV8aTAmP~PUJQxRwceaTMn96FcVenwdXqle\
+            E16fI8CVFOV18jbJKrhTOYpTtcZKV4l1wNYBDwKgwPx5c0kcrRzFyw5~bjuAKO~GJ5dR7BQsL7AwBoQUS4k1lwoYrG1kOIBeDD3XF8BWb6K3GOOoyjc1\
+            umYKpur3G~FxBuqtHAsDRICrsRuil8qK~whOvj8uNTv~ohZnTZHxTLgi~sDyo98BwJ-4Y4NMSuF4GLzcgLypcR1D1WY2tDqMKRYFVyLE~MTPVjRRgXfc\
+            KolykQ666~Go~A~~CNV4qc~zlO6F4bsUhVZDU7WJ7mxCAwqaMiJsL-NgIkb~SMHNxIzaE~oy0agHJMBQAEAAcAAA==#!oldsig=i02RMv3Hy86NGhVo2\
+            O3byIf6xXqWrzrRibSabe5dmNfRRQPZO9L25A==#date=1598641102#action=adddest#sig=cB-mY~sp1uuEmcQJqremV1D6EDWCe3IwPv4lBiGAX\
+            gKRYc5MLBBzYvJXtXmOawpfLKeNM~v5fWlXYsDfKf5nDA==#olddest=lnQ6yoBTxQuQU8EQ1FlF395ITIQF-HGJxUeFvzETLFnoczNjQvKDbtSB7aHh\
+            n853zjVXrJBgwlB9sO57KakBDaJ50lUZgVPhjlI19TgJ-CxyHhHSCeKx5JzURdEW-ucdONMynr-b2zwhsx8VQCJwCEkARvt21YkOyQDaB9IdV8aTAmP~\
+            PUJQxRwceaTMn96FcVenwdXqleE16fI8CVFOV18jbJKrhTOYpTtcZKV4l1wNYBDwKgwPx5c0kcrRzFyw5~bjuAKO~GJ5dR7BQsL7AwBoQUS4k1lwoYrG\
+            1kOIBeDD3XF8BWb6K3GOOoyjc1umYKpur3G~FxBuqtHAsDRICkEbKUqJ9mPYQlTSujhNxiRIW-oLwMtvayCFci99oX8MvazPS7~97x0Gsm-onEK1Td9n\
+            Bdmq30OqDxpRtXBimbzkLbR1IKObbg9HvrKs3L-kSyGwTUmHG9rSQSoZEvFMA-S0EXO~o4g21q1oikmxPMhkeVwQ22VHB0-LZJfmLr4SAAAA\npsi.i2\
+            p=a11l91etedRW5Kl2GhdDI9qiRBbDRAQY6TWJb8KlSc0P9WUrEviABAAltqDU1DFJrRhMAZg5i6rWGszkJrF-pWLQK9JOH33l4~mQjB8Hkt83l9qnNJ\
+            PUlGlh9yIfBY40CQ0Ermy8gzjHLayUpypDJFv2V6rHLwxAQeaXJu8YXbyvCucEu9i6HVO49akXW9YSxcZEqxK04wZnjBqhHGlVbehleMqTx9nkd0pUpB\
+            Zz~vIaG9matUSHinopEo6Wegml9FEz~FEaQpPknKuMAGGSNFVJb0NtaOQSAocAOg1nLKh80v232Y8sJOHG63asSJoBa6bGwjIHftsqD~lEmVV4NkgNPy\
+            bmvsD1SCbMQ2ExaCXFPVQV-yJhIAPN9MRVT9cSBT2GCq-vpMwdJ5Nf0iPR3M-Ak961JUwWXPYTL79toXCgxDX2~nZ5QFRV490YNnfB7LQu10G89wG8lz\
+            S9GWf2i-nk~~ez0Lq0dH7qQokFXdUkPc7bvSrxqkytrbd-h8O8AAAA\nzerobin.i2p=Jf64hlpW8ILKZGDe61ljHU5wzmUYwN2klOyhM2iR-8VkUEVg\
+            DZRuaToRlXIFW4k5J1ccTzGzMxR518BkCAE3jCFIyrbF0MjQDuXO5cwmqfBFWrIv72xgKDizu3HytE4vOF2M730rv8epSNPAJg6OpyXkf5UQW96kgL8S\
+            WcxWdTbKU-O8IpE3O01Oc6j0fp1E4wVOci7qIL8UEloNN~mulgka69MkR0uEtXWOXd6wvBjLNrZgdZi7XtT4QlDjx13jr7RGpZBJAUkk~8gLqgJwoUYh\
+            bfM7x564PIn3IlMXHK5AKRVxAbCQ5GkS8KdkvNL7FsQ~EiElGzZId4wenraHMHL0destUDmuwGdHKA7YdtovXD~OnaBvIbl36iuIduZnGKPEBD31hVLd\
+            JuVId9RND7lQy5BZJHQss5HSxMWTszAnWJDwmxqzMHHCiL6BMpZnkz8znwPDSkUwEs3P6-ba7mDKKt8EPCG0nM6l~BvPl2OKQIBhXIxJLOOavGyqmmYm\
+            AAAA\nzzz.i2p=GKapJ8koUcBj~jmQzHsTYxDg2tpfWj0xjQTzd8BhfC9c3OS5fwPBNajgF-eOD6eCjFTqTlorlh7Hnd8kXj1qblUGXT-tDoR9~YV8dm\
+            Xl51cJn9MVTRrEqRWSJVXbUUz9t5Po6Xa247Vr0sJn27R4KoKP8QVj1GuH6dB3b6wTPbOamC3dkO18vkQkfZWUdRMDXk0d8AdjB0E0864nOT~J9Fpnd2\
+            pQE5uoFT6P0DqtQR2jsFvf9ME61aqLvKPPWpkgdn4z6Zkm-NJOcDz2Nv8Si7hli94E9SghMYRsdjU-knObKvxiagn84FIwcOpepxuG~kFXdD5NfsH0v6\
+            Uri3usE3XWD7Pw6P8qVYF39jUIq4OiNMwPnNYzy2N4mDMQdsdHO3LUVh~DEppOy9AAmEoHDjjJxt2BFBbGxfdpZCpENkwvmZeYUyNCCzASqTOOlNzdpn\
+            e8cuesn3NDXIpNnqEE6Oe5Qm5YOJykrX~Vx~cFFT3QzDGkIjjxlFBsjUJyYkFjBQAEAAcAAA==".to_string();
+
+        address_book.parse_and_merge(&mut addresses, hosts).await;
+        address_book.save_to_disk(addresses).await;
+
+        // read updated values from disk, verify all hosts exist and that there aren't duplicate
+        let new_values =
+            tokio::fs::read_to_string(dir.join("addressbook/addresses")).await.unwrap();
+
+        assert_eq!(new_values.matches("tracker2.postman.i2p").count(), 1);
+        assert_eq!(new_values.matches("psi.i2p").count(), 1);
+        assert_eq!(new_values.matches("zerobin.i2p").count(), 1);
+        assert_eq!(new_values.matches("zzz.i2p").count(), 1);
+
+        // verify `addresses` have also been updated
+        assert!(address_book.addresses.read().get("tracker2.postman.i2p").is_some());
+        assert!(address_book.addresses.read().get("psi.i2p").is_some());
+        assert!(address_book.addresses.read().get("zerobin.i2p").is_some());
+        assert!(address_book.addresses.read().get("zzz.i2p").is_some());
+
+        // create new address book with updated entries and verify all hosts are there
+        let address_book_new = AddressBookManager::new(
+            dir.clone(),
+            AddressBookConfig {
+                default: None,
+                subscriptions: None,
+            },
+        )
+        .await;
+
+        assert!(address_book_new.addresses.read().get("tracker2.postman.i2p").is_some());
+        assert!(address_book_new.addresses.read().get("psi.i2p").is_some());
+        assert!(address_book_new.addresses.read().get("zerobin.i2p").is_some());
+        assert!(address_book_new.addresses.read().get("zzz.i2p").is_some());
     }
 }
