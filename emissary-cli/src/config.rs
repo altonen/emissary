@@ -100,6 +100,8 @@ pub struct Ssu2Config {
     pub ipv6_host: Option<Ipv6Addr>,
     pub ipv6_mtu: Option<usize>,
     pub publish: Option<bool>,
+    pub disable_pq: Option<bool>,
+    pub ml_kem: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -660,7 +662,7 @@ impl Config {
                 key: ntcp2_key,
                 iv: ntcp2_iv,
                 ml_kem: config.ml_kem,
-                disable_pq: config.disable_pq,
+                disable_pq: config.disable_pq.unwrap_or(false),
             }),
             port_forwarding: config.port_forwarding.map(From::from),
             profiles: Vec::new(),
@@ -677,16 +679,18 @@ impl Config {
             signing_key,
             socks_proxy: config.socks_proxy,
             ssu2_config: config.ssu2.map(|config| emissary_core::Ssu2Config {
-                port: config.port,
+                disable_pq: config.disable_pq.unwrap_or(false),
+                intro_key: ssu2_intro_key,
                 ipv4: config.ipv4.unwrap_or(true),
                 ipv4_host: config.ipv4_host,
                 ipv4_mtu: config.ipv4_mtu,
                 ipv6: config.ipv6.unwrap_or(true),
                 ipv6_host: config.ipv6_host,
                 ipv6_mtu: config.ipv6_mtu,
+                port: config.port,
                 publish: config.publish.unwrap_or(false),
                 static_key: ssu2_static_key,
-                intro_key: ssu2_intro_key,
+                ml_kem: config.ml_kem,
             }),
             static_key,
             transit: config.transit.map(|config| emissary_core::TransitConfig {

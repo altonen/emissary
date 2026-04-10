@@ -1220,7 +1220,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     address,
                     SocketAddr::new(address, 8888),
                 )]);
@@ -1238,7 +1238,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     address,
                     SocketAddr::new(address, 8888),
                 )]);
@@ -1402,7 +1402,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     IpAddr::V4(address),
                     SocketAddr::new(IpAddr::V4(address), 8888),
                 )]);
@@ -1420,7 +1420,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     IpAddr::V4(address),
                     SocketAddr::new(IpAddr::V4(address), 8888),
                 )]);
@@ -1468,7 +1468,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     IpAddr::V6(address),
                     SocketAddr::new(IpAddr::V6(address), 8888),
                 )]);
@@ -1485,7 +1485,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     IpAddr::V6(address),
                     SocketAddr::new(IpAddr::V6(address), 8888),
                 )]);
@@ -1521,7 +1521,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     IpAddr::V4(address),
                     SocketAddr::new(IpAddr::V4(address), 8888),
                 )]);
@@ -1540,7 +1540,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     IpAddr::V4(address),
                     SocketAddr::new(IpAddr::V4(address), 8888),
                 )]);
@@ -1591,7 +1591,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     IpAddr::V6(address),
                     SocketAddr::new(IpAddr::V6(address), 8888),
                 )]);
@@ -1608,7 +1608,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     IpAddr::V6(address),
                     SocketAddr::new(IpAddr::V6(address), 8888),
                 )]);
@@ -1722,7 +1722,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     IpAddr::V4(address),
                     SocketAddr::new(IpAddr::V4(address), 8888),
                 )]);
@@ -1741,7 +1741,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     IpAddr::V4(address),
                     SocketAddr::new(IpAddr::V4(address), 8888),
                 )]);
@@ -1793,7 +1793,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     IpAddr::V6(address),
                     SocketAddr::new(IpAddr::V6(address), 8888),
                 )]);
@@ -1810,7 +1810,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     IpAddr::V6(address),
                     SocketAddr::new(IpAddr::V6(address), 8888),
                 )]);
@@ -1850,7 +1850,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     IpAddr::V4(address),
                     SocketAddr::new(IpAddr::V4(address), 8888),
                 )]);
@@ -1869,7 +1869,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     IpAddr::V4(address),
                     SocketAddr::new(IpAddr::V4(address), 8888),
                 )]);
@@ -1924,7 +1924,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     IpAddr::V6(address),
                     SocketAddr::new(IpAddr::V6(address), 8888),
                 )]);
@@ -1941,7 +1941,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     IpAddr::V6(address),
                     SocketAddr::new(IpAddr::V6(address), 8888),
                 )]);
@@ -1982,7 +1982,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     IpAddr::V4(address),
                     SocketAddr::new(IpAddr::V4(address), 8888),
                 )]);
@@ -2001,7 +2001,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     IpAddr::V4(address),
                     SocketAddr::new(IpAddr::V4(address), 8888),
                 )]);
@@ -2075,7 +2075,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     IpAddr::V6(address),
                     SocketAddr::new(IpAddr::V6(address), 8888),
                 )]);
@@ -2092,7 +2092,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     IpAddr::V6(address),
                     SocketAddr::new(IpAddr::V6(address), 8888),
                 )]);
@@ -2156,7 +2156,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     IpAddr::V4(address),
                     SocketAddr::new(IpAddr::V4(address), 8888),
                 )]);
@@ -2175,7 +2175,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     IpAddr::V4(address),
                     SocketAddr::new(IpAddr::V4(address), 8888),
                 )]);
@@ -2252,7 +2252,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     IpAddr::V6(address),
                     SocketAddr::new(IpAddr::V6(address), 8888),
                 )]);
@@ -2269,7 +2269,7 @@ mod tests {
                     [1u8; 32],
                     [1u8; 16],
                     None,
-                    None,
+                    false,
                     IpAddr::V6(address),
                     SocketAddr::new(IpAddr::V6(address), 8888),
                 )]);

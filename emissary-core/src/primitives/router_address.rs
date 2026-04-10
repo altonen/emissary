@@ -27,7 +27,11 @@ use crate::{
 use bytes::{BufMut, BytesMut};
 use nom::{number::complete::be_u8, Err, IResult};
 
-use alloc::{format, string::ToString, vec::Vec};
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
 use core::{
     fmt,
     net::{IpAddr, SocketAddr},
@@ -90,6 +94,11 @@ pub enum RouterAddress {
         /// MTU.
         mtu: usize,
 
+        /// ML-KEM preference.
+        ///
+        /// `None` if only x25519 is enabled.
+        ml_kem: Option<MlKemPreference>,
+
         /// SSU2 static key.
         ///
         /// Must always be present, even for unpublished addresses.
@@ -115,6 +124,72 @@ impl fmt::Display for RouterAddress {
         match self {
             Self::Ntcp2 { socket_address, .. } => write!(f, "ntcp2({socket_address:?})"),
             Self::Ssu2 { socket_address, .. } => write!(f, "ssu2({socket_address:?})"),
+        }
+    }
+}
+
+/// ML-KEM preference for SSU2.
+#[derive(Debug, Clone, Copy)]
+pub enum MlKemPreference {
+    MlKem512,
+    MlKem512MlKem768,
+    MlKem768,
+    MlKem768MlKem512,
+}
+
+impl From<MlKemPreference> for Str {
+    fn from(value: MlKemPreference) -> Self {
+        match value {
+            MlKemPreference::MlKem512 => Str::from("3"),
+            MlKemPreference::MlKem512MlKem768 => Str::from("3,4"),
+            MlKemPreference::MlKem768 => Str::from("4"),
+            MlKemPreference::MlKem768MlKem512 => Str::from("4,3"),
+        }
+    }
+}
+
+impl MlKemPreference {
+    /// Convert `value` into `MlKemPreference`.
+    ///
+    /// `None` means only x25519 should be used.
+    fn from_preference(preference: Option<String>, mtu: usize, is_ipv4: bool) -> Option<Self> {
+        let preference = match preference?.as_ref() {
+            "3,4" => Self::MlKem512MlKem768,
+            "4,3" => Self::MlKem768MlKem512,
+            "4" => Self::MlKem768,
+            "3" => Self::MlKem512,
+            kind => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    %kind,
+                    "unrecognized ml-kem variant, defaulting to 4,3",
+                );
+                Self::MlKem768MlKem512
+            }
+        };
+
+        let fits_in_mtu = match preference {
+            Self::MlKem512 => true,
+            _ =>
+                (is_ipv4 && mtu >= constants::crypto::ml_kem::ML_KEM_768_IPV4_MIN_MTU)
+                    || (!is_ipv4 && mtu >= constants::crypto::ml_kem::ML_KEM_768_IPV6_MIN_MTU),
+        };
+
+        if fits_in_mtu {
+            return Some(preference);
+        }
+
+        // mtu is too small for ml-kem-768-x25519
+        match preference {
+            Self::MlKem768 => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?mtu,
+                    "only ml-kem-768-x25519 specified but mtu is too small",
+                );
+                None
+            }
+            _ => Some(MlKemPreference::MlKem512),
         }
     }
 }
@@ -146,11 +221,11 @@ impl RouterAddress {
         key: [u8; 32],
         iv: [u8; 16],
         ml_kem: Option<usize>,
-        disable_pq: Option<bool>,
+        disable_pq: bool,
         host: IpAddr,
         address: SocketAddr,
     ) -> Self {
-        let static_key = match (ml_kem, disable_pq.unwrap_or(false)) {
+        let static_key = match (ml_kem, disable_pq) {
             (None, _) | (_, true) => StaticPrivateKey::from_bytes(key).public(),
             (Some(3), false) => StaticPrivateKey::from_bytes_ml_kem_512(key).public(),
             (Some(4), false) => StaticPrivateKey::from_bytes_ml_kem_768(key).public(),
@@ -198,6 +273,8 @@ impl RouterAddress {
     pub fn new_unpublished_ssu2(
         static_key: [u8; 32],
         intro_key: [u8; 32],
+        ml_kem: Option<String>,
+        disable_pq: bool,
         address: SocketAddr,
         mtu: usize,
     ) -> Self {
@@ -216,6 +293,18 @@ impl RouterAddress {
             options.insert(Str::from("caps"), Str::from("6"));
         }
 
+        let ml_kem = if !disable_pq {
+            let preference = MlKemPreference::from_preference(ml_kem, mtu, address.is_ipv4());
+
+            if let Some(preference) = &preference {
+                options.insert(Str::from("pq"), (*preference).into());
+            }
+
+            preference
+        } else {
+            None
+        };
+
         if mtu != constants::ssu2::MAX_MTU {
             options.insert(Str::from("mtu"), Str::from(mtu.to_string()));
         }
@@ -224,6 +313,7 @@ impl RouterAddress {
             cost: 14,
             intro_key,
             mtu,
+            ml_kem,
             static_key,
             socket_address: Some(address),
             introducers: Vec::new(),
@@ -238,6 +328,8 @@ impl RouterAddress {
     pub fn new_published_ssu2(
         static_key: [u8; 32],
         intro_key: [u8; 32],
+        ml_kem: Option<String>,
+        disable_pq: bool,
         host: IpAddr,
         address: SocketAddr,
         mtu: usize,
@@ -252,6 +344,18 @@ impl RouterAddress {
         options.insert(Str::from("i"), Str::from(encoded_intro_key));
         options.insert(Str::from("host"), Str::from(host.to_string()));
         options.insert(Str::from("port"), Str::from(address.port().to_string()));
+
+        let ml_kem = if !disable_pq {
+            let preference = MlKemPreference::from_preference(ml_kem, mtu, address.is_ipv4());
+
+            if let Some(preference) = &preference {
+                options.insert(Str::from("pq"), (*preference).into());
+            }
+
+            preference
+        } else {
+            None
+        };
 
         if mtu != constants::ssu2::MAX_MTU {
             options.insert(Str::from("mtu"), Str::from(mtu.to_string()));
@@ -268,6 +372,7 @@ impl RouterAddress {
             static_key,
             intro_key,
             mtu,
+            ml_kem,
             options,
             introducers: Vec::new(),
             socket_address: Some(address),
@@ -476,6 +581,52 @@ impl RouterAddress {
                         )))?,
                 };
 
+                // validate PQ options
+                //
+                // TODO: ugly
+                let ml_kem = if let Some(pq) = options.get(&Str::from("pq")) {
+                    match &**pq {
+                        "3" => Some(MlKemPreference::MlKem512),
+                        value @ ("4" | "3,4" | "4,3") => {
+                            let ipv4 = match socket_address {
+                                Some(address) => Some(address.is_ipv4()),
+                                None =>
+                                    options.get(&Str::from("caps")).map(|caps| caps.contains("4")),
+                            };
+
+                            match ipv4 {
+                                Some(true)
+                                    if mtu < constants::crypto::ml_kem::ML_KEM_768_IPV4_MIN_MTU =>
+                                    return Err(Err::Error((
+                                        Some(rest),
+                                        RouterAddressParseError::InvalidPq,
+                                    ))),
+                                Some(false)
+                                    if mtu < constants::crypto::ml_kem::ML_KEM_768_IPV6_MIN_MTU =>
+                                    return Err(Err::Error((
+                                        Some(rest),
+                                        RouterAddressParseError::InvalidPq,
+                                    ))),
+                                _ => {}
+                            }
+
+                            match value {
+                                "3,4" => Some(MlKemPreference::MlKem512MlKem768),
+                                "4" => Some(MlKemPreference::MlKem768),
+                                "4,3" => Some(MlKemPreference::MlKem768MlKem512),
+                                _ => unreachable!(),
+                            }
+                        }
+                        _ =>
+                            return Err(Err::Error((
+                                Some(rest),
+                                RouterAddressParseError::InvalidPq,
+                            ))),
+                    }
+                } else {
+                    None
+                };
+
                 Ok((
                     rest,
                     Self::Ssu2 {
@@ -483,6 +634,7 @@ impl RouterAddress {
                         introducers,
                         intro_key,
                         mtu: mtu.min(constants::ssu2::MAX_MTU),
+                        ml_kem,
                         options,
                         socket_address,
                         static_key,
@@ -680,7 +832,7 @@ mod tests {
             [1u8; 32],
             [0xaa; 16],
             None,
-            None,
+            false,
             "127.0.0.1".parse().unwrap(),
             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
         )
@@ -724,7 +876,7 @@ mod tests {
             [1u8; 32],
             [0xaa; 16],
             None,
-            None,
+            false,
             "::1".parse().unwrap(),
             SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 8888),
         )
@@ -764,6 +916,8 @@ mod tests {
         let serialized = RouterAddress::new_unpublished_ssu2(
             [1u8; 32],
             [2u8; 32],
+            None,
+            false,
             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
             1500,
         )
@@ -803,6 +957,8 @@ mod tests {
         let serialized = RouterAddress::new_published_ssu2(
             [1u8; 32],
             [2u8; 32],
+            None,
+            false,
             "127.0.0.1".parse().unwrap(),
             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
             1500,
@@ -848,6 +1004,8 @@ mod tests {
         let serialized = RouterAddress::new_published_ssu2(
             [1u8; 32],
             [2u8; 32],
+            None,
+            false,
             "::1".parse().unwrap(),
             SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 8888),
             1500,
@@ -932,6 +1090,8 @@ mod tests {
         let mut address = RouterAddress::new_unpublished_ssu2(
             [0xaa; 32],
             [0xbb; 32],
+            None,
+            false,
             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
             1500,
         );
@@ -955,6 +1115,8 @@ mod tests {
         let mut address = RouterAddress::new_unpublished_ssu2(
             [0xaa; 32],
             [0xbb; 32],
+            None,
+            false,
             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
             1500,
         );
@@ -978,6 +1140,8 @@ mod tests {
         let mut address = RouterAddress::new_unpublished_ssu2(
             [0xaa; 32],
             [0xbb; 32],
+            None,
+            false,
             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
             1500,
         );
@@ -1001,6 +1165,8 @@ mod tests {
         let mut address = RouterAddress::new_unpublished_ssu2(
             [0xaa; 32],
             [0xbb; 32],
+            None,
+            false,
             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
             1500,
         );
@@ -1024,6 +1190,8 @@ mod tests {
         let mut address = RouterAddress::new_unpublished_ssu2(
             [0xaa; 32],
             [0xbb; 32],
+            None,
+            false,
             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
             1500,
         );
@@ -1061,6 +1229,8 @@ mod tests {
         let mut address = RouterAddress::new_published_ssu2(
             [0xaa; 32],
             [0xbb; 32],
+            None,
+            false,
             "127.0.0.1".parse().unwrap(),
             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
             1500,
@@ -1094,6 +1264,8 @@ mod tests {
         let mut address = RouterAddress::new_unpublished_ssu2(
             [0xaa; 32],
             [0xbb; 32],
+            None,
+            false,
             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
             1500,
         );
@@ -1185,6 +1357,7 @@ mod tests {
                 introducers: Vec::new(),
                 cost: 8,
                 mtu: 1500,
+                ml_kem: None,
                 static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
                 intro_key: [0xaa; 32],
                 options: Mapping::default(),
@@ -1200,6 +1373,7 @@ mod tests {
                 introducers: Vec::new(),
                 cost: 8,
                 mtu: 1500,
+                ml_kem: None,
                 static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
                 intro_key: [0xaa; 32],
                 options: Mapping::default(),
@@ -1215,6 +1389,7 @@ mod tests {
                 introducers: Vec::new(),
                 cost: 8,
                 mtu: 1500,
+                ml_kem: None,
                 static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
                 intro_key: [0xaa; 32],
                 options: Mapping::from_iter([(Str::from("caps"), Str::from("4"))]),
@@ -1230,6 +1405,7 @@ mod tests {
                 introducers: Vec::new(),
                 cost: 8,
                 mtu: 1500,
+                ml_kem: None,
                 static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
                 intro_key: [0xaa; 32],
                 options: Mapping::from_iter([(Str::from("caps"), Str::from("6"))]),
@@ -1245,6 +1421,7 @@ mod tests {
                 introducers: Vec::new(),
                 cost: 8,
                 mtu: 1500,
+                ml_kem: None,
                 static_key: StaticPrivateKey::random(&mut MockRuntime::rng()).public(),
                 intro_key: [0xaa; 32],
                 options: Mapping::default(),
@@ -1262,6 +1439,8 @@ mod tests {
             let address = RouterAddress::new_published_ssu2(
                 [0xaa; 32],
                 [0xbb; 32],
+                None,
+                false,
                 "127.0.0.1".parse().unwrap(),
                 SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
                 1500,
@@ -1280,6 +1459,8 @@ mod tests {
             let address = RouterAddress::new_unpublished_ssu2(
                 [0xaa; 32],
                 [0xbb; 32],
+                None,
+                false,
                 SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
                 1500,
             );
@@ -1300,6 +1481,8 @@ mod tests {
             let address = RouterAddress::new_published_ssu2(
                 [0xaa; 32],
                 [0xbb; 32],
+                None,
+                false,
                 "127.0.0.1".parse().unwrap(),
                 SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
                 1300,
@@ -1318,6 +1501,8 @@ mod tests {
             let address = RouterAddress::new_unpublished_ssu2(
                 [0xaa; 32],
                 [0xbb; 32],
+                None,
+                false,
                 SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
                 1300,
             );
@@ -1336,6 +1521,8 @@ mod tests {
         let mut address = RouterAddress::new_unpublished_ssu2(
             [0xaa; 32],
             [0xbb; 32],
+            None,
+            false,
             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
             1500,
         );
@@ -1359,6 +1546,8 @@ mod tests {
         let mut address = RouterAddress::new_unpublished_ssu2(
             [0xaa; 32],
             [0xbb; 32],
+            None,
+            false,
             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
             1500,
         );
@@ -1383,7 +1572,7 @@ mod tests {
             [1u8; 32],
             [2u8; 16],
             None,
-            None,
+            false,
             "127.0.0.1".parse().unwrap(),
             SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 8888),
         )
@@ -1432,7 +1621,7 @@ mod tests {
             [1u8; 32],
             [2u8; 16],
             Some(variant),
-            disabled,
+            disabled.unwrap_or(false),
             "127.0.0.1".parse().unwrap(),
             SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 8888),
         )
@@ -1458,7 +1647,7 @@ mod tests {
             [1u8; 32],
             [2u8; 16],
             Some(1337),
-            None,
+            false,
             "127.0.0.1".parse().unwrap(),
             SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 8888),
         )
@@ -1469,6 +1658,325 @@ mod tests {
                 assert!(options.get(&Str::from("pq")).is_none());
             }
             _ => panic!("invalid ntcp2 address"),
+        }
+    }
+
+    #[test]
+    fn ssu2_pq_published() {
+        // published
+        {
+            let address = RouterAddress::new_published_ssu2(
+                [0xaa; 32],
+                [0xbb; 32],
+                Some("4,3".to_string()),
+                false,
+                "127.0.0.1".parse().unwrap(),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+                1500,
+            );
+
+            match address {
+                RouterAddress::Ssu2 { options, .. } => {
+                    assert_eq!(options.get(&Str::from("pq")), Some(&Str::from("4,3")));
+                }
+                _ => panic!("invalid ssu2 address"),
+            }
+        }
+
+        // unpublished
+        {
+            let address = RouterAddress::new_unpublished_ssu2(
+                [0xaa; 32],
+                [0xbb; 32],
+                Some("4,3".to_string()),
+                false,
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+                1500,
+            );
+
+            match address {
+                RouterAddress::Ssu2 { options, .. } => {
+                    assert_eq!(options.get(&Str::from("pq")), Some(&Str::from("4,3")));
+                }
+                _ => panic!("invalid ssu2 address"),
+            }
+        }
+    }
+
+    #[test]
+    fn ssu2_pq_disabled() {
+        // published
+        {
+            let address = RouterAddress::new_published_ssu2(
+                [0xaa; 32],
+                [0xbb; 32],
+                None,
+                true,
+                "127.0.0.1".parse().unwrap(),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+                1300,
+            );
+
+            match address {
+                RouterAddress::Ssu2 { options, .. } => {
+                    assert!(options.get(&Str::from("pq")).is_none());
+                }
+                _ => panic!("invalid ssu2 address"),
+            }
+        }
+
+        // unpublished
+        {
+            let address = RouterAddress::new_unpublished_ssu2(
+                [0xaa; 32],
+                [0xbb; 32],
+                None,
+                true,
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+                1300,
+            );
+
+            match address {
+                RouterAddress::Ssu2 { options, .. } => {
+                    assert!(options.get(&Str::from("pq")).is_none());
+                }
+                _ => panic!("invalid ssu2 address"),
+            }
+        }
+    }
+
+    #[test]
+    fn mtu_too_small_for_ml_kem_768_ipv4() {
+        mtu_too_small_for_ml_kem_768(
+            constants::crypto::ml_kem::ML_KEM_768_IPV4_MIN_MTU - 1,
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+        );
+    }
+
+    #[test]
+    fn mtu_too_small_for_ml_kem_768_ipv6() {
+        mtu_too_small_for_ml_kem_768(
+            constants::crypto::ml_kem::ML_KEM_768_IPV6_MIN_MTU - 1,
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 8888),
+        );
+    }
+
+    fn mtu_too_small_for_ml_kem_768(mtu: usize, address: SocketAddr) {
+        let address = RouterAddress::new_unpublished_ssu2(
+            [0xaa; 32],
+            [0xbb; 32],
+            Some("4,3".to_string()),
+            false,
+            address,
+            mtu,
+        );
+
+        match address {
+            RouterAddress::Ssu2 { options, .. } => {
+                assert_eq!(options.get(&Str::from("pq")), Some(&Str::from("3")));
+            }
+            _ => panic!("invalid ssu2 address"),
+        }
+    }
+
+    #[test]
+    fn ssu2_invalid_pq_options() {
+        let address = RouterAddress::new_unpublished_ssu2(
+            [0xaa; 32],
+            [0xbb; 32],
+            Some("hello".to_string()),
+            false,
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 8888),
+            1500,
+        );
+
+        match address {
+            RouterAddress::Ssu2 { options, .. } => {
+                assert_eq!(options.get(&Str::from("pq")), Some(&Str::from("4,3")));
+            }
+            _ => panic!("invalid ssu2 address"),
+        }
+    }
+
+    #[test]
+    fn ssu2_invalid_pq_options_small_mtu_ipv4() {
+        let address = RouterAddress::new_unpublished_ssu2(
+            [0xaa; 32],
+            [0xbb; 32],
+            Some("hello".to_string()),
+            false,
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+            constants::crypto::ml_kem::ML_KEM_768_IPV4_MIN_MTU - 1,
+        );
+
+        match address {
+            RouterAddress::Ssu2 { options, .. } => {
+                assert_eq!(options.get(&Str::from("pq")), Some(&Str::from("3")));
+            }
+            _ => panic!("invalid ssu2 address"),
+        }
+    }
+
+    #[test]
+    fn ssu2_invalid_pq_options_small_mtu_ipv6() {
+        let address = RouterAddress::new_unpublished_ssu2(
+            [0xaa; 32],
+            [0xbb; 32],
+            Some("hello".to_string()),
+            false,
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 8888),
+            constants::crypto::ml_kem::ML_KEM_768_IPV6_MIN_MTU - 1,
+        );
+
+        match address {
+            RouterAddress::Ssu2 { options, .. } => {
+                assert_eq!(options.get(&Str::from("pq")), Some(&Str::from("3")));
+            }
+            _ => panic!("invalid ssu2 address"),
+        }
+    }
+
+    #[test]
+    fn ssu2_ml_kem_preference_mtu_too_small_ipv4() {
+        ssu2_ml_kem_preference_mtu_too_small(
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+            constants::crypto::ml_kem::ML_KEM_768_IPV4_MIN_MTU - 1,
+        );
+    }
+
+    #[test]
+    fn ssu2_ml_kem_preference_mtu_too_small_ipv6() {
+        ssu2_ml_kem_preference_mtu_too_small(
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 8888),
+            constants::crypto::ml_kem::ML_KEM_768_IPV6_MIN_MTU - 1,
+        );
+    }
+
+    fn ssu2_ml_kem_preference_mtu_too_small(address: SocketAddr, mtu: usize) {
+        // 4,3
+        {
+            let address = RouterAddress::new_unpublished_ssu2(
+                [0xaa; 32],
+                [0xbb; 32],
+                Some("4,3".to_string()),
+                false,
+                address,
+                mtu,
+            );
+
+            match address {
+                RouterAddress::Ssu2 { options, .. } => {
+                    assert_eq!(options.get(&Str::from("pq")), Some(&Str::from("3")));
+                }
+                _ => panic!("invalid ssu2 address"),
+            }
+        }
+
+        // 3,4
+        {
+            let address = RouterAddress::new_unpublished_ssu2(
+                [0xaa; 32],
+                [0xbb; 32],
+                Some("3,4".to_string()),
+                false,
+                address,
+                mtu,
+            );
+
+            match address {
+                RouterAddress::Ssu2 { options, .. } => {
+                    assert_eq!(options.get(&Str::from("pq")), Some(&Str::from("3")));
+                }
+                _ => panic!("invalid ssu2 address"),
+            }
+        }
+
+        // 4
+        {
+            let address = RouterAddress::new_unpublished_ssu2(
+                [0xaa; 32],
+                [0xbb; 32],
+                Some("4".to_string()),
+                false,
+                address,
+                mtu,
+            );
+
+            match address {
+                RouterAddress::Ssu2 { options, .. } => {
+                    assert!(options.get(&Str::from("pq")).is_none());
+                }
+                _ => panic!("invalid ssu2 address"),
+            }
+        }
+    }
+
+    #[test]
+    fn ssu2_invalid_remote_pq_options() {
+        let mut address = RouterAddress::new_unpublished_ssu2(
+            [0xaa; 32],
+            [0xbb; 32],
+            Some("hello".to_string()),
+            false,
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 8888),
+            1500,
+        );
+
+        match address {
+            RouterAddress::Ssu2 {
+                ref mut options, ..
+            } => {
+                options.insert(Str::from("pq"), Str::from("hello, world"));
+            }
+            _ => panic!("invalid ssu2 address"),
+        }
+
+        let serialized = address.serialize();
+        match RouterAddress::parse::<MockRuntime>(serialized) {
+            Result::Err(RouterAddressParseError::InvalidPq) => {}
+            res => panic!("unexpected result: {res:?}"),
+        }
+    }
+
+    #[test]
+    fn ssu2_pq_options_conflict_with_min_mtu_size_ipv4() {
+        ssu2_pq_options_conflict_with_min_mtu_size(
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8888),
+            constants::crypto::ml_kem::ML_KEM_768_IPV4_MIN_MTU - 1,
+        );
+    }
+
+    #[test]
+    fn ssu2_pq_options_conflict_with_min_mtu_size_ipv6() {
+        ssu2_pq_options_conflict_with_min_mtu_size(
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 8888),
+            constants::crypto::ml_kem::ML_KEM_768_IPV6_MIN_MTU - 1,
+        );
+    }
+
+    fn ssu2_pq_options_conflict_with_min_mtu_size(address: SocketAddr, mtu: usize) {
+        let mut address = RouterAddress::new_unpublished_ssu2(
+            [0xaa; 32],
+            [0xbb; 32],
+            Some("4,3".to_string()),
+            false,
+            address,
+            1500,
+        );
+
+        match address {
+            RouterAddress::Ssu2 {
+                ref mut options, ..
+            } => {
+                options.insert(Str::from("mtu"), Str::from(mtu.to_string()));
+            }
+            _ => panic!("invalid ssu2 address"),
+        }
+
+        let serialized = address.serialize();
+        match RouterAddress::parse::<MockRuntime>(serialized) {
+            Result::Err(RouterAddressParseError::InvalidPq) => {}
+            res => panic!("unexpected result: {res:?}"),
         }
     }
 }

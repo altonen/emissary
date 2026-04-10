@@ -1518,6 +1518,7 @@ mod tests {
         let ssu2 = RouterAddress::Ssu2 {
             cost: 8,
             mtu: 1500,
+            ml_kem: None,
             options: Mapping::from_iter([
                 (Str::from("caps"), caps),
                 (Str::from("i"), Str::from(base64_encode([0xbb; 32]))),
@@ -2568,6 +2569,8 @@ mod tests {
             .unwrap();
         let (bob_router_info, _bob_static_key, bob_signing_key) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                ml_kem: None,
+                disable_pq: false,
                 port: bob_socket.local_address().unwrap().port(),
                 ipv4_host: Some("127.0.0.1".parse().unwrap()),
                 ipv6_host: None,
@@ -2591,6 +2594,8 @@ mod tests {
         let (charlie_router_info, _charlie_static_key, _charlie_signing_key) =
             RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: charlie_socket.local_address().unwrap().port(),
                     ipv4_host: Some("127.0.0.1".parse().unwrap()),
                     ipv6_host: None,
@@ -2764,6 +2769,8 @@ mod tests {
             .unwrap();
         let (bob_router_info, _bob_static_key, bob_signing_key) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                ml_kem: None,
+                disable_pq: false,
                 port: bob_socket.local_address().unwrap().port(),
                 ipv4_host: Some("127.0.0.1".parse().unwrap()),
                 ipv6_host: None,
@@ -2903,6 +2910,8 @@ mod tests {
             .unwrap();
         let (bob_router_info, _bob_static_key, bob_signing_key) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                ml_kem: None,
+                disable_pq: false,
                 port: bob_socket.local_address().unwrap().port(),
                 ipv4_host: Some("127.0.0.1".parse().unwrap()),
                 ipv6_host: None,
@@ -2926,6 +2935,8 @@ mod tests {
         let (charlie_router_info, _charlie_static_key, _charlie_signing_key) =
             RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: charlie_socket.local_address().unwrap().port(),
                     ipv4_host: Some("127.0.0.1".parse().unwrap()),
                     ipv6_host: None,
@@ -3113,6 +3124,8 @@ mod tests {
             .unwrap();
         let (bob_router_info, _bob_static_key, bob_signing_key) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                ml_kem: None,
+                disable_pq: false,
                 port: bob_socket.local_address().unwrap().port(),
                 ipv4_host: Some("127.0.0.1".parse().unwrap()),
                 ipv6_host: None,
@@ -3136,6 +3149,8 @@ mod tests {
         let (charlie_router_info, _charlie_static_key, _charlie_signing_key) =
             RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: charlie_socket.local_address().unwrap().port(),
                     ipv4_host: Some("127.0.0.1".parse().unwrap()),
                     ipv6_host: None,
@@ -3294,6 +3309,8 @@ mod tests {
             .unwrap();
         let (bob_router_info, _bob_static_key, bob_signing_key) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                ml_kem: None,
+                disable_pq: false,
                 port: bob_socket.local_address().unwrap().port(),
                 ipv4_host: Some("127.0.0.1".parse().unwrap()),
                 ipv6_host: None,
@@ -3317,6 +3334,8 @@ mod tests {
         let (charlie_router_info, _charlie_static_key, _charlie_signing_key) =
             RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: charlie_socket.local_address().unwrap().port(),
                     ipv4_host: Some("127.0.0.1".parse().unwrap()),
                     ipv6_host: None,
@@ -3497,6 +3516,8 @@ mod tests {
             .unwrap();
         let (bob_router_info, _bob_static_key, bob_signing_key) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                ml_kem: None,
+                disable_pq: false,
                 port: bob_socket.local_address().unwrap().port(),
                 ipv4_host: Some("127.0.0.1".parse().unwrap()),
                 ipv6_host: None,
@@ -3578,6 +3599,8 @@ mod tests {
         for i in 0..10 {
             let (router_info, _static_key, signing_key) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 8888 + i,
                     ipv4_host: Some("127.0.0.1".parse().unwrap()),
                     ipv6_host: None,
@@ -3639,6 +3662,8 @@ mod tests {
         for i in 0..3 {
             let (router_info, _static_key, signing_key) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 8888 + i,
                     ipv4_host: Some("127.0.0.1".parse().unwrap()),
                     ipv6_host: None,
@@ -3700,6 +3725,8 @@ mod tests {
         for i in 0..10 {
             let (router_info, _static_key, signing_key) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 8888 + i,
                     ipv4_host: Some("127.0.0.1".parse().unwrap()),
                     ipv6_host: None,

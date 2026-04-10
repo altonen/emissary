@@ -16,6 +16,25 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+/// Crypto constants.
+pub mod crypto {
+    /// Poly1305 MAC size.
+    pub const POLY1305_MAC_SIZE: usize = 16usize;
+
+    /// ML-KEM constants.
+    pub mod ml_kem {
+        /// Minimum MTU size for ML-KEM-768 over IPv4.
+        ///
+        /// <https://i2p.net/en/docs/specs/ssu2-hybrid>
+        pub const ML_KEM_768_IPV4_MIN_MTU: usize = 1318usize;
+
+        /// Minimum MTU size for ML-KEM-768 over IPv6.
+        ///
+        /// <https://i2p.net/en/docs/specs/ssu2-hybrid>
+        pub const ML_KEM_768_IPV6_MIN_MTU: usize = 1338usize;
+    }
+}
+
 /// SSU2 constants.
 pub mod ssu2 {
     /// Minimum MTU size for SSU2.

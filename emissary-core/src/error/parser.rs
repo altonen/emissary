@@ -329,6 +329,9 @@ pub enum RouterAddressParseError {
 
     /// Invalid MTU.
     InvalidMtu,
+
+    /// Invalid PQ options.
+    InvalidPq,
 }
 
 impl From<MappingParseError> for RouterAddressParseError {

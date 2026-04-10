@@ -19,6 +19,7 @@
 use crate::{
     crypto::{
         chachapoly::{ChaCha, ChaChaPoly},
+        noise::NoiseContext,
         EphemeralPublicKey, StaticPublicKey,
     },
     runtime::Runtime,
@@ -52,6 +53,9 @@ pub struct TokenRequestBuilder {
 
     /// Source connection ID.
     src_id: Option<u64>,
+
+    /// Protocol version.
+    version: u8,
 }
 
 impl Default for TokenRequestBuilder {
@@ -59,8 +63,9 @@ impl Default for TokenRequestBuilder {
         Self {
             dst_id: None,
             intro_key: None,
-            src_id: None,
             net_id: 2u8,
+            src_id: None,
+            version: 2u8,
         }
     }
 }
@@ -90,6 +95,16 @@ impl TokenRequestBuilder {
         self
     }
 
+    /// Specify version.
+    ///
+    /// `2` for x25519.
+    /// `3` for ML-KEM-512-x25519
+    /// `4` for ML-KEM-768-x25519
+    pub fn with_version(mut self, version: u8) -> Self {
+        self.version = version;
+        self
+    }
+
     /// Build [`TokenRequestBuilder`] into a byte vector.
     pub fn build<R: Runtime>(mut self) -> BytesMut {
         let intro_key = self.intro_key.take().expect("to exist");
@@ -109,7 +124,7 @@ impl TokenRequestBuilder {
             out.put_u64_le(self.dst_id.take().expect("to exist"));
             out.put_u32(pkt_num);
             out.put_u8(*MessageType::TokenRequest);
-            out.put_u8(2u8); // version
+            out.put_u8(self.version);
             out.put_u8(self.net_id);
             out.put_u8(0u8); // flag
             out.put_u64_le(self.src_id.take().expect("to exist"));
@@ -165,6 +180,11 @@ impl TokenRequestBuilder {
 
 /// Unserialized `SessionCreated` message.
 pub struct SessionRequest {
+    /// Encapsulation key.
+    ///
+    /// `None` for x25519.
+    encapsulation_key: Option<Vec<u8>>,
+
     /// Serialized, unencrypted header.
     header: BytesMut,
 
@@ -184,10 +204,26 @@ impl SessionRequest {
     }
 
     /// Encrypt payload.
-    pub fn encrypt_payload(&mut self, cipher_key: &[u8], nonce: u64, state: &[u8]) {
+    ///
+    /// <https://i2p.net/en/docs/specs/ssu2-hybrid/#alice-kdf-for-message-1>
+    pub fn encrypt_payload(&mut self, cipher_key: &[u8], noise_ctx: &mut NoiseContext) {
+        let nonce = match self.encapsulation_key.as_mut() {
+            None => 0u64,
+            Some(encap_key) => {
+                ChaChaPoly::with_nonce(cipher_key, 0u64)
+                    .encrypt_with_ad_new(noise_ctx.state(), encap_key)
+                    .expect("to succeed");
+
+                // MixHash(ciphertext)
+                noise_ctx.mix_hash(&encap_key);
+
+                1u64
+            }
+        };
+
         // must succeed since all the parameters are controlled by us
         ChaChaPoly::with_nonce(cipher_key, nonce)
-            .encrypt_with_ad_new(state, &mut self.payload)
+            .encrypt_with_ad_new(noise_ctx.state(), &mut self.payload)
             .expect("to succeed");
     }
 
@@ -219,8 +255,15 @@ impl SessionRequest {
 
     /// Serialize [`SessionRequest`] into a byte vector.
     pub fn build(self) -> BytesMut {
-        let mut out = BytesMut::with_capacity(self.header.len() + self.payload.len());
+        let mut out = BytesMut::with_capacity(
+            self.header.len()
+                + self.payload.len()
+                + self.encapsulation_key.as_ref().map_or(0, |c| c.len()),
+        );
         out.put_slice(&self.header);
+        if let Some(encap_key) = self.encapsulation_key {
+            out.put_slice(&encap_key);
+        }
         out.put_slice(&self.payload);
 
         out
@@ -232,8 +275,16 @@ pub struct SessionRequestBuilder {
     /// Destination connection ID.
     dst_id: Option<u64>,
 
+    /// Encapsulation key.
+    ///
+    /// `None` for x25519.
+    encapsulation_key: Option<Vec<u8>>,
+
     /// Local ephemeral public key.
     ephemeral_key: Option<EphemeralPublicKey>,
+
+    /// Maximum payload size.
+    max_payload_size: usize,
 
     /// Network ID.
     ///
@@ -248,17 +299,23 @@ pub struct SessionRequestBuilder {
 
     /// Token.
     token: Option<u64>,
+
+    /// Protocol version.
+    version: u8,
 }
 
 impl Default for SessionRequestBuilder {
     fn default() -> Self {
         Self {
             dst_id: None,
+            encapsulation_key: None,
             ephemeral_key: None,
+            max_payload_size: 1472,
             net_id: 2u8,
             request_tag: false,
             src_id: None,
             token: None,
+            version: 2u8,
         }
     }
 }
@@ -300,23 +357,34 @@ impl SessionRequestBuilder {
         self
     }
 
+    /// Specify ML-KEM encapsulation key.
+    pub fn with_encapsulation_key(mut self, encap_key: Option<Vec<u8>>) -> Self {
+        self.encapsulation_key = encap_key;
+        self
+    }
+
+    /// Specify protocol version.
+    pub fn with_version(mut self, version: u8) -> Self {
+        self.version = version;
+        self
+    }
+
+    /// Specify maximum payload size.
+    pub fn with_max_payload_size(mut self, max_payload_size: usize) -> Self {
+        self.max_payload_size = max_payload_size;
+        self
+    }
+
     /// Build [`SessionRequestBuilder`] into [`SessionRequest`].
     pub fn build<R: Runtime>(mut self) -> SessionRequest {
         let mut rng = R::rng();
-        let padding = {
-            let padding_len = rng.next_u32() % MAX_PADDING as u32 + 16;
-            let mut padding = vec![0u8; padding_len as usize];
-            rng.fill_bytes(&mut padding);
-
-            padding
-        };
         let header = {
             let mut out = BytesMut::with_capacity(LONG_HEADER_LEN + PUBLIC_KEY_LEN);
 
             out.put_u64_le(self.dst_id.take().expect("to exist"));
             out.put_u32(rng.next_u32());
             out.put_u8(*MessageType::SessionRequest);
-            out.put_u8(2u8); // version
+            out.put_u8(self.version);
             out.put_u8(self.net_id);
             out.put_u8(0u8); // flag
             out.put_u64_le(self.src_id.take().expect("to exist"));
@@ -326,6 +394,25 @@ impl SessionRequestBuilder {
             out
         };
 
+        // padding must not exceed maximum payload size which depends on encryption and ip types
+        let padding = {
+            let bytes_left = self
+                .max_payload_size
+                .saturating_sub(header.len())
+                .saturating_sub(self.encapsulation_key.as_ref().map_or(0, |c| c.len()))
+                .saturating_sub(10 + POLY13055_MAC_LEN);
+
+            if bytes_left == 0 {
+                vec![]
+            } else {
+                let padding_len = rng.next_u32() % MAX_PADDING as u32 + 16;
+                let mut padding = vec![0u8; (padding_len as usize).min(bytes_left)];
+                rng.fill_bytes(&mut padding);
+
+                padding
+            }
+        };
+
         let mut payload = Vec::with_capacity(10 + padding.len() + POLY13055_MAC_LEN);
         payload.extend_from_slice(
             &Block::DateTime {
@@ -333,12 +420,20 @@ impl SessionRequestBuilder {
             }
             .serialize(),
         );
+
         if self.request_tag {
             payload.extend_from_slice(&Block::RelayTagRequest.serialize());
         }
-        payload.extend_from_slice(&Block::Padding { padding }.serialize());
 
-        SessionRequest { header, payload }
+        if !padding.is_empty() {
+            payload.extend_from_slice(&Block::Padding { padding }.serialize());
+        }
+
+        SessionRequest {
+            encapsulation_key: self.encapsulation_key,
+            header,
+            payload,
+        }
     }
 }
 
@@ -637,6 +732,9 @@ pub struct RetryBuilder {
 
     /// Token.
     token: Option<u64>,
+
+    /// Protocol version.
+    version: u8,
 }
 
 impl Default for RetryBuilder {
@@ -649,6 +747,7 @@ impl Default for RetryBuilder {
             src_id: None,
             termination: None,
             token: None,
+            version: 2u8,
         }
     }
 }
@@ -696,6 +795,12 @@ impl RetryBuilder {
         self
     }
 
+    /// Specify protocol version.
+    pub fn with_version(mut self, version: u8) -> Self {
+        self.version = version;
+        self
+    }
+
     /// Build [`Retry`] into a byte vector.
     pub fn build<R: Runtime>(self) -> BytesMut {
         let (mut header, pkt_num) = {
@@ -705,7 +810,7 @@ impl RetryBuilder {
             out.put_u64_le(self.dst_id.expect("to exist"));
             out.put_u32(pkt_num);
             out.put_u8(*MessageType::Retry);
-            out.put_u8(2u8);
+            out.put_u8(self.version);
             out.put_u8(self.net_id);
             out.put_u8(0u8);
             out.put_u64_le(self.src_id.expect("to exist"));
@@ -802,16 +907,16 @@ pub struct SessionCreated {
     /// Serialized, unencrypted header.
     header: BytesMut,
 
+    /// KEM ciphertext.
+    ///
+    /// `None` for x25519.
+    kem_ciphertext: Option<Vec<u8>>,
+
     /// Serialized, unencrypted payload
     payload: Vec<u8>,
 }
 
 impl SessionCreated {
-    /// Get reference to header.
-    pub fn header(&self) -> &[u8] {
-        &self.header[..32]
-    }
-
     /// Get reference to payload.
     pub fn payload(&self) -> &[u8] {
         &self.payload
@@ -850,10 +955,18 @@ impl SessionCreated {
             .expect("to succeed");
     }
 
-    /// Serialize [`SessionCreated`] into a byte vector.
+    /// Serialize `SessionCreated` into a byte vector.
     pub fn build(self) -> BytesMut {
-        let mut out = BytesMut::with_capacity(self.header.len() + self.payload.len());
+        let mut out = BytesMut::with_capacity(
+            self.header.len()
+                + self.payload.len()
+                + self.kem_ciphertext.as_ref().map_or(0, |c| c.len()),
+        );
+
         out.put_slice(&self.header);
+        if let Some(kem_ciphertext) = self.kem_ciphertext {
+            out.put_slice(&kem_ciphertext);
+        }
         out.put_slice(&self.payload);
 
         out
@@ -871,6 +984,19 @@ pub struct SessionCreatedBuilder {
     /// Our ephemeral public key.
     ephemeral_key: Option<EphemeralPublicKey>,
 
+    /// Header for the message.
+    ///
+    /// `None` if not yet built.
+    header: Option<BytesMut>,
+
+    /// KEM ciphertext.
+    ///
+    /// `None` for x25519.
+    kem_ciphertext: Option<Vec<u8>>,
+
+    /// Maximum payload size.
+    max_payload_size: usize,
+
     /// Network ID.
     ///
     /// Defaults to 2.
@@ -881,6 +1007,9 @@ pub struct SessionCreatedBuilder {
 
     /// Source connection ID.
     src_id: Option<u64>,
+
+    /// Protocol version.
+    version: u8,
 }
 
 impl Default for SessionCreatedBuilder {
@@ -889,9 +1018,13 @@ impl Default for SessionCreatedBuilder {
             address: None,
             dst_id: None,
             ephemeral_key: None,
+            header: None,
+            kem_ciphertext: None,
+            max_payload_size: 1472,
             net_id: 2u8,
             relay_tag: None,
             src_id: None,
+            version: 2u8,
         }
     }
 }
@@ -933,20 +1066,33 @@ impl SessionCreatedBuilder {
         self
     }
 
-    /// Build [`SessionCreatedBuilder`] into [`SessionCreated`] by creating a long header
-    /// and a payload with needed blocks.
-    ///
-    /// This function doesn't return a serialized `SessionCreated` message as the caller needs to
-    /// encrypt the payload with "non-static" key/state which future encryption/decryption is
-    /// depended on.
-    pub fn build<R: Runtime>(mut self) -> SessionCreated {
-        let header = {
+    /// Specify protocol version.
+    pub fn with_version(mut self, version: u8) -> Self {
+        self.version = version;
+        self
+    }
+
+    /// Add optional KEM ciphertext.
+    pub fn with_kem_ciphertext(mut self, kem_ciphertext: Vec<u8>) -> Self {
+        self.kem_ciphertext = Some(kem_ciphertext);
+        self
+    }
+
+    /// Specify maximum payload size.
+    pub fn with_max_payload_size(mut self, max_payload_size: usize) -> Self {
+        self.max_payload_size = max_payload_size;
+        self
+    }
+
+    /// Build header for the `SessionCreated` message.
+    pub fn build_header<R: Runtime>(mut self) -> Self {
+        self.header = Some({
             let mut out = BytesMut::with_capacity(LONG_HEADER_LEN);
 
             out.put_u64_le(self.dst_id.expect("to exist"));
             out.put_u32(R::rng().next_u32());
             out.put_u8(*MessageType::SessionCreated);
-            out.put_u8(2u8);
+            out.put_u8(self.version);
             out.put_u8(self.net_id);
             out.put_u8(0u8);
             out.put_u64_le(self.src_id.expect("to exist"));
@@ -954,48 +1100,86 @@ impl SessionCreatedBuilder {
             out.put_slice(self.ephemeral_key.take().expect("to exist").as_ref());
 
             out
-        };
+        });
+
+        self
+    }
+
+    /// Get header for the `SessionCreated` message
+    ///
+    /// Panics if `SessionCreatedBuilder::build_header()` has not been called.
+    pub fn header(&self) -> &[u8] {
+        &self.header.as_ref().expect("header to exist")[..32]
+    }
+
+    /// Build [`SessionCreatedBuilder`] into [`SessionCreated`] by creating a long header
+    /// and a payload with needed blocks.
+    ///
+    /// This function doesn't return a serialized `SessionCreated` message as the caller needs to
+    /// encrypt the payload with "non-static" key/state which future encryption/decryption is
+    /// depended on.
+    pub fn build<R: Runtime>(mut self) -> SessionCreated {
+        let address = self.address.expect("address to exist");
+        // TODO: still ugly
+        let mut payload_size = 7usize // date time
+         + match address {
+             SocketAddr::V4(_) => 9usize,
+             SocketAddr::V6(_) => 21usize,
+         }
+         + POLY13055_MAC_LEN
+         + self.relay_tag.map_or(0, |_| 7);
+
+        // padding must not exceed maximum payload size which depends on encryption and ip types
         let padding = {
-            let padding_len = R::rng().next_u32() as usize % MAX_PADDING + 1;
-            let mut padding = vec![0u8; padding_len];
-            R::rng().fill_bytes(&mut padding);
+            let bytes_left = self
+                .max_payload_size
+                .saturating_sub(64) // header + public key
+                .saturating_sub(self.kem_ciphertext.as_ref().map_or(0, |c| c.len()))
+                .saturating_sub(payload_size);
 
-            padding
+            if bytes_left == 0 {
+                vec![]
+            } else {
+                let mut rng = R::rng();
+                let padding_len = rng.next_u32() % MAX_PADDING as u32 + 16;
+                let mut padding = vec![0u8; (padding_len as usize).min(bytes_left)];
+                rng.fill_bytes(&mut padding);
+
+                payload_size += padding.len();
+                padding
+            }
         };
-        // TODO: these numbers are confusing, fix
-        let payload_size =
-            3 * 3 + 4 + 6 + padding.len() + POLY13055_MAC_LEN + self.relay_tag.map_or(0, |_| 7);
 
-        let payload = if let Some(relay_tag) = self.relay_tag {
-            vec![
-                Block::DateTime {
-                    timestamp: R::time_since_epoch().as_secs() as u32,
-                },
-                Block::Address {
-                    address: self.address.expect("to exist"),
-                },
-                Block::RelayTag { relay_tag },
-                Block::Padding { padding },
-            ]
-        } else {
-            vec![
-                Block::DateTime {
-                    timestamp: R::time_since_epoch().as_secs() as u32,
-                },
-                Block::Address {
-                    address: self.address.expect("to exist"),
-                },
-                Block::Padding { padding },
-            ]
+        let mut blocks = vec![
+            Block::DateTime {
+                timestamp: R::time_since_epoch().as_secs() as u32,
+            },
+            Block::Address {
+                address: self.address.expect("to exist"),
+            },
+        ];
+
+        if let Some(relay_tag) = self.relay_tag {
+            blocks.push(Block::RelayTag { relay_tag });
         }
-        .into_iter()
-        .fold(BytesMut::with_capacity(payload_size), |mut out, block| {
-            out.put_slice(&block.serialize());
-            out
-        })
-        .to_vec();
 
-        SessionCreated { header, payload }
+        if !padding.is_empty() {
+            blocks.push(Block::Padding { padding });
+        }
+
+        let payload = blocks
+            .into_iter()
+            .fold(BytesMut::with_capacity(payload_size), |mut out, block| {
+                out.put_slice(&block.serialize());
+                out
+            })
+            .to_vec();
+
+        SessionCreated {
+            header: self.header.take().expect("to exist"),
+            payload,
+            kem_ciphertext: self.kem_ciphertext,
+        }
     }
 }
 
@@ -1144,6 +1328,7 @@ mod tests {
                     .with_dst_id(1337)
                     .with_src_id(1338)
                     .with_ephemeral_key(EphemeralPrivateKey::random(MockRuntime::rng()).public())
+                    .build_header::<MockRuntime>()
                     .build::<MockRuntime>();
 
                 pkt.encrypt_payload(&[1u8; 32], 1337, &[0u8; 32]);
@@ -1168,6 +1353,7 @@ mod tests {
                     .with_src_id(1338)
                     .with_net_id(13)
                     .with_ephemeral_key(EphemeralPrivateKey::random(MockRuntime::rng()).public())
+                    .build_header::<MockRuntime>()
                     .build::<MockRuntime>();
 
                 pkt.encrypt_payload(&[1u8; 32], 1337, &[0u8; 32]);

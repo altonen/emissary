@@ -28,10 +28,13 @@ use crate::{
     },
     error::Ntcp2Error,
     runtime::Runtime,
-    transport::ntcp2::{
-        message::MessageBlock,
-        options::{InitiatorOptions, ResponderOptions},
-        session::{EncryptionContext, KeyContext, MAX_CLOCK_SKEW},
+    transport::{
+        ntcp2::{
+            message::MessageBlock,
+            options::{InitiatorOptions, ResponderOptions},
+            session::{EncryptionContext, KeyContext, MAX_CLOCK_SKEW},
+        },
+        EncryptionKind,
     },
 };
 
@@ -449,7 +452,10 @@ impl Initiator {
     /// for the data phase.
     ///
     /// <https://geti2p.net/spec/ntcp2#key-derivation-function-kdf-for-data-phase>
-    pub fn finalize(&mut self, padding: &[u8]) -> Result<(KeyContext, BytesMut), Ntcp2Error> {
+    pub fn finalize(
+        &mut self,
+        padding: &[u8],
+    ) -> Result<(KeyContext, BytesMut, EncryptionKind), Ntcp2Error> {
         let InitiatorState::SessionCreated {
             local_info,
             local_static_key,
@@ -515,7 +521,16 @@ impl Initiator {
             (KeyContext::new(send_key, receive_key, sip), out)
         };
 
-        Ok((key_context, message))
+        Ok((
+            key_context,
+            message,
+            match encryption_ctx {
+                EncryptionContext::X25519(_) => EncryptionKind::X25519,
+                EncryptionContext::MlKem512X25519(_) => EncryptionKind::MlKem512X25519,
+                EncryptionContext::MlKem768X25519(_) => EncryptionKind::MlKem768X25519,
+                EncryptionContext::MlKem1024X25519(_) => EncryptionKind::MlKem1024X25519,
+            },
+        ))
     }
 
     /// Get the size of `SessionCreated` message.

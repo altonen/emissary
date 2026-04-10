@@ -25,7 +25,7 @@ pub use destination::{Destination, DestinationId};
 pub use lease_set::{Lease, LeaseSet2, LeaseSet2Header};
 pub use mapping::Mapping;
 pub use offline_signature::OfflineSignature;
-pub use router_address::{RouterAddress, TransportKind};
+pub use router_address::{MlKemPreference, RouterAddress, TransportKind};
 pub use router_identity::{RouterId, RouterIdentity};
 pub use router_info::RouterInfo;
 pub use string::Str;

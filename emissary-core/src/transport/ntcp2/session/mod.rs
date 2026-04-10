@@ -533,7 +533,7 @@ impl<R: Runtime> SessionManager<R> {
             "padding for SessionCreated read, create and send SessionConfirmed",
         );
 
-        let (key_context, message) = initiator.finalize(&reply)?;
+        let (key_context, message, encryption) = initiator.finalize(&reply)?;
         stream.write_all(&message).await.map_err(|_| Ntcp2Error::IoError)?;
 
         Ok(Ntcp2Session::<R>::new(
@@ -547,6 +547,7 @@ impl<R: Runtime> SessionManager<R> {
             transport_tx,
             started,
             metrics_handle,
+            encryption,
         ))
     }
 
@@ -679,7 +680,7 @@ impl<R: Runtime> SessionManager<R> {
         stream.read_exact::<R>(&mut message).await.map_err(|_| Ntcp2Error::IoError)?;
 
         match responder.finalize::<R>(message) {
-            Ok((key_context, router_info, serialized)) => {
+            Ok((key_context, router_info, serialized, encryption)) => {
                 if router_info.net_id() != net_id {
                     tracing::warn!(
                         target: LOG_TARGET,
@@ -706,6 +707,7 @@ impl<R: Runtime> SessionManager<R> {
                     transport_tx,
                     started,
                     metrics_handle,
+                    encryption,
                 ))
             }
             Err(error) => {
@@ -843,7 +845,7 @@ mod tests {
                 self.ntcp2_key.clone(),
                 self.ntcp2_iv,
                 self.ml_kem,
-                None,
+                false,
                 "127.0.0.1".parse().unwrap(),
                 SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port),
             ));
@@ -855,7 +857,7 @@ mod tests {
                 self.ntcp2_key.clone(),
                 self.ntcp2_iv,
                 self.ml_kem,
-                None,
+                false,
                 "::1".parse().unwrap(),
                 SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), port),
             ));

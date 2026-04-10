@@ -83,9 +83,6 @@ const PUBLIC_KEY_LEN: usize = 32usize;
 /// Minimum size for a packet.
 const PKT_MIN_SIZE: usize = 24usize;
 
-/// Protocol version.
-const PROTOCOL_VERSION: u8 = 2u8;
-
 /// Router hash length.
 const ROUTER_HASH_LEN: usize = 32usize;
 
@@ -1536,6 +1533,32 @@ impl Block {
     }
 }
 
+/// Protocol version.
+#[derive(Debug)]
+pub enum ProtocolVersion {
+    /// Protocol version 2, x25519.
+    V2,
+
+    /// Protocol version 3, ML-KEM-512-x25519.
+    V3,
+
+    /// Protocol version 4, ML-KEM-512-x25519.
+    V4,
+}
+
+impl TryFrom<u8> for ProtocolVersion {
+    type Error = Ssu2Error;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            2 => Ok(Self::V2),
+            3 => Ok(Self::V3),
+            4 => Ok(Self::V4),
+            _ => Err(Ssu2Error::InvalidVersion),
+        }
+    }
+}
+
 /// SSU2 message type.
 #[derive(Debug, Clone, Copy)]
 pub enum MessageType {
@@ -1596,6 +1619,9 @@ pub enum HeaderKind {
 
         /// Token.
         token: u64,
+
+        /// Protocol version.
+        version: ProtocolVersion,
     },
 
     /// Session confirmed.
@@ -1620,6 +1646,10 @@ pub enum HeaderKind {
 
         /// Packet number.
         pkt_num: u32,
+
+        /// Protocol version.
+        #[allow(unused)]
+        version: ProtocolVersion,
     },
 
     /// Session request.
@@ -1635,6 +1665,9 @@ pub enum HeaderKind {
 
         /// Token
         token: u64,
+
+        /// Protocol version.
+        version: ProtocolVersion,
     },
 
     /// Token request.
@@ -1647,6 +1680,9 @@ pub enum HeaderKind {
 
         /// Source connection ID.
         src_id: u64,
+
+        /// Protocol version.
+        version: ProtocolVersion,
     },
 
     /// Data.
@@ -1668,6 +1704,9 @@ pub enum HeaderKind {
 
         /// Source connection ID.
         src_id: u64,
+
+        /// Protocol version.
+        version: ProtocolVersion,
     },
 
     /// Hole punch
@@ -1680,6 +1719,9 @@ pub enum HeaderKind {
 
         /// Source connection ID.
         src_id: u64,
+
+        /// Protocol version.
+        version: ProtocolVersion,
     },
 }
 
@@ -1690,11 +1732,13 @@ impl fmt::Debug for HeaderKind {
                 net_id,
                 pkt_num,
                 token,
+                version,
             } => f
                 .debug_struct("HeaderKind::Retry")
                 .field("net_id", &net_id)
                 .field("pkt_num", &pkt_num)
                 .field("token", &token)
+                .field("version", &version)
                 .finish(),
             Self::SessionConfirmed {
                 fragment,
@@ -1728,11 +1772,13 @@ impl fmt::Debug for HeaderKind {
                 net_id,
                 pkt_num,
                 src_id,
+                version,
             } => f
                 .debug_struct("HeaderKind::TokenRequest")
                 .field("net_id", &net_id)
                 .field("pkt_num", &pkt_num)
                 .field("src_id", &src_id)
+                .field("version", &version)
                 .finish(),
             Self::Data {
                 immediate_ack,
@@ -1746,21 +1792,25 @@ impl fmt::Debug for HeaderKind {
                 net_id,
                 pkt_num,
                 src_id,
+                version,
             } => f
                 .debug_struct("HeaderKind::PeerTest")
                 .field("net_id", &net_id)
                 .field("pkt_num", &pkt_num)
                 .field("src_id", &src_id)
+                .field("version", &version)
                 .finish(),
             Self::HolePunch {
                 net_id,
                 pkt_num,
                 src_id,
+                version,
             } => f
                 .debug_struct("HeaderKind::HolePunch")
                 .field("net_id", &net_id)
                 .field("pkt_num", &pkt_num)
                 .field("src_id", &src_id)
+                .field("version", &version)
                 .finish(),
         }
     }
@@ -1838,9 +1888,7 @@ impl<'a> HeaderReader<'a> {
             .map_err(|_| Ssu2Error::Malformed)?
         {
             MessageType::SessionRequest => {
-                if ((header >> 40) as u8) != PROTOCOL_VERSION {
-                    return Err(Ssu2Error::InvalidVersion);
-                }
+                let version = ProtocolVersion::try_from((header >> 40) as u8)?;
 
                 if self.pkt.len() < 64 {
                     return Err(Ssu2Error::NotEnoughBytes);
@@ -1863,12 +1911,11 @@ impl<'a> HeaderReader<'a> {
                     net_id,
                     pkt_num,
                     token,
+                    version,
                 })
             }
             MessageType::SessionCreated => {
-                if ((header >> 40) as u8) != PROTOCOL_VERSION {
-                    return Err(Ssu2Error::InvalidVersion);
-                }
+                let version = ProtocolVersion::try_from((header >> 40) as u8)?;
 
                 if self.pkt.len() < 64 {
                     return Err(Ssu2Error::NotEnoughBytes);
@@ -1887,6 +1934,7 @@ impl<'a> HeaderReader<'a> {
                     ephemeral_key,
                     net_id,
                     pkt_num,
+                    version,
                 })
             }
             MessageType::SessionConfirmed => {
@@ -1918,9 +1966,7 @@ impl<'a> HeaderReader<'a> {
                 pkt_num: u32::from_be(header as u32),
             }),
             MessageType::Retry => {
-                if ((header >> 40) as u8) != PROTOCOL_VERSION {
-                    return Err(Ssu2Error::InvalidVersion);
-                }
+                let version = ProtocolVersion::try_from((header >> 40) as u8)?;
 
                 if self.pkt.len() < 32 {
                     return Err(Ssu2Error::NotEnoughBytes);
@@ -1940,12 +1986,11 @@ impl<'a> HeaderReader<'a> {
                     net_id,
                     pkt_num,
                     token,
+                    version,
                 })
             }
             MessageType::TokenRequest => {
-                if ((header >> 40) as u8) != PROTOCOL_VERSION {
-                    return Err(Ssu2Error::InvalidVersion);
-                }
+                let version = ProtocolVersion::try_from((header >> 40) as u8)?;
 
                 if self.pkt.len() < 32 {
                     return Err(Ssu2Error::NotEnoughBytes);
@@ -1963,12 +2008,11 @@ impl<'a> HeaderReader<'a> {
                     net_id,
                     pkt_num,
                     src_id,
+                    version,
                 })
             }
             MessageType::PeerTest => {
-                if ((header >> 40) as u8) != PROTOCOL_VERSION {
-                    return Err(Ssu2Error::InvalidVersion);
-                }
+                let version = ProtocolVersion::try_from((header >> 40) as u8)?;
 
                 if self.pkt.len() < 32 {
                     return Err(Ssu2Error::NotEnoughBytes);
@@ -1986,12 +2030,11 @@ impl<'a> HeaderReader<'a> {
                     net_id,
                     pkt_num,
                     src_id,
+                    version,
                 })
             }
             MessageType::HolePunch => {
-                if ((header >> 40) as u8) != PROTOCOL_VERSION {
-                    return Err(Ssu2Error::InvalidVersion);
-                }
+                let version = ProtocolVersion::try_from((header >> 40) as u8)?;
 
                 if self.pkt.len() < 32 {
                     return Err(Ssu2Error::NotEnoughBytes);
@@ -2009,6 +2052,7 @@ impl<'a> HeaderReader<'a> {
                     net_id,
                     pkt_num,
                     src_id,
+                    version,
                 })
             }
         }

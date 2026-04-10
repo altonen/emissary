@@ -58,7 +58,7 @@ async fn make_router(
                 ipv6_host: Some("::1".parse().unwrap()),
                 publish: true,
                 ml_kem: None,
-                disable_pq: None,
+                disable_pq: false,
                 ipv4: mixed,
                 ipv6: true,
             }),
@@ -71,6 +71,8 @@ async fn make_router(
                 ipv4: mixed,
                 ipv6_host: Some("::1".parse().unwrap()),
                 ipv6: true,
+                disable_pq: false,
+                ml_kem: None,
                 port: 0u16,
                 publish: true,
                 static_key: {

@@ -32,7 +32,7 @@ use crate::{
             metrics::*,
             session::{KeyContext, Role},
         },
-        Direction, TerminationReason,
+        Direction, EncryptionKind, TerminationReason,
     },
     util::AsyncWriteExt,
 };
@@ -136,6 +136,9 @@ pub struct Ntcp2Session<R: Runtime> {
     /// Direction of the session.
     direction: Direction,
 
+    /// Encryption kind.
+    encryption: EncryptionKind,
+
     /// Event handle.
     event_handle: EventHandle<R>,
 
@@ -213,6 +216,7 @@ impl<R: Runtime> Ntcp2Session<R> {
         transport_tx: Sender<SubsystemEvent>,
         started: R::Instant,
         metrics_handle: R::MetricsHandle,
+        encryption: EncryptionKind,
     ) -> Self {
         let KeyContext {
             send_key,
@@ -225,6 +229,7 @@ impl<R: Runtime> Ntcp2Session<R> {
         Self {
             address,
             direction,
+            encryption,
             event_handle,
             idle_timeout_timer: R::timer(IDLE_TIMEOUT_CHECK_INTERVAL),
             inbound_activity: R::now(),
@@ -262,6 +267,11 @@ impl<R: Runtime> Ntcp2Session<R> {
     /// Get the address of remote router.
     pub fn address(&self) -> SocketAddr {
         self.address
+    }
+
+    /// Get connection's encryption kind.
+    pub fn encryption(&self) -> EncryptionKind {
+        self.encryption
     }
 
     /// When was the handshake started.

@@ -55,7 +55,7 @@ async fn make_router(
             Some(Ntcp2Config {
                 port: 0u16,
                 ml_kem: None,
-                disable_pq: None,
+                disable_pq: false,
                 iv: {
                     let mut iv = [0u8; 16];
                     TokioRuntime::rng().fill_bytes(&mut iv);
@@ -79,6 +79,8 @@ async fn make_router(
             Some(Ssu2Config {
                 port: 0u16,
                 ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                ml_kem: None,
+                disable_pq: false,
                 ipv6_host: None,
                 ipv4: true,
                 ipv6: false,
@@ -1625,7 +1627,7 @@ async fn host_lookup(kind: TransportKind) {
             Some(Ntcp2Config {
                 port: 0u16,
                 ml_kem: None,
-                disable_pq: None,
+                disable_pq: false,
                 iv: {
                     let mut iv = [0u8; 16];
                     TokioRuntime::rng().fill_bytes(&mut iv);
@@ -1650,6 +1652,8 @@ async fn host_lookup(kind: TransportKind) {
                 port: 0u16,
                 ipv4_host: Some("127.0.0.1".parse().unwrap()),
                 ipv6_host: None,
+                ml_kem: None,
+                disable_pq: false,
                 ipv4: true,
                 ipv6: false,
                 publish: true,

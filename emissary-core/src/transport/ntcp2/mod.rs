@@ -163,7 +163,7 @@ impl<R: Runtime> Ntcp2Transport<R> {
             config.iv,
             router_ctx.clone(),
             allow_local,
-            !config.disable_pq.unwrap_or(false),
+            !config.disable_pq,
             transport_tx,
         );
 
@@ -172,7 +172,7 @@ impl<R: Runtime> Ntcp2Transport<R> {
             ipv4_address = ?ipv4_socket_address,
             ipv6_address = ?ipv6_socket_address,
             ?allow_local,
-            allow_pq = ?(!config.disable_pq.unwrap_or(false)),
+            allow_pq = ?(!config.disable_pq),
             "starting ntcp2",
         );
 
@@ -323,7 +323,7 @@ impl<R: Runtime> Ntcp2Transport<R> {
             (None, None, None)
         };
 
-        let static_key = match (config.ml_kem, config.disable_pq.unwrap_or(false)) {
+        let static_key = match (config.ml_kem, config.disable_pq) {
             (Some(3), false) => {
                 tracing::info!(
                     target: LOG_TARGET,
@@ -524,6 +524,7 @@ impl<R: Runtime> Stream for Ntcp2Transport<R> {
                     let router_id = router_info.identity.id();
                     let direction = session.direction();
                     let address = session.address();
+                    let encryption = session.encryption();
 
                     // multiple connections raced and got negotiated at the same time
                     //
@@ -546,6 +547,7 @@ impl<R: Runtime> Stream for Ntcp2Transport<R> {
                     return Poll::Ready(Some(TransportEvent::ConnectionEstablished {
                         address,
                         direction,
+                        encryption,
                         router_id,
                     }));
                 }
@@ -601,7 +603,7 @@ mod tests {
             ipv6_host: None,
             publish: true,
             ml_kem: None,
-            disable_pq: None,
+            disable_pq: false,
             key: [0xaa; 32],
             iv: [0xbb; 16],
             ipv4: true,
@@ -642,7 +644,7 @@ mod tests {
             ipv6: true,
             publish: false,
             ml_kem: None,
-            disable_pq: None,
+            disable_pq: false,
             key: [0xaa; 32],
             iv: [0xbb; 16],
         });
@@ -675,7 +677,7 @@ mod tests {
             ipv4: true,
             ipv6: false,
             ml_kem: None,
-            disable_pq: None,
+            disable_pq: false,
             publish: false,
             key: [0xaa; 32],
             iv: [0xbb; 16],
@@ -707,7 +709,7 @@ mod tests {
             ipv4_host: None,
             ipv6_host: Some("::1".parse().unwrap()),
             ml_kem: None,
-            disable_pq: None,
+            disable_pq: false,
             publish: true,
             key: [0xaa; 32],
             iv: [0xbb; 16],
@@ -753,7 +755,7 @@ mod tests {
             ipv4: true,
             ipv6: true,
             ml_kem: None,
-            disable_pq: None,
+            disable_pq: false,
         });
         let (context, ipv4_address, ipv6_address) =
             Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
@@ -814,7 +816,7 @@ mod tests {
             ipv4: true,
             ipv6: false,
             ml_kem: None,
-            disable_pq: None,
+            disable_pq: false,
         });
         let (context, ipv4_address, ipv6_address) =
             Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
@@ -848,7 +850,7 @@ mod tests {
             ipv4: true,
             ipv6: false,
             ml_kem: None,
-            disable_pq: None,
+            disable_pq: false,
         });
         let (context, ipv4_address, ipv6_address) =
             Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
@@ -882,7 +884,7 @@ mod tests {
             ipv4: true,
             ipv6: false,
             ml_kem: None,
-            disable_pq: None,
+            disable_pq: false,
         });
         let (context, ipv4_address, ipv6_address) =
             Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
@@ -911,7 +913,7 @@ mod tests {
             ipv4_host: None,
             ipv6_host: None,
             ml_kem: None,
-            disable_pq: None,
+            disable_pq: false,
             publish: true,
             key: [0xaa; 32],
             iv: [0xbb; 16],
@@ -946,7 +948,7 @@ mod tests {
             ipv4_host: Some("8.8.8.8".parse().unwrap()),
             ipv6_host: None,
             ml_kem: None,
-            disable_pq: None,
+            disable_pq: false,
             publish: true,
             key: [0xaa; 32],
             iv: [0xbb; 16],

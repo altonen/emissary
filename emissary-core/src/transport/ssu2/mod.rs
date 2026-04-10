@@ -21,7 +21,7 @@ use crate::{
     constants::ssu2,
     crypto::StaticPrivateKey,
     error::{ConnectionError, Error},
-    primitives::{RouterAddress, RouterId, RouterInfo, TransportKind},
+    primitives::{MlKemPreference, RouterAddress, RouterId, RouterInfo, TransportKind},
     router::context::RouterContext,
     runtime::{MetricType, Runtime, UdpSocket},
     subsystem::SubsystemEvent,
@@ -80,6 +80,9 @@ pub struct Ssu2Context<R: Runtime> {
     /// Force router to be firewalled.
     firewalled: bool,
 
+    /// IPv4 ML-KEM preference.
+    ipv4_ml_kem: Option<MlKemPreference>,
+
     /// IPv4 MTU.
     ipv4_mtu: Option<usize>,
 
@@ -88,6 +91,9 @@ pub struct Ssu2Context<R: Runtime> {
 
     /// IPv4 socket address.
     ipv4_socket_address: Option<SocketAddr>,
+
+    /// IPv6 ML-KEM preference.
+    ipv6_ml_kem: Option<MlKemPreference>,
 
     /// IPv6 MTU.
     ipv6_mtu: Option<usize>,
@@ -142,9 +148,11 @@ impl<R: Runtime> Ssu2Transport<R> {
         let Ssu2Context {
             config,
             firewalled,
+            ipv4_ml_kem,
             ipv4_mtu,
             ipv4_socket,
             ipv4_socket_address,
+            ipv6_ml_kem,
             ipv6_mtu,
             ipv6_socket,
             ipv6_socket_address,
@@ -164,13 +172,16 @@ impl<R: Runtime> Ssu2Transport<R> {
             socket: Ssu2Socket::<R>::new(
                 ipv4_socket,
                 ipv4_mtu,
+                ipv4_ml_kem,
                 ipv6_socket,
                 ipv6_mtu,
+                ipv6_ml_kem,
                 StaticPrivateKey::from_bytes(config.static_key),
                 config.intro_key,
                 transport_tx,
                 router_ctx.clone(),
                 firewalled,
+                config.disable_pq,
             ),
         }
     }
@@ -252,6 +263,8 @@ impl<R: Runtime> Ssu2Transport<R> {
             (true, Some(host)) => RouterAddress::new_published_ssu2(
                 config.static_key,
                 config.intro_key,
+                config.ml_kem.clone(),
+                config.disable_pq,
                 host,
                 socket_address,
                 mtu,
@@ -264,6 +277,8 @@ impl<R: Runtime> Ssu2Transport<R> {
                 RouterAddress::new_unpublished_ssu2(
                     config.static_key,
                     config.intro_key,
+                    config.ml_kem.clone(),
+                    config.disable_pq,
                     socket_address,
                     mtu,
                 )
@@ -271,10 +286,32 @@ impl<R: Runtime> Ssu2Transport<R> {
             (_, _) => RouterAddress::new_unpublished_ssu2(
                 config.static_key,
                 config.intro_key,
+                config.ml_kem.clone(),
+                config.disable_pq,
                 socket_address,
                 mtu,
             ),
         };
+
+        if config.disable_pq {
+            tracing::info!(
+                target: LOG_TARGET,
+                "running ssu2 {} as x25519-only",
+                if ipv4 { "ipv4" } else { "ipv6" }
+            );
+        } else {
+            match address {
+                RouterAddress::Ntcp2 { .. } => unreachable!(),
+                RouterAddress::Ssu2 { ml_kem, .. } => {
+                    tracing::info!(
+                        target: LOG_TARGET,
+                        inbound = ?ml_kem,
+                        "running ssu2 {} with PQ connections",
+                        if ipv4 { "ipv4" } else { "ipv6" }
+                    );
+                }
+            }
+        }
 
         Ok((Some(socket), Some(socket_address), Some(address)))
     }
@@ -331,9 +368,17 @@ impl<R: Runtime> Ssu2Transport<R> {
                 config,
                 ipv4_socket_address,
                 ipv4_mtu: ipv4_socket.as_ref().map(|socket| socket.mtu()),
+                ipv4_ml_kem: ipv4_address.as_ref().and_then(|address| match address {
+                    RouterAddress::Ssu2 { ml_kem, .. } => *ml_kem,
+                    RouterAddress::Ntcp2 { .. } => unreachable!(),
+                }),
                 ipv4_socket,
                 ipv6_socket_address,
                 ipv6_mtu: ipv6_socket.as_ref().map(|socket| socket.mtu()),
+                ipv6_ml_kem: ipv6_address.as_ref().and_then(|address| match address {
+                    RouterAddress::Ssu2 { ml_kem, .. } => *ml_kem,
+                    RouterAddress::Ntcp2 { .. } => unreachable!(),
+                }),
                 ipv6_socket,
                 firewalled: false,
             }),
@@ -377,27 +422,49 @@ mod tests {
         runtime::mock::MockRuntime,
         subsystem::{OutboundMessage, OutboundMessageRecycle},
         timeout,
-        transport::FirewallStatus,
+        transport::{EncryptionKind, FirewallStatus},
     };
     use bytes::Bytes;
     use std::{collections::HashMap, time::Duration};
     use thingbuf::mpsc::channel;
 
     #[tokio::test]
-    async fn connect_ssu2_ipv4() {
-        connect_ssu2(true).await
+    async fn connect_ssu2_ipv4_x25519() {
+        connect_ssu2(true, true, None).await
     }
 
     #[tokio::test]
-    async fn connect_ssu2_ipv6() {
-        connect_ssu2(false).await
+    async fn connect_ssu2_ipv4_ml_kem_512() {
+        connect_ssu2(true, false, Some("3,4".to_string())).await
     }
 
-    async fn connect_ssu2(ipv4: bool) {
+    #[tokio::test]
+    async fn connect_ssu2_ipv4_ml_kem_768() {
+        connect_ssu2(true, false, Some("4,3".to_string())).await
+    }
+
+    #[tokio::test]
+    async fn connect_ssu2_ipv6_x25519() {
+        connect_ssu2(false, true, None).await
+    }
+
+    #[tokio::test]
+    async fn connect_ssu2_ipv6_ml_kem_512() {
+        connect_ssu2(false, false, Some("3,4".to_string())).await
+    }
+
+    #[tokio::test]
+    async fn connect_ssu2_ipv6_ml_kem_768() {
+        connect_ssu2(false, false, Some("4,3".to_string())).await
+    }
+
+    async fn connect_ssu2(ipv4: bool, disable_pq: bool, ml_kem: Option<String>) {
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let (ctx1, address1_ipv4, address1_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                ml_kem: ml_kem.clone(),
+                disable_pq,
                 port: 0u16,
                 ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
                 ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
@@ -413,6 +480,8 @@ mod tests {
             .unwrap();
         let (ctx2, address2_ipv4, address2_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                ml_kem: ml_kem.clone(),
+                disable_pq,
                 port: 0u16,
                 ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
                 ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
@@ -510,11 +579,14 @@ mod tests {
             loop {
                 match transport1.next().await.unwrap() {
                     TransportEvent::ConnectionEstablished {
-                        router_id, address, ..
+                        router_id,
+                        address,
+                        encryption,
+                        ..
                     } => {
                         assert_eq!(address.is_ipv4(), ipv4);
                         transport1.accept(&router_id);
-                        break;
+                        break encryption;
                     }
                     _ => {}
                 }
@@ -523,25 +595,54 @@ mod tests {
 
         match tokio::time::timeout(Duration::from_secs(15), future).await {
             Err(_) => panic!("timeout"),
-            Ok(()) => {}
+            Ok(encryption) => match encryption {
+                EncryptionKind::X25519 => assert!(disable_pq && ml_kem.is_none()),
+                EncryptionKind::MlKem512X25519 =>
+                    assert!(!disable_pq && ml_kem.unwrap() == "3,4".to_string()),
+                EncryptionKind::MlKem768X25519 =>
+                    assert!(!disable_pq && ml_kem.unwrap() == "4,3".to_string()),
+                EncryptionKind::MlKem1024X25519 => unreachable!(),
+            },
         }
     }
 
     #[tokio::test(start_paused = true)]
-    async fn connect_ssu2_wrong_network_ipv4() {
-        connect_ssu2_wrong_network(true).await
+    async fn connect_ssu2_wrong_network_ipv4_x25519() {
+        connect_ssu2_wrong_network(true, true, None).await
     }
 
     #[tokio::test(start_paused = true)]
-    async fn connect_ssu2_wrong_network_ipv6() {
-        connect_ssu2_wrong_network(false).await
+    async fn connect_ssu2_wrong_network_ipv4_ml_kem_512() {
+        connect_ssu2_wrong_network(true, false, Some("3,4".to_string())).await
     }
 
-    async fn connect_ssu2_wrong_network(ipv4: bool) {
+    #[tokio::test(start_paused = true)]
+    async fn connect_ssu2_wrong_network_ipv4_ml_kem_768() {
+        connect_ssu2_wrong_network(true, false, Some("4,3".to_string())).await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn connect_ssu2_wrong_network_ipv6_x25519() {
+        connect_ssu2_wrong_network(false, true, None).await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn connect_ssu2_wrong_network_ipv6_ml_kem_512() {
+        connect_ssu2_wrong_network(false, false, Some("3,4".to_string())).await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn connect_ssu2_wrong_network_ipv6_ml_kem_768() {
+        connect_ssu2_wrong_network(false, false, Some("4,3".to_string())).await
+    }
+
+    async fn connect_ssu2_wrong_network(ipv4: bool, disable_pq: bool, ml_kem: Option<String>) {
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let (ctx1, address1_ipv4, address1_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                ml_kem: ml_kem.clone(),
+                disable_pq,
                 port: 0u16,
                 ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
                 ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
@@ -557,6 +658,8 @@ mod tests {
             .unwrap();
         let (ctx2, address2_ipv4, address2_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                ml_kem: ml_kem.clone(),
+                disable_pq,
                 port: 0u16,
                 ipv4_host: Some("127.0.0.1".parse().unwrap()),
                 ipv6_host: None,
@@ -651,20 +754,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn peer_test_works_ipv4() {
-        peer_test_works(true).await;
+    async fn peer_test_works_ipv4_x25519() {
+        peer_test_works(true, true, None).await
     }
 
     #[tokio::test]
-    async fn peer_test_works_ipv6() {
-        peer_test_works(false).await;
+    async fn peer_test_works_ipv4_ml_kem_512() {
+        peer_test_works(true, false, Some("3,4".to_string())).await
     }
 
-    async fn peer_test_works(ipv4: bool) {
+    #[tokio::test]
+    async fn peer_test_works_ipv4_ml_kem_768() {
+        peer_test_works(true, false, Some("4,3".to_string())).await
+    }
+
+    #[tokio::test]
+    async fn peer_test_works_ipv6_x25519() {
+        peer_test_works(false, true, None).await
+    }
+
+    #[tokio::test]
+    async fn peer_test_works_ipv6_ml_kem_512() {
+        peer_test_works(false, false, Some("3,4".to_string())).await
+    }
+
+    #[tokio::test]
+    async fn peer_test_works_ipv6_ml_kem_768() {
+        peer_test_works(false, false, Some("4,3".to_string())).await
+    }
+
+    async fn peer_test_works(ipv4: bool, disable_pq: bool, ml_kem: Option<String>) {
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let (ctx1, address1_ipv4, address1_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                ml_kem: ml_kem.clone(),
+                disable_pq,
                 port: 0u16,
                 ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
                 ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
@@ -680,6 +805,8 @@ mod tests {
             .unwrap();
         let (ctx2, address2_ipv4, address2_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                ml_kem: ml_kem.clone(),
+                disable_pq,
                 port: 0u16,
                 ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
                 ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
@@ -695,6 +822,8 @@ mod tests {
             .unwrap();
         let (ctx3, address3_ipv4, address3_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                ml_kem: ml_kem.clone(),
+                disable_pq,
                 port: 0u16,
                 ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
                 ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
@@ -850,11 +979,14 @@ mod tests {
             loop {
                 match transport1.next().await.unwrap() {
                     TransportEvent::ConnectionEstablished {
-                        router_id, address, ..
+                        router_id,
+                        address,
+                        encryption,
+                        ..
                     } => {
                         assert_eq!(address.is_ipv4(), ipv4);
                         transport1.accept(&router_id);
-                        break;
+                        break encryption;
                     }
                     _ => {}
                 }
@@ -863,7 +995,14 @@ mod tests {
 
         match tokio::time::timeout(Duration::from_secs(20), future).await {
             Err(_) => panic!("timeout"),
-            Ok(()) => {}
+            Ok(encryption) => match encryption {
+                EncryptionKind::X25519 => assert!(disable_pq && ml_kem.is_none()),
+                EncryptionKind::MlKem512X25519 =>
+                    assert!(!disable_pq && ml_kem.unwrap() == "3,4".to_string()),
+                EncryptionKind::MlKem768X25519 =>
+                    assert!(!disable_pq && ml_kem.unwrap() == "4,3".to_string()),
+                EncryptionKind::MlKem1024X25519 => unreachable!(),
+            },
         }
 
         // spawn the second router in the background
@@ -925,22 +1064,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn relay_works_ipv4() {
-        relay_works(true).await;
+    async fn relay_works_ipv4_x25519() {
+        relay_works(true, true, None).await
     }
 
     #[tokio::test]
-    async fn relay_works_ipv6() {
-        relay_works(false).await;
+    async fn relay_works_ipv4_ml_kem_512() {
+        relay_works(true, false, Some("3,4".to_string())).await
     }
 
-    async fn relay_works(ipv4: bool) {
+    #[tokio::test]
+    async fn relay_works_ipv4_ml_kem_768() {
+        relay_works(true, false, Some("4,3".to_string())).await
+    }
+
+    #[tokio::test]
+    async fn relay_works_ipv6_x25519() {
+        relay_works(false, true, None).await
+    }
+
+    #[tokio::test]
+    async fn relay_works_ipv6_ml_kem_512() {
+        relay_works(false, false, Some("3,4".to_string())).await
+    }
+
+    #[tokio::test]
+    async fn relay_works_ipv6_ml_kem_768() {
+        relay_works(false, false, Some("4,3".to_string())).await
+    }
+
+    async fn relay_works(ipv4: bool, disable_pq: bool, ml_kem: Option<String>) {
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
 
         // router that is behind firewall
         let (ctx1, address1_ipv4, address1_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                ml_kem: ml_kem.clone(),
+                disable_pq,
                 port: 0u16,
                 ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
                 ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
@@ -962,6 +1123,8 @@ mod tests {
         // introducer for router1
         let (ctx2, address2_ipv4, address2_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                ml_kem: ml_kem.clone(),
+                disable_pq,
                 port: 0u16,
                 ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
                 ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
@@ -1136,14 +1299,6 @@ mod tests {
                 (introducers, options)
             };
 
-            // let Some(RouterAddress::Ssu2 {
-            //     introducers,
-            //     options,
-            //     ..
-            // }) = router_info1.ssu2_ipv4_mut()
-            // else {
-            //     panic!("ssu2 to exist");
-            // };
             introducers.push((introducer.clone(), relay_tag));
             options.insert(Str::from("iexp0"), Str::from(expires.as_secs().to_string()));
             options.insert(Str::from("itag0"), Str::from(relay_tag.to_string()));
@@ -1159,6 +1314,8 @@ mod tests {
         // create third router which connects to router1 with the help of router2
         let (ctx3, address3_ipv4, address3_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                ml_kem: ml_kem.clone(),
+                disable_pq,
                 port: 0u16,
                 ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
                 ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
@@ -1213,9 +1370,19 @@ mod tests {
         loop {
             tokio::select! {
                 event = transport3.next() => match event {
-                    Some(TransportEvent::ConnectionEstablished { router_id, address, .. }) => {
+                    Some(TransportEvent::ConnectionEstablished { router_id, address, encryption, .. }) => {
                         assert_eq!(address.is_ipv4(), ipv4);
                         transport3.accept(&router_id);
+
+                        match encryption {
+                            EncryptionKind::X25519 => assert!(disable_pq && ml_kem.is_none()),
+                            EncryptionKind::MlKem512X25519 =>
+                                assert!(!disable_pq && *ml_kem.as_ref().unwrap() == "3,4".to_string()),
+                            EncryptionKind::MlKem768X25519 =>
+                                assert!(!disable_pq && *ml_kem.as_ref().unwrap() == "4,3".to_string()),
+                            EncryptionKind::MlKem1024X25519 => unreachable!(),
+                        }
+
                         break;
                     }
                     _ => {}
@@ -1241,10 +1408,23 @@ mod tests {
         while let Some(event) = transport3.next().await {
             match event {
                 TransportEvent::ConnectionEstablished {
-                    router_id, address, ..
+                    router_id,
+                    address,
+                    encryption,
+                    ..
                 } => {
                     assert_eq!(address.is_ipv4(), ipv4);
                     transport3.accept(&router_id);
+
+                    match encryption {
+                        EncryptionKind::X25519 => assert!(disable_pq && ml_kem.is_none()),
+                        EncryptionKind::MlKem512X25519 =>
+                            assert!(!disable_pq && ml_kem.unwrap() == "3,4".to_string()),
+                        EncryptionKind::MlKem768X25519 =>
+                            assert!(!disable_pq && ml_kem.unwrap() == "4,3".to_string()),
+                        EncryptionKind::MlKem1024X25519 => unreachable!(),
+                    }
+
                     break;
                 }
                 _ => {}
@@ -1277,20 +1457,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fragmented_router_info_ipv4() {
-        fragmented_router_info(true).await;
+    async fn fragmented_router_info_ipv4_x25519() {
+        fragmented_router_info(true, true, None).await
     }
 
     #[tokio::test]
-    async fn fragmented_router_info_ipv6() {
-        fragmented_router_info(false).await;
+    async fn fragmented_router_info_ipv4_ml_kem_512() {
+        fragmented_router_info(true, false, Some("3,4".to_string())).await
     }
 
-    async fn fragmented_router_info(ipv4: bool) {
+    #[tokio::test]
+    async fn fragmented_router_info_ipv4_ml_kem_768() {
+        fragmented_router_info(true, false, Some("4,3".to_string())).await
+    }
+
+    #[tokio::test]
+    async fn fragmented_router_info_ipv6_x25519() {
+        fragmented_router_info(false, true, None).await
+    }
+
+    #[tokio::test]
+    async fn fragmented_router_info_ipv6_ml_kem_512() {
+        fragmented_router_info(false, false, Some("3,4".to_string())).await
+    }
+
+    #[tokio::test]
+    async fn fragmented_router_info_ipv6_ml_kem_768() {
+        fragmented_router_info(false, false, Some("4,3".to_string())).await
+    }
+
+    async fn fragmented_router_info(ipv4: bool, disable_pq: bool, ml_kem: Option<String>) {
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let (ctx1, address1_ipv4, address1_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                ml_kem: ml_kem.clone(),
+                disable_pq,
                 port: 0u16,
                 ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
                 ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
@@ -1306,6 +1508,8 @@ mod tests {
             .unwrap();
         let (ctx2, address2_ipv4, address2_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                ml_kem: ml_kem.clone(),
+                disable_pq,
                 port: 0u16,
                 ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
                 ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
@@ -1412,11 +1616,14 @@ mod tests {
             loop {
                 match transport1.next().await.unwrap() {
                     TransportEvent::ConnectionEstablished {
-                        router_id, address, ..
+                        router_id,
+                        address,
+                        encryption,
+                        ..
                     } => {
                         assert_eq!(address.is_ipv4(), ipv4);
                         transport1.accept(&router_id);
-                        break;
+                        break encryption;
                     }
                     _ => {}
                 }
@@ -1425,7 +1632,14 @@ mod tests {
 
         match tokio::time::timeout(Duration::from_secs(15), future).await {
             Err(_) => panic!("timeout"),
-            Ok(()) => {}
+            Ok(encryption) => match encryption {
+                EncryptionKind::X25519 => assert!(disable_pq && ml_kem.is_none()),
+                EncryptionKind::MlKem512X25519 =>
+                    assert!(!disable_pq && ml_kem.unwrap() == "3,4".to_string()),
+                EncryptionKind::MlKem768X25519 =>
+                    assert!(!disable_pq && ml_kem.unwrap() == "4,3".to_string()),
+                EncryptionKind::MlKem1024X25519 => unreachable!(),
+            },
         }
     }
 
@@ -1433,6 +1647,8 @@ mod tests {
     async fn too_small_ipv4_mtu() {
         let (ctx, address_ipv4, address_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                ml_kem: None,
+                disable_pq: false,
                 port: 0u16,
                 ipv4_host: Some("127.0.0.1".parse().unwrap()),
                 ipv6_host: Some("::1".parse().unwrap()),
@@ -1456,6 +1672,8 @@ mod tests {
     async fn too_small_ipv6_mtu() {
         let (ctx, address_ipv4, address_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                ml_kem: None,
+                disable_pq: false,
                 port: 0u16,
                 ipv4_host: Some("127.0.0.1".parse().unwrap()),
                 ipv6_host: Some("::1".parse().unwrap()),
@@ -1479,6 +1697,8 @@ mod tests {
     async fn too_small_ipv4_and_ipv6_mtu() {
         let (ctx, address_ipv4, address_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                ml_kem: None,
+                disable_pq: false,
                 port: 0u16,
                 ipv4_host: Some("127.0.0.1".parse().unwrap()),
                 ipv6_host: Some("::1".parse().unwrap()),

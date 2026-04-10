@@ -29,10 +29,13 @@ use crate::{
     error::Ntcp2Error,
     primitives::RouterInfo,
     runtime::Runtime,
-    transport::ntcp2::{
-        message::MessageBlock,
-        options::{InitiatorOptions, ResponderOptions},
-        session::{EncryptionContext, InboundState, KeyContext, MAX_CLOCK_SKEW},
+    transport::{
+        ntcp2::{
+            message::MessageBlock,
+            options::{InitiatorOptions, ResponderOptions},
+            session::{EncryptionContext, InboundState, KeyContext, MAX_CLOCK_SKEW},
+        },
+        EncryptionKind,
     },
 };
 
@@ -500,7 +503,7 @@ impl Responder {
     pub fn finalize<R: Runtime>(
         &mut self,
         message: Vec<u8>,
-    ) -> Result<(KeyContext, RouterInfo, Bytes), Ntcp2Error> {
+    ) -> Result<(KeyContext, RouterInfo, Bytes, EncryptionKind), Ntcp2Error> {
         let ResponderState::SessionCreated {
             ephemeral_private,
             mut encryption_ctx,
@@ -607,6 +610,12 @@ impl Responder {
             KeyContext::new(recv_key, send_key, sip),
             router_info,
             serialized,
+            match encryption_ctx {
+                EncryptionContext::X25519(_) => EncryptionKind::X25519,
+                EncryptionContext::MlKem512X25519(_) => EncryptionKind::MlKem512X25519,
+                EncryptionContext::MlKem768X25519(_) => EncryptionKind::MlKem768X25519,
+                EncryptionContext::MlKem1024X25519(_) => EncryptionKind::MlKem1024X25519,
+            },
         ))
     }
 }

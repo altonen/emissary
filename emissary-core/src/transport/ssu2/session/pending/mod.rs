@@ -17,16 +17,20 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
+    crypto::noise::NoiseContext,
     primitives::{RouterId, RouterInfo},
     runtime::{Instant, Runtime},
     transport::{
         ssu2::{relay::types::RelayTagRequested, session::active::Ssu2SessionContext},
-        TerminationReason,
+        EncryptionKind, TerminationReason,
     },
 };
 
 use bytes::{Bytes, BytesMut};
 use futures::FutureExt;
+use ml_kem::{
+    array::Array, DecapsulationKey, Encapsulate, EncapsulationKey, MlKem1024, MlKem512, MlKem768,
+};
 
 use alloc::{boxed::Box, collections::VecDeque, vec::Vec};
 use core::{
@@ -80,6 +84,9 @@ pub enum PendingSsu2SessionStatus<R: Runtime> {
 
         /// Did remote router request a relay tag from us during handshake?
         relay_tag_request: RelayTagRequested,
+
+        /// Encryption kind for the connection.
+        encryption: EncryptionKind,
     },
 
     /// New outbound session.
@@ -98,6 +105,9 @@ pub enum PendingSsu2SessionStatus<R: Runtime> {
 
         /// When was the handshake started.
         started: R::Instant,
+
+        /// Encryption kind for the connection.
+        encryption: EncryptionKind,
     },
 
     /// Pending session terminated due to fatal error, e.g., decryption error.
@@ -379,4 +389,116 @@ impl<R: Runtime> Future for PacketRetransmitter<R> {
             None => Poll::Ready(PacketRetransmitterEvent::Timeout),
         }
     }
+}
+
+/// Encryption context.
+pub enum EncryptionContext {
+    /// X25519.
+    X25519(NoiseContext),
+
+    /// ML-KEM-512-x25519
+    MlKem512X25519(NoiseContext),
+
+    /// ML-KEM-768-x25519
+    MlKem768X25519(NoiseContext),
+
+    /// ML-KEM-1024-x25519
+    #[allow(unused)]
+    MlKem1024X25519(NoiseContext),
+}
+
+impl EncryptionContext {
+    /// Get mutable reference to inner `NoiseContext`.
+    pub fn noise_ctx(&mut self) -> &mut NoiseContext {
+        match self {
+            Self::X25519(ctx) => ctx,
+            Self::MlKem512X25519(ctx) => ctx,
+            Self::MlKem768X25519(ctx) => ctx,
+            Self::MlKem1024X25519(ctx) => ctx,
+        }
+    }
+
+    /// Get the size of ML-KEM encapsulation key.
+    ///
+    /// Returns `0` for x25519.
+    pub fn encapsulation_key_size(&self) -> usize {
+        match self {
+            Self::X25519(_) => 0,
+            Self::MlKem512X25519(_) => 800,
+            Self::MlKem768X25519(_) => 1184,
+            Self::MlKem1024X25519(_) => 1568,
+        }
+    }
+
+    /// Get ML-KEM ciphertext length.
+    ///
+    /// Panics if called for x25519.
+    pub fn kem_ciphertext_size(&self) -> usize {
+        match self {
+            Self::X25519(_) => unreachable!(),
+            Self::MlKem512X25519(_) => 768,
+            Self::MlKem768X25519(_) => 1088,
+            Self::MlKem1024X25519(_) => 1568,
+        }
+    }
+
+    /// Get SSU2 protocol version.
+    pub fn version(&self) -> u8 {
+        match self {
+            Self::X25519(_) => 2u8,
+            Self::MlKem512X25519(_) => 3u8,
+            Self::MlKem768X25519(_) => 4u8,
+            Self::MlKem1024X25519(_) => unreachable!(),
+        }
+    }
+
+    /// Encapsulate and derive KEM ciphertext and shared secret.
+    ///
+    /// Panics if called for x25519.
+    pub fn encapsulate<R: Runtime>(&self, encapsulation_key: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
+        match self {
+            Self::X25519(_) => unreachable!(),
+            Self::MlKem512X25519(_) => {
+                let key = Array::try_from(encapsulation_key).ok()?;
+                let key = EncapsulationKey::<MlKem512>::new(&key).ok()?;
+                let (ciphertext, shared_key) = key.encapsulate_with_rng(&mut R::rng());
+
+                Some((ciphertext.to_vec(), shared_key.to_vec()))
+            }
+            Self::MlKem768X25519(_) => {
+                let key = Array::try_from(encapsulation_key).ok()?;
+                let key = EncapsulationKey::<MlKem768>::new(&key).ok()?;
+                let (ciphertext, shared_key) = key.encapsulate_with_rng(&mut R::rng());
+
+                Some((ciphertext.to_vec(), shared_key.to_vec()))
+            }
+            Self::MlKem1024X25519(_) => {
+                let key = Array::try_from(encapsulation_key).ok()?;
+                let key = EncapsulationKey::<MlKem1024>::new(&key).ok()?;
+                let (ciphertext, shared_key) = key.encapsulate_with_rng(&mut R::rng());
+
+                Some((ciphertext.to_vec(), shared_key.to_vec()))
+            }
+        }
+    }
+}
+
+impl fmt::Display for EncryptionContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::X25519(_) => write!(f, "x25519"),
+            Self::MlKem512X25519(_) => write!(f, "ml-kem-512"),
+            Self::MlKem768X25519(_) => write!(f, "ml-kem-768"),
+            Self::MlKem1024X25519(_) => write!(f, "ml-kem-1024"),
+        }
+    }
+}
+
+/// ML-KEM context.
+pub enum MlKemContext {
+    /// ML-KEM-512-x25519
+    MlKem512X25519(Box<DecapsulationKey<MlKem512>>),
+
+    /// ML-KEM-768-x25519
+    MlKem768X25519(Box<DecapsulationKey<MlKem768>>),
 }

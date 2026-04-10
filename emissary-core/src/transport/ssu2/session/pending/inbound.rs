@@ -17,10 +17,10 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    constants::ssu2,
+    constants::{crypto::POLY1305_MAC_SIZE, ssu2},
     crypto::{
-        chachapoly::ChaChaPoly, hmac::Hmac, noise::NoiseContext, EphemeralPrivateKey,
-        EphemeralPublicKey, StaticPrivateKey, StaticPublicKey,
+        chachapoly::ChaChaPoly, hmac::Hmac, EphemeralPrivateKey, EphemeralPublicKey,
+        StaticPrivateKey, StaticPublicKey,
     },
     error::Ssu2Error,
     primitives::RouterAddress,
@@ -36,18 +36,17 @@ use crate::{
             session::{
                 active::Ssu2SessionContext,
                 pending::{
-                    PacketKind, PacketRetransmitter, PacketRetransmitterEvent,
+                    EncryptionContext, PacketKind, PacketRetransmitter, PacketRetransmitterEvent,
                     PendingSsu2SessionStatus, MAX_CLOCK_SKEW,
                 },
                 KeyContext,
             },
             Packet,
         },
-        TerminationReason,
+        EncryptionKind, TerminationReason,
     },
 };
 
-use bytes::Bytes;
 use futures::FutureExt;
 use rand::Rng;
 use thingbuf::mpsc::Receiver;
@@ -78,14 +77,17 @@ pub struct InboundSsu2Context<R: Runtime> {
     /// Socket address of the remote router.
     pub address: SocketAddr,
 
-    /// Chaining key.
-    pub chaining_key: Bytes,
-
     /// Destination connection ID.
     pub dst_id: u64,
 
+    /// Encryption context.
+    pub encryption_ctx: EncryptionContext,
+
     /// Local intro key.
     pub intro_key: [u8; 32],
+
+    /// Maximum payload size.
+    pub max_payload_size: usize,
 
     /// Our MTU size for `address`.
     pub mtu: usize,
@@ -110,9 +112,6 @@ pub struct InboundSsu2Context<R: Runtime> {
 
     /// Source connection ID.
     pub src_id: u64,
-
-    /// AEAD state.
-    pub state: Bytes,
 
     /// Local static key.
     pub static_key: StaticPrivateKey,
@@ -216,17 +215,20 @@ pub struct InboundSsu2Session<R: Runtime> {
     /// Destination connection ID.
     dst_id: u64,
 
+    /// Encryption context.
+    encryption_ctx: EncryptionContext,
+
     /// Local intro key.
     intro_key: [u8; 32],
+
+    /// Maximum payload size.
+    max_payload_size: usize,
 
     /// Our MTU size for `address`.
     mtu: usize,
 
     /// Net ID.
     net_id: u8,
-
-    /// Noise context.
-    noise_ctx: NoiseContext,
 
     /// Packet retransmitter.
     pkt_retransmitter: PacketRetransmitter<R>,
@@ -271,9 +273,10 @@ impl<R: Runtime> InboundSsu2Session<R> {
     pub fn new(context: InboundSsu2Context<R>) -> Result<Self, Ssu2Error> {
         let InboundSsu2Context {
             address,
-            chaining_key,
             dst_id,
+            encryption_ctx,
             intro_key,
+            max_payload_size,
             mtu,
             net_id,
             pkt,
@@ -282,9 +285,16 @@ impl<R: Runtime> InboundSsu2Session<R> {
             rx,
             socket,
             src_id,
-            state,
             static_key,
         } = context;
+
+        tracing::trace!(
+            target: LOG_TARGET,
+            ?src_id,
+            ?dst_id,
+            kind = %encryption_ctx,
+            "create inbound session from TokenRequest",
+        );
 
         let mut payload = pkt[32..pkt.len()].to_vec();
         ChaChaPoly::with_nonce(&intro_key, pkt_num as u64)
@@ -306,13 +316,11 @@ impl<R: Runtime> InboundSsu2Session<R> {
         Ok(Self {
             address,
             dst_id,
+            encryption_ctx,
             intro_key,
+            max_payload_size,
             mtu,
             net_id,
-            noise_ctx: NoiseContext::new(
-                TryInto::<[u8; 32]>::try_into(chaining_key.to_vec()).expect("to succeed"),
-                TryInto::<[u8; 32]>::try_into(state.to_vec()).expect("to succeed"),
-            ),
             pkt_retransmitter: PacketRetransmitter::inactive(SESSION_REQUEST_TIMEOUT),
             relay_tag_requested: RelayTagRequested::No(relay_tag),
             rx: Some(rx),
@@ -339,9 +347,10 @@ impl<R: Runtime> InboundSsu2Session<R> {
     ) -> Self {
         let InboundSsu2Context {
             address,
-            chaining_key,
             dst_id,
+            encryption_ctx,
             intro_key,
+            max_payload_size,
             mtu,
             net_id,
             pkt,
@@ -349,7 +358,6 @@ impl<R: Runtime> InboundSsu2Session<R> {
             rx,
             socket,
             src_id,
-            state,
             static_key,
             ..
         } = context;
@@ -359,19 +367,18 @@ impl<R: Runtime> InboundSsu2Session<R> {
             ?src_id,
             ?dst_id,
             ?token,
+            kind = %encryption_ctx,
             "create inbound session from SessionRequest",
         );
 
         Self {
             address,
             dst_id,
+            encryption_ctx,
             intro_key,
+            max_payload_size,
             mtu,
             net_id,
-            noise_ctx: NoiseContext::new(
-                TryInto::<[u8; 32]>::try_into(chaining_key.to_vec()).expect("to succeed"),
-                TryInto::<[u8; 32]>::try_into(state.to_vec()).expect("to succeed"),
-            ),
             pkt_retransmitter: PacketRetransmitter::inactive(SESSION_REQUEST_TIMEOUT),
             relay_tag_requested: RelayTagRequested::No(relay_tag),
             rx: Some(rx),
@@ -424,6 +431,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
         self.write_buffer.push_back(
             RetryBuilder::default()
                 .with_k_header_1(self.intro_key)
+                .with_version(self.encryption_ctx.version())
                 .with_src_id(self.dst_id)
                 .with_dst_id(self.src_id)
                 .with_token(0)
@@ -464,6 +472,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
                             net_id,
                             pkt_num,
                             token,
+                            ..
                         } => {
                             if self.net_id != net_id {
                                 return Err(Ssu2Error::NetworkMismatch);
@@ -475,6 +484,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
                             net_id,
                             pkt_num,
                             src_id,
+                            ..
                         } => {
                             if self.net_id != net_id {
                                 return Err(Ssu2Error::NetworkMismatch);
@@ -483,6 +493,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
                             let token = R::rng().next_u64();
                             let pkt = RetryBuilder::default()
                                 .with_k_header_1(self.intro_key)
+                                .with_version(self.encryption_ctx.version())
                                 .with_src_id(self.dst_id)
                                 .with_dst_id(src_id)
                                 .with_token(token)
@@ -547,52 +558,131 @@ impl<R: Runtime> InboundSsu2Session<R> {
         };
 
         // MixHash(header), MiXHash(aepk)
-        self.noise_ctx.mix_hash(&pkt[..32]).mix_hash(&pkt[32..64]);
+        self.encryption_ctx.noise_ctx().mix_hash(&pkt[..32]).mix_hash(&pkt[32..64]);
 
-        // MixKey(DH())
-        let mut cipher_key = self.noise_ctx.mix_key(&self.static_key, &ephemeral_key);
+        // MixKey(DH()), ee
+        let mut cipher_key =
+            self.encryption_ctx.noise_ctx().mix_key(&self.static_key, &ephemeral_key);
 
-        let temp_key = Hmac::new(self.noise_ctx.chaining_key()).update([]).finalize();
+        // derive header encryption key for the header of `SessionCreated`
+        let temp_key =
+            Hmac::new(self.encryption_ctx.noise_ctx().chaining_key()).update([]).finalize();
         let k_header_2 =
             Hmac::new(&temp_key).update(b"SessCreateHeader").update([0x01]).finalize_new();
 
+        // e1
+        //
+        // https://i2p.net/en/docs/specs/ssu2-hybrid/#bob-kdf-for-message-1
+        let (nonce, offset, encapsulation_key) = match &mut self.encryption_ctx {
+            EncryptionContext::MlKem1024X25519(_) => unreachable!(),
+            EncryptionContext::X25519(_) => (0u64, 64usize, None),
+            kind => {
+                let encap_size = kind.encapsulation_key_size() + POLY1305_MAC_SIZE;
+
+                if pkt.len() < encap_size + 64 {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        dst_id = ?self.dst_id,
+                        src_id = ?self.src_id,
+                        %kind,
+                        size = pkt.len(),
+                        expected = ?(encap_size + 64),
+                        "SessionRequest is too short for ml-kem",
+                    );
+                    return Err(Ssu2Error::NotEnoughBytes);
+                }
+
+                let mut encap_key = pkt[64..64 + encap_size].to_vec();
+
+                ChaChaPoly::new(&cipher_key)
+                    .decrypt_with_ad(kind.noise_ctx().state(), &mut encap_key)?;
+
+                // MixHash(encap_key_section)
+                kind.noise_ctx().mix_hash(&pkt[64..64 + encap_size]);
+
+                (1u64, 64usize + encap_size, Some(encap_key))
+            }
+        };
+
+        if pkt.len() <= offset {
+            tracing::warn!(
+                target: LOG_TARGET,
+                dst_id = ?self.dst_id,
+                src_id = ?self.src_id,
+                size = ?pkt.len(),
+                expected = ?offset,
+                "SessionRequest is too small",
+            );
+            return Err(Ssu2Error::NotEnoughBytes);
+        }
+
         // decrypt payload
-        let mut payload = pkt[64..pkt.len()].to_vec();
-        ChaChaPoly::with_nonce(&cipher_key, 0u64)
-            .decrypt_with_ad(self.noise_ctx.state(), &mut payload)
-            .unwrap();
+        let mut payload = pkt[offset..pkt.len()].to_vec();
+        ChaChaPoly::with_nonce(&cipher_key, nonce)
+            .decrypt_with_ad(self.encryption_ctx.noise_ctx().state(), &mut payload)?;
         cipher_key.zeroize();
 
         // MixHash(ciphertext)
-        self.noise_ctx.mix_hash(&pkt[64..pkt.len()]);
+        self.encryption_ctx.noise_ctx().mix_hash(&pkt[offset..pkt.len()]);
 
-        let blocks = Block::parse::<R>(&payload)
-            .map_err(|error| {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    dst_id = ?self.dst_id,
-                    src_id = ?self.src_id,
-                    ?error,
-                    "malformed SessionRequest payload",
-                );
-                debug_assert!(false);
-                Ssu2Error::Malformed
-            })
-            .unwrap();
+        let blocks = Block::parse::<R>(&payload).map_err(|error| {
+            tracing::warn!(
+                target: LOG_TARGET,
+                dst_id = ?self.dst_id,
+                src_id = ?self.src_id,
+                ?error,
+                "malformed SessionRequest payload",
+            );
+            debug_assert!(false);
+            Ssu2Error::Malformed
+        })?;
         self.check_clock_skew(&blocks)?;
 
         let sk = EphemeralPrivateKey::random(R::rng());
         let pk = sk.public();
 
-        // MixKey(DH())
-        let cipher_key = self.noise_ctx.mix_key(&sk, &ephemeral_key);
+        // MixKey(DH()), ee
+        let cipher_key = self.encryption_ctx.noise_ctx().mix_key(&sk, &ephemeral_key);
 
-        let message = SessionCreatedBuilder::default()
+        // `SessionCreated` must be partially constructed prior to `ekem1` since
+        // associated data for `kem_ciphertext` depends on the header
+        let builder = SessionCreatedBuilder::default()
             .with_address(self.address)
+            .with_version(self.encryption_ctx.version())
+            .with_max_payload_size(self.max_payload_size)
             .with_dst_id(self.src_id)
             .with_src_id(self.dst_id)
             .with_net_id(self.net_id)
-            .with_ephemeral_key(pk.clone());
+            .with_ephemeral_key(pk.clone())
+            .build_header::<R>();
+
+        // MixHash(header), MixHash(bepk)
+        self.encryption_ctx.noise_ctx().mix_hash(builder.header()).mix_hash(&pk);
+
+        // ekem1
+        //
+        // https://i2p.net/en/docs/specs/ssu2-hybrid/#bob-kdf-for-message-2
+        let (cipher_key, builder) = match &mut self.encryption_ctx {
+            EncryptionContext::MlKem1024X25519(_) => unreachable!(),
+            EncryptionContext::X25519(_) => (cipher_key, builder),
+            kind => {
+                // `encapsulation_key` must exist since this is an ml-kem connection
+                let (mut ciphertext, shared_key) = kind
+                    .encapsulate::<R>(encapsulation_key.expect("to exist").as_slice())
+                    .ok_or(Ssu2Error::Malformed)?;
+
+                ChaChaPoly::new(&cipher_key)
+                    .encrypt_with_ad_new(kind.noise_ctx().state(), &mut ciphertext)?;
+
+                // MixHash(ciphertext)
+                kind.noise_ctx().mix_hash(&ciphertext);
+
+                // MixKey(kem_shared_key)
+                let local_key = kind.noise_ctx().mix_key_from_shared_secret(&shared_key);
+
+                (local_key, builder.with_kem_ciphertext(ciphertext))
+            }
+        };
 
         // check if remoted requested relay from us
         //
@@ -610,20 +700,17 @@ impl<R: Runtime> InboundSsu2Session<R> {
                     "include relay tag in SessionCreated",
                 );
 
-                message.with_relay_tag(relay_tag)
+                builder.with_relay_tag(relay_tag)
             } else {
-                message
+                builder
             }
             .build::<R>();
 
-        // MixHash(header), MixHash(bepk)
-        self.noise_ctx.mix_hash(message.header()).mix_hash(&pk);
-
-        message.encrypt_payload(&cipher_key, 0u64, self.noise_ctx.state());
+        message.encrypt_payload(&cipher_key, 0u64, self.encryption_ctx.noise_ctx().state());
         message.encrypt_header(self.intro_key, k_header_2);
 
         // MixHash(ciphertext)
-        self.noise_ctx.mix_hash(message.payload());
+        self.encryption_ctx.noise_ctx().mix_hash(message.payload());
 
         // reset packet retransmitter to track `SessionConfirmed` and send the message to remote
         let pkt = message.build().to_vec();
@@ -631,7 +718,8 @@ impl<R: Runtime> InboundSsu2Session<R> {
         self.write_buffer.push_back(pkt);
 
         // create new session
-        let temp_key = Hmac::new(self.noise_ctx.chaining_key()).update([]).finalize();
+        let temp_key =
+            Hmac::new(self.encryption_ctx.noise_ctx().chaining_key()).update([]).finalize();
         let k_header_2 =
             Hmac::new(&temp_key).update(b"SessionConfirmed").update([0x01]).finalize_new();
 
@@ -742,17 +830,17 @@ impl<R: Runtime> InboundSsu2Session<R> {
         );
 
         // MixHash(header)
-        self.noise_ctx.mix_hash(&pkt[..16]);
+        self.encryption_ctx.noise_ctx().mix_hash(&pkt[..16]);
 
         let mut static_key = pkt[16..64].to_vec();
         ChaChaPoly::with_nonce(&k_session_created, 1u64)
-            .decrypt_with_ad(self.noise_ctx.state(), &mut static_key)?;
+            .decrypt_with_ad(self.encryption_ctx.noise_ctx().state(), &mut static_key)?;
 
         // MixHash(apk)
-        self.noise_ctx.mix_hash(&pkt[16..64]);
+        self.encryption_ctx.noise_ctx().mix_hash(&pkt[16..64]);
 
         // MixKey(DH())
-        let mut cipher_key = self.noise_ctx.mix_key(
+        let mut cipher_key = self.encryption_ctx.noise_ctx().mix_key(
             &ephemeral_key,
             &StaticPublicKey::try_from_bytes(&static_key).expect("to succeed"),
         );
@@ -760,7 +848,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
         // decrypt payload
         let mut payload = pkt[64..].to_vec();
         ChaChaPoly::with_nonce(&cipher_key, 0u64)
-            .decrypt_with_ad(self.noise_ctx.state(), &mut payload)?;
+            .decrypt_with_ad(self.encryption_ctx.noise_ctx().state(), &mut payload)?;
         cipher_key.zeroize();
 
         let blocks = Block::parse::<R>(&payload).map_err(|error| {
@@ -799,7 +887,8 @@ impl<R: Runtime> InboundSsu2Session<R> {
         };
 
         let verifying_key = router_info.identity.signing_key().clone();
-        let temp_key = Hmac::new(self.noise_ctx.chaining_key()).update([]).finalize();
+        let temp_key =
+            Hmac::new(self.encryption_ctx.noise_ctx().chaining_key()).update([]).finalize();
         let k_ab = Hmac::new(&temp_key).update([0x01]).finalize();
         let k_ba = Hmac::new(&temp_key).update(&k_ab).update([0x02]).finalize();
 
@@ -870,6 +959,12 @@ impl<R: Runtime> InboundSsu2Session<R> {
             serialized,
             started: self.started,
             target: self.address,
+            encryption: match self.encryption_ctx {
+                EncryptionContext::X25519(_) => EncryptionKind::X25519,
+                EncryptionContext::MlKem512X25519(_) => EncryptionKind::MlKem512X25519,
+                EncryptionContext::MlKem768X25519(_) => EncryptionKind::MlKem768X25519,
+                EncryptionContext::MlKem1024X25519(_) => unreachable!(),
+            },
         }))
     }
 
@@ -961,6 +1056,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
 
                     let pkt = RetryBuilder::default()
                         .with_k_header_1(self.intro_key)
+                        .with_version(self.encryption_ctx.version())
                         .with_src_id(self.dst_id)
                         .with_dst_id(self.src_id)
                         .with_address(self.address)
@@ -1118,13 +1214,14 @@ impl<R: Runtime> Future for InboundSsu2Session<R> {
 mod tests {
     use super::*;
     use crate::{
-        crypto::{base64_encode, sha256::Sha256},
+        crypto::{base64_encode, noise::NoiseContext, sha256::Sha256},
         primitives::{RouterInfoBuilder, Str},
         runtime::mock::MockRuntime,
         subsystem::SubsystemEvent,
         timeout,
         transport::ssu2::session::pending::outbound::{OutboundSsu2Context, OutboundSsu2Session},
     };
+    use bytes::Bytes;
     use std::net::Ipv4Addr;
     use thingbuf::mpsc::{channel, Sender};
 
@@ -1142,7 +1239,10 @@ mod tests {
         transport_rx: Receiver<SubsystemEvent>,
     }
 
-    async fn create_session(iters: Option<usize>) -> (InboundContext, OutboundContext) {
+    async fn create_session(
+        iters: Option<usize>,
+        ml_kem: Option<usize>,
+    ) -> (InboundContext, OutboundContext) {
         let src_id = MockRuntime::rng().next_u64();
         let dst_id = MockRuntime::rng().next_u64();
 
@@ -1178,24 +1278,9 @@ mod tests {
             key
         };
 
-        let state = Sha256::new()
-            .update("Noise_XKchaobfse+hs1+hs2+hs3_25519_ChaChaPoly_SHA256".as_bytes())
-            .finalize();
-        let chaining_key = state.clone();
-        let outbound_state = Sha256::new().update(&state).finalize();
-        let inbound_state = Sha256::new()
-            .update(&outbound_state)
-            .update(inbound_static_key.public().to_vec())
-            .finalize();
-
-        let (inbound_socket_tx, inbound_socket_rx) = channel(128);
-        let (inbound_session_tx, inbound_session_rx) = channel(128);
-        let (outbound_socket_tx, outbound_socket_rx) = channel(128);
-        let (outbound_session_tx, outbound_session_rx) = channel(128);
-        let (transport_tx, transport_rx) = channel(128);
-
         let (mut router_info, _, signing_key) = RouterInfoBuilder::default()
             .with_ssu2(crate::Ssu2Config {
+                disable_pq: false,
                 port: outbound_address.port(),
                 ipv4_host: Some(Ipv4Addr::new(127, 0, 0, 1)),
                 ipv6_host: None,
@@ -1207,8 +1292,69 @@ mod tests {
                 intro_key: outbound_intro_key,
                 ipv4_mtu: None,
                 ipv6_mtu: None,
+                ml_kem: None,
             })
             .build();
+
+        let (chaining_key, inbound_state, encryption_ctx) = {
+            let state = Sha256::new()
+                .update(match ml_kem {
+                    None => "Noise_XKchaobfse+hs1+hs2+hs3_25519_ChaChaPoly_SHA256".as_bytes(),
+                    Some(3) => "Noise_XKhfschaobfse+hs1+hs2+hs3_25519+MLKEM512_ChaChaPoly_SHA256"
+                        .as_bytes(),
+                    Some(4) => "Noise_XKhfschaobfse+hs1+hs2+hs3_25519+MLKEM768_ChaChaPoly_SHA256"
+                        .as_bytes(),
+                    _ => unreachable!(),
+                })
+                .finalize_new();
+
+            let chaining_key = state;
+            let outbound_state = Sha256::new().update(&state).finalize();
+            let inbound_state = Sha256::new()
+                .update(&outbound_state)
+                .update(inbound_static_key.public().to_vec())
+                .finalize_new();
+
+            (
+                chaining_key,
+                inbound_state,
+                match ml_kem {
+                    None => EncryptionContext::X25519(NoiseContext::new(
+                        TryInto::<[u8; 32]>::try_into(chaining_key.clone()).unwrap(),
+                        TryInto::<[u8; 32]>::try_into(inbound_state.clone()).unwrap(),
+                    )),
+                    Some(3) => {
+                        let inbound_state = Sha256::new()
+                            .update(inbound_state)
+                            .update(router_info.identity.id().to_vec())
+                            .finalize();
+
+                        EncryptionContext::MlKem512X25519(NoiseContext::new(
+                            TryInto::<[u8; 32]>::try_into(chaining_key.clone()).unwrap(),
+                            TryInto::<[u8; 32]>::try_into(inbound_state.clone()).unwrap(),
+                        ))
+                    }
+                    Some(4) => {
+                        let inbound_state = Sha256::new()
+                            .update(inbound_state)
+                            .update(router_info.identity.id().to_vec())
+                            .finalize();
+
+                        EncryptionContext::MlKem768X25519(NoiseContext::new(
+                            TryInto::<[u8; 32]>::try_into(chaining_key.clone()).unwrap(),
+                            TryInto::<[u8; 32]>::try_into(inbound_state.clone()).unwrap(),
+                        ))
+                    }
+                    _ => unreachable!(),
+                },
+            )
+        };
+
+        let (inbound_socket_tx, inbound_socket_rx) = channel(128);
+        let (inbound_session_tx, inbound_session_rx) = channel(128);
+        let (outbound_socket_tx, outbound_socket_rx) = channel(128);
+        let (outbound_session_tx, outbound_session_rx) = channel(128);
+        let (transport_tx, transport_rx) = channel(128);
 
         if let Some(iters) = iters {
             for i in 0..iters {
@@ -1222,7 +1368,21 @@ mod tests {
 
         let mut outbound = OutboundSsu2Session::new(OutboundSsu2Context {
             address: inbound_address,
-            chaining_key: Bytes::from(chaining_key.clone()),
+            encryption_ctx: match ml_kem {
+                None => EncryptionContext::X25519(NoiseContext::new(
+                    TryInto::<[u8; 32]>::try_into(chaining_key.clone()).unwrap(),
+                    TryInto::<[u8; 32]>::try_into(inbound_state.clone()).unwrap(),
+                )),
+                Some(3) => EncryptionContext::MlKem512X25519(NoiseContext::new(
+                    TryInto::<[u8; 32]>::try_into(chaining_key.clone()).unwrap(),
+                    TryInto::<[u8; 32]>::try_into(inbound_state.clone()).unwrap(),
+                )),
+                Some(4) => EncryptionContext::MlKem768X25519(NoiseContext::new(
+                    TryInto::<[u8; 32]>::try_into(chaining_key.clone()).unwrap(),
+                    TryInto::<[u8; 32]>::try_into(inbound_state.clone()).unwrap(),
+                )),
+                _ => unreachable!(),
+            },
             dst_id,
             local_intro_key: outbound_intro_key,
             local_static_key: outbound_static_key,
@@ -1235,7 +1395,6 @@ mod tests {
             rx: outbound_session_rx,
             socket: outbound_socket.clone(),
             src_id,
-            state: inbound_state.clone(),
             static_key: inbound_static_key.public(),
             transport_tx,
             verifying_key: signing_key.public(),
@@ -1273,8 +1432,9 @@ mod tests {
 
         let inbound = InboundSsu2Session::<MockRuntime>::new(InboundSsu2Context {
             address: outbound_address,
-            chaining_key: Bytes::from(chaining_key),
+            encryption_ctx,
             dst_id,
+            max_payload_size: 1472,
             intro_key: inbound_intro_key,
             mtu: 1500,
             net_id: 2u8,
@@ -1284,7 +1444,6 @@ mod tests {
             rx: inbound_session_rx,
             socket: inbound_socket.clone(),
             src_id,
-            state: Bytes::from(inbound_state),
             static_key: inbound_static_key.clone(),
         })
         .unwrap();
@@ -1336,7 +1495,21 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn session_request_timeout() {
+    async fn session_request_timeout_x25519() {
+        session_request_timeout(None).await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn session_request_timeout_ml_kem_512() {
+        session_request_timeout(Some(3)).await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn session_request_timeout_ml_kem_768() {
+        session_request_timeout(Some(4)).await
+    }
+
+    async fn session_request_timeout(ml_kem: Option<usize>) {
         let (
             InboundContext {
                 inbound_session,
@@ -1350,7 +1523,7 @@ mod tests {
                 outbound_session_tx: _ob_session_tx,
                 ..
             },
-        ) = create_session(None).await;
+        ) = create_session(None, ml_kem).await;
 
         let intro_key = inbound_session.intro_key;
         let inbound_session = tokio::spawn(inbound_session.run());
@@ -1378,7 +1551,21 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn token_request_received_again() {
+    async fn token_request_received_again_x25519() {
+        token_request_received_again(None).await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn token_request_received_again_ml_kem_512() {
+        token_request_received_again(Some(3)).await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn token_request_received_again_ml_kem_768() {
+        token_request_received_again(Some(4)).await
+    }
+
+    async fn token_request_received_again(ml_kem: Option<usize>) {
         let (
             InboundContext {
                 inbound_session,
@@ -1391,7 +1578,7 @@ mod tests {
                 outbound_socket_rx,
                 ..
             },
-        ) = create_session(None).await;
+        ) = create_session(None, ml_kem).await;
         let intro_key = inbound_session.intro_key;
 
         tokio::spawn(inbound_session.run());
@@ -1434,7 +1621,21 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn use_old_token_for_session_request() {
+    async fn use_old_token_for_session_request_x25519() {
+        use_old_token_for_session_request(None).await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn use_old_token_for_session_request_ml_kem_512() {
+        use_old_token_for_session_request(Some(3)).await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn use_old_token_for_session_request_ml_kem_768() {
+        use_old_token_for_session_request(Some(4)).await
+    }
+
+    async fn use_old_token_for_session_request(ml_kem: Option<usize>) {
         let (
             InboundContext {
                 inbound_session,
@@ -1447,7 +1648,7 @@ mod tests {
                 outbound_socket_rx,
                 ..
             },
-        ) = create_session(None).await;
+        ) = create_session(None, ml_kem).await;
 
         let intro_key = inbound_session.intro_key;
         let mut inbound_session = tokio::spawn(inbound_session.run());
@@ -1504,7 +1705,21 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn use_new_token_for_session_request() {
+    async fn use_new_token_for_session_request_x25519() {
+        use_new_token_for_session_request(None).await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn use_new_token_for_session_request_ml_kem_512() {
+        use_new_token_for_session_request(Some(3)).await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn use_new_token_for_session_request_ml_kem_768() {
+        use_new_token_for_session_request(Some(4)).await
+    }
+
+    async fn use_new_token_for_session_request(ml_kem: Option<usize>) {
         let (
             InboundContext {
                 inbound_session,
@@ -1517,7 +1732,7 @@ mod tests {
                 outbound_socket_rx,
                 ..
             },
-        ) = create_session(None).await;
+        ) = create_session(None, ml_kem).await;
         let intro_key = inbound_session.intro_key;
         tokio::spawn(inbound_session.run());
 
@@ -1564,7 +1779,21 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn duplicate_session_request() {
+    async fn duplicate_session_request_x25519() {
+        duplicate_session_request(None).await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn duplicate_session_request_ml_kem_512() {
+        duplicate_session_request(Some(3)).await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn duplicate_session_request_ml_kem_768() {
+        duplicate_session_request(Some(4)).await
+    }
+
+    async fn duplicate_session_request(ml_kem: Option<usize>) {
         let (
             InboundContext {
                 inbound_session,
@@ -1578,7 +1807,7 @@ mod tests {
                 outbound_socket_rx,
                 transport_rx: _transport_rx,
             },
-        ) = create_session(None).await;
+        ) = create_session(None, ml_kem).await;
 
         let intro_key = inbound_session.intro_key;
         let outbound_session = tokio::spawn(outbound_session);
@@ -1671,7 +1900,21 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn session_created_timeout() {
+    async fn session_created_timeout_x25519() {
+        session_created_timeout(None).await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn session_created_timeout_ml_kem_512() {
+        session_created_timeout(Some(3)).await
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn session_created_timeout_ml_kem_768() {
+        session_created_timeout(Some(4)).await
+    }
+
+    async fn session_created_timeout(ml_kem: Option<usize>) {
         let (
             InboundContext {
                 inbound_session,
@@ -1684,7 +1927,7 @@ mod tests {
                 outbound_socket_rx,
                 ..
             },
-        ) = create_session(None).await;
+        ) = create_session(None, ml_kem).await;
 
         let intro_key = inbound_session.intro_key;
         let _outbound_session = tokio::spawn(outbound_session);
@@ -1730,7 +1973,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn session_request_clock_skew() {
+    async fn session_request_clock_skew_x25519() {
+        session_request_clock_skew(None).await
+    }
+
+    #[tokio::test]
+    async fn session_request_clock_skew_ml_kem_512() {
+        session_request_clock_skew(Some(3)).await
+    }
+
+    #[tokio::test]
+    async fn session_request_clock_skew_ml_kem_768() {
+        session_request_clock_skew(Some(4)).await
+    }
+
+    async fn session_request_clock_skew(ml_kem: Option<usize>) {
         let (
             InboundContext {
                 inbound_session,
@@ -1743,7 +2000,7 @@ mod tests {
                 outbound_socket_rx,
                 ..
             },
-        ) = create_session(None).await;
+        ) = create_session(None, ml_kem).await;
         let intro_key = inbound_session.intro_key;
 
         // spawn outbound session in a separate thread and modify its
@@ -1798,7 +2055,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn token_request_clock_skew() {
+    async fn token_request_clock_skew_x25519() {
+        token_request_clock_skew(None).await
+    }
+
+    #[tokio::test]
+    async fn token_request_clock_skew_ml_kem_512() {
+        token_request_clock_skew(Some(3)).await
+    }
+
+    #[tokio::test]
+    async fn token_request_clock_skew_ml_kem_768() {
+        token_request_clock_skew(Some(4)).await
+    }
+
+    async fn token_request_clock_skew(ml_kem: Option<usize>) {
         // set time backwards by 2 * `MAX_CLOCK_SKEW` so the `Retry` message has an invalid time
         MockRuntime::set_time(Some(
             std::time::SystemTime::now()
@@ -1819,7 +2090,7 @@ mod tests {
                 outbound_socket_rx,
                 ..
             },
-        ) = create_session(None).await;
+        ) = create_session(None, ml_kem).await;
         let intro_key = inbound_session.intro_key;
 
         // reset time back to normal
@@ -1867,7 +2138,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fragmented_session_confirmed_zzz() {
+    async fn fragmented_session_confirmed_x25519() {
+        fragmented_session_confirmed(None).await
+    }
+
+    #[tokio::test]
+    async fn fragmented_session_confirmed_ml_kem_512() {
+        fragmented_session_confirmed(Some(3)).await
+    }
+
+    #[tokio::test]
+    async fn fragmented_session_confirmed_ml_kem_768() {
+        fragmented_session_confirmed(Some(4)).await
+    }
+
+    async fn fragmented_session_confirmed(ml_kem: Option<usize>) {
         let (
             InboundContext {
                 inbound_session,
@@ -1880,7 +2165,7 @@ mod tests {
                 outbound_socket_rx,
                 ..
             },
-        ) = create_session(Some(10)).await;
+        ) = create_session(Some(10), ml_kem).await;
 
         let intro_key = inbound_session.intro_key;
         let _outbound_session = tokio::spawn(outbound_session);
@@ -1936,7 +2221,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn multi_fragment_session_confirmed() {
+    async fn multi_fragment_session_confirmed_x25519() {
+        multi_fragment_session_confirmed(None).await
+    }
+
+    #[tokio::test]
+    async fn multi_fragment_session_confirmed_ml_kem_512() {
+        multi_fragment_session_confirmed(Some(3)).await
+    }
+
+    #[tokio::test]
+    async fn multi_fragment_session_confirmed_ml_kem_768() {
+        multi_fragment_session_confirmed(Some(4)).await
+    }
+
+    async fn multi_fragment_session_confirmed(ml_kem: Option<usize>) {
         let (
             InboundContext {
                 inbound_session,
@@ -1949,7 +2248,7 @@ mod tests {
                 outbound_socket_rx,
                 ..
             },
-        ) = create_session(Some(20)).await;
+        ) = create_session(Some(20), ml_kem).await;
 
         let intro_key = inbound_session.intro_key;
         let _outbound_session = tokio::spawn(outbound_session);
@@ -2005,7 +2304,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fragmented_session_confirmed_out_of_order() {
+    async fn fragmented_session_confirmed_out_of_order_x25519() {
+        fragmented_session_confirmed_out_of_order(None).await
+    }
+
+    #[tokio::test]
+    async fn fragmented_session_confirmed_out_of_order_ml_kem_512() {
+        fragmented_session_confirmed_out_of_order(Some(3)).await
+    }
+
+    #[tokio::test]
+    async fn fragmented_session_confirmed_out_of_order_ml_kem_768() {
+        fragmented_session_confirmed_out_of_order(Some(4)).await
+    }
+
+    async fn fragmented_session_confirmed_out_of_order(ml_kem: Option<usize>) {
         let (
             InboundContext {
                 inbound_session,
@@ -2018,7 +2331,7 @@ mod tests {
                 outbound_socket_rx,
                 ..
             },
-        ) = create_session(Some(20)).await;
+        ) = create_session(Some(20), ml_kem).await;
 
         let intro_key = inbound_session.intro_key;
         let _outbound_session = tokio::spawn(outbound_session);
@@ -2082,7 +2395,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fragmented_session_confirmed_retransmitted() {
+    async fn fragmented_session_confirmed_retransmitted_x25519() {
+        fragmented_session_confirmed_retransmitted(None).await
+    }
+
+    #[tokio::test]
+    async fn fragmented_session_confirmed_retransmitted_ml_kem_512() {
+        fragmented_session_confirmed_retransmitted(Some(3)).await
+    }
+
+    #[tokio::test]
+    async fn fragmented_session_confirmed_retransmitted_ml_kem_768() {
+        fragmented_session_confirmed_retransmitted(Some(4)).await
+    }
+
+    async fn fragmented_session_confirmed_retransmitted(ml_kem: Option<usize>) {
         let (
             InboundContext {
                 inbound_session,
@@ -2095,7 +2422,7 @@ mod tests {
                 outbound_socket_rx,
                 ..
             },
-        ) = create_session(Some(20)).await;
+        ) = create_session(Some(20), ml_kem).await;
 
         let intro_key = inbound_session.intro_key;
         let _outbound_session = tokio::spawn(outbound_session);

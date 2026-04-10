@@ -17,17 +17,17 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    constants::ssu2,
-    crypto::{sha256::Sha256, StaticPrivateKey},
+    constants::{self, ssu2},
+    crypto::{noise::NoiseContext, sha256::Sha256, StaticPrivateKey},
     error::{ChannelError, DialError, RelayError, Ssu2Error},
-    primitives::{RouterAddress, RouterId, RouterInfo},
+    primitives::{MlKemPreference, RouterAddress, RouterId, RouterInfo},
     router::context::RouterContext,
     runtime::{Counter, Gauge, Histogram, JoinSet, MetricsHandle, Runtime, UdpSocket},
     subsystem::SubsystemEvent,
     transport::{
         ssu2::{
             detector::Detector,
-            message::{HeaderKind, HeaderReader},
+            message::{HeaderKind, HeaderReader, ProtocolVersion},
             metrics::*,
             peer_test::{PeerTestManager, PeerTestManagerEvent},
             relay::{
@@ -39,7 +39,7 @@ use crate::{
                 pending::{
                     inbound::{InboundSsu2Context, InboundSsu2Session},
                     outbound::{OutboundSsu2Context, OutboundSsu2Session},
-                    PendingSsu2SessionStatus,
+                    EncryptionContext, PendingSsu2SessionStatus,
                 },
                 terminating::{TerminatingSsu2Session, TerminationContext},
             },
@@ -49,7 +49,7 @@ use crate::{
     },
 };
 
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use futures::{Stream, StreamExt};
 use hashbrown::{HashMap, HashSet};
 use rand::Rng;
@@ -69,6 +69,14 @@ const LOG_TARGET: &str = "emissary::ssu2::socket";
 
 /// Protocol name.
 const PROTOCOL_NAME: &str = "Noise_XKchaobfse+hs1+hs2+hs3_25519_ChaChaPoly_SHA256";
+
+/// Protocol name for ML-KEM-512-x25519.
+const PROTOCOL_NAME_ML_KEM_512: &str =
+    "Noise_XKhfschaobfse+hs1+hs2+hs3_25519+MLKEM512_ChaChaPoly_SHA256";
+
+/// Protocol name for ML-KEM-768-x25519.
+const PROTOCOL_NAME_ML_KEM_768: &str =
+    "Noise_XKhfschaobfse+hs1+hs2+hs3_25519+MLKEM768_ChaChaPoly_SHA256";
 
 /// SSU2 session channel size.
 ///
@@ -172,6 +180,18 @@ enum WriteState {
     Poisoned,
 }
 
+/// Protocols state.
+struct ProtocolState {
+    /// Chaining key.
+    chaining_key: [u8; 32],
+
+    /// Outbound state.
+    outbound_state: [u8; 32],
+
+    /// Inbound state.
+    inbound_state: [u8; 32],
+}
+
 /// SSU2 socket.
 pub struct Ssu2Socket<R: Runtime> {
     /// Active sessions.
@@ -179,11 +199,8 @@ pub struct Ssu2Socket<R: Runtime> {
     /// The session returns a `(RouterId, destination connection ID)` tuple when it exits.
     active_sessions: R::JoinSet<TerminationContext<R>>,
 
-    /// Chaining key.
-    chaining_key: Bytes,
-
-    /// Inbound state.
-    inbound_state: Bytes,
+    /// Disable PQ for outbound connections.
+    disable_pq: bool,
 
     /// Introduction key.
     intro_key: [u8; 32],
@@ -194,6 +211,9 @@ pub struct Ssu2Socket<R: Runtime> {
     /// IPv4 MTU.
     ipv4_mtu: usize,
 
+    /// IPv4 ML-KEM preference.
+    ipv4_ml_kem: Option<MlKemPreference>,
+
     /// IPv4 UDP socket.
     ipv4_socket: Option<R::UdpSocket>,
 
@@ -203,11 +223,17 @@ pub struct Ssu2Socket<R: Runtime> {
     /// IPv6 MTU.
     ipv6_mtu: usize,
 
+    /// IPv6 ML-KEM preference.
+    ipv6_ml_kem: Option<MlKemPreference>,
+
     /// IPv4 UDP socket.
     ipv6_socket: Option<R::UdpSocket>,
 
-    /// Outbound state.
-    outbound_state: Bytes,
+    /// Protocol state for ML-KEM-512-x25519.
+    ml_kem_512: ProtocolState,
+
+    /// Protocol state for ML-KEM-768-x25519.
+    ml_kem_768: ProtocolState,
 
     /// Peer test manager.
     peer_test_manager: PeerTestManager<R>,
@@ -261,6 +287,9 @@ pub struct Ssu2Socket<R: Runtime> {
 
     /// Write state.
     write_state: WriteState,
+
+    /// Protocol state for x25519.
+    x25519: ProtocolState,
 }
 
 impl<R: Runtime> Ssu2Socket<R> {
@@ -268,34 +297,65 @@ impl<R: Runtime> Ssu2Socket<R> {
     pub fn new(
         ipv4_socket: Option<R::UdpSocket>,
         ipv4_mtu: Option<usize>,
+        ipv4_ml_kem: Option<MlKemPreference>,
         ipv6_socket: Option<R::UdpSocket>,
         ipv6_mtu: Option<usize>,
+        ipv6_ml_kem: Option<MlKemPreference>,
         static_key: StaticPrivateKey,
         intro_key: [u8; 32],
         transport_tx: Sender<SubsystemEvent>,
         router_ctx: RouterContext<R>,
         firewalled: bool,
+        disable_pq: bool,
     ) -> Self {
-        let state = Sha256::new().update(PROTOCOL_NAME.as_bytes()).finalize();
-        let chaining_key = state.clone();
-        let outbound_state = Sha256::new().update(&state).finalize();
-        let inbound_state = Sha256::new()
-            .update(&outbound_state)
-            .update(static_key.public().to_vec())
-            .finalize();
+        let public_key = static_key.public();
+        let make_key_context = |protocol_name: &str| -> ProtocolState {
+            let chaining_key = Sha256::new().update(protocol_name.as_bytes()).finalize_new();
+
+            let outbound_state = Sha256::new().update(chaining_key).finalize_new();
+            let inbound_state =
+                Sha256::new().update(outbound_state).update(&public_key).finalize_new();
+
+            ProtocolState {
+                chaining_key,
+                outbound_state,
+                inbound_state,
+            }
+        };
+
+        let x25519 = make_key_context(PROTOCOL_NAME);
+        let mut ml_kem_512 = make_key_context(PROTOCOL_NAME_ML_KEM_512);
+        let mut ml_kem_768 = make_key_context(PROTOCOL_NAME_ML_KEM_768);
+
+        // update `inbound_state` to contain our router ID for spoof protection
+        //
+        // https://i2p.net/en/docs/specs/ssu2-hybrid/#sessionrequest-type-0
+        {
+            ml_kem_512.inbound_state = Sha256::new()
+                .update(ml_kem_512.inbound_state)
+                .update(router_ctx.router_id().to_vec())
+                .finalize_new();
+
+            ml_kem_768.inbound_state = Sha256::new()
+                .update(ml_kem_768.inbound_state)
+                .update(router_ctx.router_id().to_vec())
+                .finalize_new();
+        }
 
         Self {
             active_sessions: R::join_set(),
-            chaining_key: Bytes::from(chaining_key),
-            inbound_state: Bytes::from(inbound_state),
+            disable_pq,
             intro_key,
             ipv4_detector: Detector::new(firewalled, router_ctx.metrics_handle().clone()),
             ipv4_mtu: ipv4_mtu.unwrap_or(ssu2::MAX_MTU),
+            ipv4_ml_kem,
             ipv4_socket: ipv4_socket.clone(),
             ipv6_detector: Detector::new(firewalled, router_ctx.metrics_handle().clone()),
             ipv6_mtu: ipv6_mtu.unwrap_or(ssu2::MAX_MTU),
+            ipv6_ml_kem,
             ipv6_socket: ipv6_socket.clone(),
-            outbound_state: Bytes::from(outbound_state),
+            ml_kem_512,
+            ml_kem_768,
             peer_test_manager: PeerTestManager::new(
                 intro_key,
                 ipv4_socket.clone(),
@@ -324,6 +384,7 @@ impl<R: Runtime> Ssu2Socket<R> {
             unvalidated_sessions: HashMap::new(),
             waker: None,
             write_state: WriteState::GetPacket,
+            x25519,
         }
     }
 
@@ -384,6 +445,7 @@ impl<R: Runtime> Ssu2Socket<R> {
                 net_id,
                 pkt_num,
                 src_id,
+                version,
             }) => {
                 if net_id != self.router_ctx.net_id() {
                     tracing::warn!(
@@ -395,13 +457,83 @@ impl<R: Runtime> Ssu2Socket<R> {
                     return Err(Ssu2Error::NetworkMismatch);
                 }
 
+                let preference = match address {
+                    SocketAddr::V4(_) => (!self.disable_pq).then_some(self.ipv4_ml_kem).flatten(),
+                    SocketAddr::V6(_) => (!self.disable_pq).then_some(self.ipv6_ml_kem).flatten(),
+                };
+
+                let (encryption_ctx, max_payload_size) = match (version, preference) {
+                    (ProtocolVersion::V2, _) => (
+                        EncryptionContext::X25519(NoiseContext::new(
+                            self.x25519.chaining_key,
+                            self.x25519.inbound_state,
+                        )),
+                        match address {
+                            SocketAddr::V4(_) =>
+                                constants::ssu2::MIN_MTU - constants::ssu2::IPV4_OVERHEAD,
+                            SocketAddr::V6(_) =>
+                                constants::ssu2::MIN_MTU - constants::ssu2::IPV6_OVERHEAD,
+                        },
+                    ),
+                    (
+                        ProtocolVersion::V3,
+                        Some(
+                            MlKemPreference::MlKem512
+                            | MlKemPreference::MlKem512MlKem768
+                            | MlKemPreference::MlKem768MlKem512,
+                        ),
+                    ) => (
+                        EncryptionContext::MlKem512X25519(NoiseContext::new(
+                            self.ml_kem_512.chaining_key,
+                            self.ml_kem_512.inbound_state,
+                        )),
+                        match address {
+                            SocketAddr::V4(_) =>
+                                constants::ssu2::MIN_MTU - constants::ssu2::IPV4_OVERHEAD,
+                            SocketAddr::V6(_) =>
+                                constants::ssu2::MIN_MTU - constants::ssu2::IPV6_OVERHEAD,
+                        },
+                    ),
+                    (
+                        ProtocolVersion::V4,
+                        Some(
+                            MlKemPreference::MlKem768
+                            | MlKemPreference::MlKem768MlKem512
+                            | MlKemPreference::MlKem512MlKem768,
+                        ),
+                    ) => (
+                        EncryptionContext::MlKem768X25519(NoiseContext::new(
+                            self.ml_kem_768.chaining_key,
+                            self.ml_kem_768.inbound_state,
+                        )),
+                        match address {
+                            SocketAddr::V4(_) =>
+                                constants::crypto::ml_kem::ML_KEM_768_IPV4_MIN_MTU
+                                    - constants::ssu2::IPV4_OVERHEAD,
+                            SocketAddr::V6(_) =>
+                                constants::crypto::ml_kem::ML_KEM_768_IPV6_MIN_MTU
+                                    - constants::ssu2::IPV6_OVERHEAD,
+                        },
+                    ),
+                    (version, preference) => {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            ?version,
+                            ?preference,
+                            "remote router requested post-quantum connection but they're disabled, rejecting",
+                        );
+                        return Err(Ssu2Error::InvalidVersion);
+                    }
+                };
+
                 let (tx, rx) = channel(CHANNEL_SIZE);
                 let relay_tag = self.relay_manager.allocate_relay_tag();
                 let session = InboundSsu2Session::<R>::new(InboundSsu2Context {
                     address,
-                    chaining_key: self.chaining_key.clone(),
                     dst_id: connection_id,
+                    encryption_ctx,
                     intro_key: self.intro_key,
+                    max_payload_size,
                     mtu: match address {
                         SocketAddr::V4(_) => self.ipv4_mtu,
                         SocketAddr::V6(_) => self.ipv6_mtu,
@@ -413,7 +545,6 @@ impl<R: Runtime> Ssu2Socket<R> {
                     rx,
                     socket: self.socket_for_address(&address),
                     src_id,
-                    state: self.inbound_state.clone(),
                     static_key: self.static_key.clone(),
                 })?;
 
@@ -430,6 +561,7 @@ impl<R: Runtime> Ssu2Socket<R> {
                 net_id,
                 pkt_num,
                 src_id,
+                ..
             }) => {
                 if net_id != self.router_ctx.net_id() {
                     tracing::warn!(
@@ -522,6 +654,7 @@ impl<R: Runtime> Ssu2Socket<R> {
                 net_id,
                 pkt_num,
                 src_id,
+                ..
             }) => {
                 if net_id != self.router_ctx.net_id() {
                     tracing::warn!(
@@ -543,16 +676,87 @@ impl<R: Runtime> Ssu2Socket<R> {
                 token,
                 pkt_num,
                 ephemeral_key,
+                version,
                 ..
             }) if self.tokens.remove(&token) => {
+                let preference = match address {
+                    SocketAddr::V4(_) => (!self.disable_pq).then_some(self.ipv4_ml_kem).flatten(),
+                    SocketAddr::V6(_) => (!self.disable_pq).then_some(self.ipv6_ml_kem).flatten(),
+                };
+
+                let (encryption_ctx, max_payload_size) = match (version, preference) {
+                    (ProtocolVersion::V2, _) => (
+                        EncryptionContext::X25519(NoiseContext::new(
+                            self.x25519.chaining_key,
+                            self.x25519.inbound_state,
+                        )),
+                        match address {
+                            SocketAddr::V4(_) =>
+                                constants::ssu2::MIN_MTU - constants::ssu2::IPV4_OVERHEAD,
+                            SocketAddr::V6(_) =>
+                                constants::ssu2::MIN_MTU - constants::ssu2::IPV6_OVERHEAD,
+                        },
+                    ),
+                    (
+                        ProtocolVersion::V3,
+                        Some(
+                            MlKemPreference::MlKem512
+                            | MlKemPreference::MlKem512MlKem768
+                            | MlKemPreference::MlKem768MlKem512,
+                        ),
+                    ) => (
+                        EncryptionContext::MlKem512X25519(NoiseContext::new(
+                            self.ml_kem_512.chaining_key,
+                            self.ml_kem_512.inbound_state,
+                        )),
+                        match address {
+                            SocketAddr::V4(_) =>
+                                constants::ssu2::MIN_MTU - constants::ssu2::IPV4_OVERHEAD,
+                            SocketAddr::V6(_) =>
+                                constants::ssu2::MIN_MTU - constants::ssu2::IPV6_OVERHEAD,
+                        },
+                    ),
+                    (
+                        ProtocolVersion::V4,
+                        Some(
+                            MlKemPreference::MlKem768
+                            | MlKemPreference::MlKem768MlKem512
+                            | MlKemPreference::MlKem512MlKem768,
+                        ),
+                    ) => (
+                        EncryptionContext::MlKem768X25519(NoiseContext::new(
+                            self.ml_kem_768.chaining_key,
+                            self.ml_kem_768.inbound_state,
+                        )),
+                        match address {
+                            SocketAddr::V4(_) =>
+                                constants::crypto::ml_kem::ML_KEM_768_IPV4_MIN_MTU
+                                    - constants::ssu2::IPV4_OVERHEAD,
+                            SocketAddr::V6(_) =>
+                                constants::crypto::ml_kem::ML_KEM_768_IPV6_MIN_MTU
+                                    - constants::ssu2::IPV6_OVERHEAD,
+                        },
+                    ),
+                    (version, preference) => {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            ?version,
+                            ?preference,
+                            "remote router requested post-quantum connection but they're disabled, rejecting",
+                        );
+                        return Err(Ssu2Error::InvalidVersion);
+                    }
+                };
+
                 let (tx, rx) = channel(CHANNEL_SIZE);
                 let relay_tag = self.relay_manager.allocate_relay_tag();
                 let session = InboundSsu2Session::<R>::from_session_request(
                     InboundSsu2Context {
                         address,
-                        chaining_key: self.chaining_key.clone(),
                         dst_id: connection_id,
+                        encryption_ctx,
                         intro_key: self.intro_key,
+                        max_payload_size,
                         mtu: match address {
                             SocketAddr::V4(_) => self.ipv4_mtu,
                             SocketAddr::V6(_) => self.ipv6_mtu,
@@ -564,7 +768,6 @@ impl<R: Runtime> Ssu2Socket<R> {
                         rx,
                         socket: self.socket_for_address(&address),
                         src_id: !connection_id,
-                        state: self.inbound_state.clone(),
                         static_key: self.static_key.clone(),
                     },
                     ephemeral_key,
@@ -615,7 +818,7 @@ impl<R: Runtime> Ssu2Socket<R> {
     fn send_relay_request(&mut self, router_info: RouterInfo) {
         let router_id = router_info.identity.id();
 
-        match self.relay_manager.send_relay_request(router_info) {
+        match self.relay_manager.send_relay_request(router_info, self.disable_pq) {
             Ok(connection) => {
                 tracing::trace!(
                     target: LOG_TARGET,
@@ -652,6 +855,7 @@ impl<R: Runtime> Ssu2Socket<R> {
             src_id,
             static_key,
             verifying_key,
+            version,
         }) = self.pending_relays.remove(&router_id)
         else {
             tracing::trace!(
@@ -664,8 +868,31 @@ impl<R: Runtime> Ssu2Socket<R> {
             return;
         };
 
+        let encryption_ctx = match version {
+            ProtocolVersion::V2 => EncryptionContext::X25519(NoiseContext::new(
+                self.x25519.chaining_key,
+                Sha256::new()
+                    .update(self.x25519.outbound_state)
+                    .update(&static_key)
+                    .finalize_new(),
+            )),
+            ProtocolVersion::V3 => EncryptionContext::MlKem512X25519(NoiseContext::new(
+                self.ml_kem_512.chaining_key,
+                Sha256::new()
+                    .update(self.ml_kem_512.outbound_state)
+                    .update(&static_key)
+                    .finalize_new(),
+            )),
+            ProtocolVersion::V4 => EncryptionContext::MlKem768X25519(NoiseContext::new(
+                self.ml_kem_768.chaining_key,
+                Sha256::new()
+                    .update(self.ml_kem_768.outbound_state)
+                    .update(&static_key)
+                    .finalize_new(),
+            )),
+        };
+
         let our_router_info = self.router_ctx.router_info();
-        let state = Sha256::new().update(&self.outbound_state).update(&static_key).finalize();
         let transport_tx = self.transport_tx.clone();
         let max_payload_size = self.max_payload_size(&address, mtu);
 
@@ -691,8 +918,8 @@ impl<R: Runtime> Ssu2Socket<R> {
             OutboundSsu2Session::<R>::from_token(
                 OutboundSsu2Context {
                     address,
-                    chaining_key: self.chaining_key.clone(),
                     dst_id,
+                    encryption_ctx,
                     local_intro_key: self.intro_key,
                     local_static_key: self.static_key.clone(),
                     max_payload_size,
@@ -704,7 +931,6 @@ impl<R: Runtime> Ssu2Socket<R> {
                     rx,
                     socket: self.socket_for_address(&address),
                     src_id,
-                    state,
                     static_key: static_key.clone(),
                     transport_tx,
                     verifying_key,
@@ -729,7 +955,7 @@ impl<R: Runtime> Ssu2Socket<R> {
         // attempt to locate a router address with reachable socket address
         //
         // if none is found, attempt to dial the router with the help of an introducer
-        let (static_key, intro_key, address, supports_relay, remote_mtu) =
+        let (static_key, intro_key, address, supports_relay, remote_mtu, ml_kem) =
             match router_info.addresses.iter().find(|address| match address {
                 RouterAddress::Ssu2 {
                     socket_address: Some(address),
@@ -750,6 +976,7 @@ impl<R: Runtime> Ssu2Socket<R> {
                         intro_key,
                         socket_address: Some(address),
                         mtu,
+                        ml_kem,
                         ..
                     },
                 ) => (
@@ -758,13 +985,13 @@ impl<R: Runtime> Ssu2Socket<R> {
                     address,
                     ssu2_address.supports_relay(),
                     *mtu,
+                    (!self.disable_pq).then_some(*ml_kem).flatten(),
                 ),
                 _ => return self.send_relay_request(router_info),
             };
 
         let max_payload_size = self.max_payload_size(address, remote_mtu);
         let our_router_info = self.router_ctx.router_info();
-        let state = Sha256::new().update(&self.outbound_state).update(static_key).finalize();
         let transport_tx = self.transport_tx.clone();
         let src_id = R::rng().next_u64();
         let dst_id = R::rng().next_u64();
@@ -790,11 +1017,39 @@ impl<R: Runtime> Ssu2Socket<R> {
             false => self.ipv4_detector.status(),
         };
 
+        let encryption_ctx = match ml_kem {
+            None => EncryptionContext::X25519(NoiseContext::new(
+                self.x25519.chaining_key,
+                Sha256::new()
+                    .update(self.x25519.outbound_state)
+                    .update(static_key)
+                    .finalize_new(),
+            )),
+            Some(ml_kem) => match ml_kem {
+                MlKemPreference::MlKem512 | MlKemPreference::MlKem512MlKem768 =>
+                    EncryptionContext::MlKem512X25519(NoiseContext::new(
+                        self.ml_kem_512.chaining_key,
+                        Sha256::new()
+                            .update(self.ml_kem_512.outbound_state)
+                            .update(static_key)
+                            .finalize_new(),
+                    )),
+                MlKemPreference::MlKem768 | MlKemPreference::MlKem768MlKem512 =>
+                    EncryptionContext::MlKem768X25519(NoiseContext::new(
+                        self.ml_kem_768.chaining_key,
+                        Sha256::new()
+                            .update(self.ml_kem_768.outbound_state)
+                            .update(static_key)
+                            .finalize_new(),
+                    )),
+            },
+        };
+
         self.pending_sessions.push(
             OutboundSsu2Session::<R>::new(OutboundSsu2Context {
                 address: *address,
-                chaining_key: self.chaining_key.clone(),
                 dst_id,
+                encryption_ctx,
                 local_intro_key: self.intro_key,
                 local_static_key: self.static_key.clone(),
                 max_payload_size,
@@ -808,7 +1063,6 @@ impl<R: Runtime> Ssu2Socket<R> {
                 rx,
                 socket: self.socket_for_address(address),
                 src_id,
-                state,
                 static_key: static_key.clone(),
                 transport_tx,
                 verifying_key,
@@ -1230,7 +1484,20 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
                                 .counter(NUM_HANDSHAKE_FAILURES)
                                 .increment_with_label(1, "reason", "timeout");
                         }
-                        PendingSsu2SessionStatus::SessionTerminated { reason, .. } => {
+                        PendingSsu2SessionStatus::SessionTerminated {
+                            reason,
+                            address,
+                            connection_id,
+                            ..
+                        } => {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                ?connection_id,
+                                ?address,
+                                ?reason,
+                                "handshake terminated",
+                            );
+
                             this.router_ctx
                                 .metrics_handle()
                                 .counter(NUM_HANDSHAKE_FAILURES)
@@ -1254,6 +1521,7 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
                             router_info,
                             serialized,
                             relay_tag_request,
+                            encryption,
                             ..
                         } => {
                             let router_id = context.router_id.clone();
@@ -1289,6 +1557,7 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
                                         TransportEvent::ConnectionEstablished {
                                             address: target,
                                             direction: Direction::Inbound,
+                                            encryption,
                                             router_id,
                                         },
                                     ));
@@ -1308,6 +1577,7 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
                             started: _,
                             external_address,
                             relay_tag,
+                            encryption,
                         } => {
                             let router_id = context.router_id.clone();
                             let remote_address = context.address;
@@ -1359,6 +1629,7 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
                             return Poll::Ready(Some(TransportEvent::ConnectionEstablished {
                                 address: remote_address,
                                 direction: Direction::Outbound,
+                                encryption,
                                 router_id,
                             }));
                         }

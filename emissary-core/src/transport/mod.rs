@@ -1151,6 +1151,7 @@ impl<R: Runtime> Future for TransportManager<R> {
                         address,
                         direction,
                         router_id,
+                        encryption,
                     })) => match direction {
                         Direction::Inbound if this.pending_connections.contains_key(&router_id) => {
                             tracing::debug!(
@@ -1191,6 +1192,7 @@ impl<R: Runtime> Future for TransportManager<R> {
                                 target: LOG_TARGET,
                                 %router_id,
                                 ?direction,
+                                %encryption,
                                 "connection established",
                             );
 
@@ -1240,7 +1242,34 @@ impl<R: Runtime> Future for TransportManager<R> {
                             }
 
                             this.router_ctx.profile_storage().dial_succeeded(&router_id);
-                            this.router_ctx.metrics_handle().gauge(NUM_CONNECTIONS).increment(1);
+                            this.router_ctx
+                                .metrics_handle()
+                                .gauge(NUM_ACTIVE_CONNECTIONS)
+                                .increment(1);
+                            this.router_ctx
+                                .metrics_handle()
+                                .counter(NUM_CONNECTIONS)
+                                .increment_with_label(
+                                    1,
+                                    "kind",
+                                    match (direction, encryption) {
+                                        (Direction::Inbound, EncryptionKind::X25519) => "ib-x25519",
+                                        (Direction::Inbound, EncryptionKind::MlKem512X25519) =>
+                                            "ib-ml-kem-512",
+                                        (Direction::Inbound, EncryptionKind::MlKem768X25519) =>
+                                            "ib-ml-kem-768",
+                                        (Direction::Inbound, EncryptionKind::MlKem1024X25519) =>
+                                            "ib-ml-kem-1024",
+                                        (Direction::Outbound, EncryptionKind::X25519) =>
+                                            "ob-x25519",
+                                        (Direction::Outbound, EncryptionKind::MlKem512X25519) =>
+                                            "ob-ml-kem-512",
+                                        (Direction::Outbound, EncryptionKind::MlKem768X25519) =>
+                                            "ob-ml-kem-768",
+                                        (Direction::Outbound, EncryptionKind::MlKem1024X25519) =>
+                                            "ob-ml-kem-1024",
+                                    },
+                                );
                             this.router_ctx.metrics_handle().counter(NUM_ACCEPTED).increment(1);
                             this.router_ctx
                                 .metrics_handle()
@@ -1292,7 +1321,7 @@ impl<R: Runtime> Future for TransportManager<R> {
                             Some(false) =>
                                 this.router_ctx.metrics_handle().gauge(NUM_IPV6).decrement(1),
                         }
-                        this.router_ctx.metrics_handle().gauge(NUM_CONNECTIONS).decrement(1);
+                        this.router_ctx.metrics_handle().gauge(NUM_ACTIVE_CONNECTIONS).decrement(1);
                         this.router_ctx
                             .metrics_handle()
                             .counter(CONNECTIONS_CLOSED)
@@ -1621,7 +1650,7 @@ mod tests {
             ipv6: !ipv4,
             publish: true,
             ml_kem: None,
-            disable_pq: None,
+            disable_pq: false,
             key: [0u8; 32],
             iv: [0u8; 16],
         }))
@@ -1694,7 +1723,7 @@ mod tests {
             ipv4,
             ipv6: !ipv4,
             ml_kem: None,
-            disable_pq: None,
+            disable_pq: false,
             publish: false,
             key: [0u8; 32],
             iv: [0u8; 16],
@@ -1753,6 +1782,8 @@ mod tests {
 
     async fn external_address_discovered_ssu2(ipv4: bool) {
         let ssu2 = Ssu2Config {
+            ml_kem: None,
+            disable_pq: false,
             port: 0,
             ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
             ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
@@ -1821,6 +1852,8 @@ mod tests {
 
     async fn external_address_discovered_ssu2_unpublished(ipv4: bool) {
         let context = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+            ml_kem: None,
+            disable_pq: false,
             port: 0,
             ipv4_host: None,
             ipv6_host: None,
@@ -1884,6 +1917,8 @@ mod tests {
 
     async fn new_external_address_discovered(ipv4: bool) {
         let ssu2_context = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+            ml_kem: None,
+            disable_pq: false,
             port: 0,
             ipv4_host: None,
             ipv6_host: None,
@@ -1904,7 +1939,7 @@ mod tests {
             ipv4_host: None,
             ipv6_host: None,
             ml_kem: None,
-            disable_pq: None,
+            disable_pq: false,
             publish: true,
             key: [0u8; 32],
             iv: [0u8; 16],
@@ -1998,7 +2033,7 @@ mod tests {
             ipv4,
             ipv6: !ipv4,
             ml_kem: None,
-            disable_pq: None,
+            disable_pq: false,
             publish: true,
             key: [0u8; 32],
             iv: [0u8; 16],
@@ -2067,6 +2102,8 @@ mod tests {
 
     async fn discovered_address_doesnt_match_published_address_ssu2(ipv4: bool) {
         let context = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+            ml_kem: None,
+            disable_pq: false,
             port: 0,
             ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
             ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
@@ -2212,11 +2249,13 @@ mod tests {
             events: VecDeque::from_iter([
                 TransportEvent::ConnectionEstablished {
                     address: "127.0.0.1:8888".parse().unwrap(),
+                    encryption: EncryptionKind::X25519,
                     router_id: router_id1.clone(),
                     direction: Direction::Inbound,
                 },
                 TransportEvent::ConnectionEstablished {
                     address: "127.0.0.1:8888".parse().unwrap(),
+                    encryption: EncryptionKind::X25519,
                     router_id: router_id1.clone(),
                     direction: Direction::Inbound,
                 },
@@ -2346,6 +2385,7 @@ mod tests {
         event_tx
             .send(TransportEvent::ConnectionEstablished {
                 address: "127.0.0.1:8888".parse().unwrap(),
+                encryption: EncryptionKind::X25519,
                 router_id: router_id.clone(),
                 direction: Direction::Inbound,
             })
@@ -2374,6 +2414,7 @@ mod tests {
         event_tx
             .send(TransportEvent::ConnectionEstablished {
                 address: "127.0.0.1:8888".parse().unwrap(),
+                encryption: EncryptionKind::X25519,
                 router_id: router_id.clone(),
                 direction: Direction::Inbound,
             })
@@ -2488,6 +2529,7 @@ mod tests {
         event_tx
             .send(TransportEvent::ConnectionEstablished {
                 address: "127.0.0.1:8888".parse().unwrap(),
+                encryption: EncryptionKind::X25519,
                 router_id: router_id.clone(),
                 direction: Direction::Inbound,
             })
@@ -2514,6 +2556,7 @@ mod tests {
         event_tx
             .send(TransportEvent::ConnectionEstablished {
                 address: "127.0.0.1:8888".parse().unwrap(),
+                encryption: EncryptionKind::X25519,
                 router_id: router_id.clone(),
                 direction: Direction::Inbound,
             })
@@ -2555,7 +2598,7 @@ mod tests {
             ipv4_host: Some("192.168.0.1".parse().unwrap()),
             ipv6_host: None,
             ml_kem: None,
-            disable_pq: None,
+            disable_pq: false,
             publish: true,
             key: [0u8; 32],
             iv: [0u8; 16],
@@ -2712,6 +2755,8 @@ mod tests {
         let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
         let (remote_router_info, _, _) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                ml_kem: None,
+                disable_pq: false,
                 port: 888u16,
                 ipv4_host: Some("127.0.0.1".parse().unwrap()),
                 ipv6_host: None,
@@ -2757,7 +2802,7 @@ mod tests {
             ipv4_host: Some("192.168.0.1".parse().unwrap()),
             ipv6_host: None,
             ml_kem: None,
-            disable_pq: None,
+            disable_pq: false,
             publish: true,
             key: [0u8; 32],
             iv: [0u8; 16],
@@ -2842,6 +2887,8 @@ mod tests {
     #[tokio::test]
     async fn simultaneous_outbound_ssu2_connections() {
         let config1 = Ssu2Config {
+            ml_kem: None,
+            disable_pq: false,
             port: 0,
             ipv4_host: Some("127.0.0.1".parse().unwrap()),
             ipv6_host: None,
@@ -2857,6 +2904,8 @@ mod tests {
             Ssu2Transport::<MockRuntime>::initialize(Some(config1)).await.unwrap();
         let (router_info1, static_key1, signing_key1) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                ml_kem: None,
+                disable_pq: false,
                 port: address1.unwrap().ssu2_ipv4_address().port(),
                 ipv4_host: Some("127.0.0.1".parse().unwrap()),
                 ipv6_host: None,
@@ -2874,6 +2923,8 @@ mod tests {
         let router_id1 = router_info1.identity.id();
 
         let config2 = Ssu2Config {
+            ml_kem: None,
+            disable_pq: false,
             port: 0,
             ipv4_host: Some("127.0.0.1".parse().unwrap()),
             ipv6_host: None,
@@ -2890,6 +2941,8 @@ mod tests {
 
         let (router_info2, static_key2, signing_key2) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                ml_kem: None,
+                disable_pq: false,
                 port: address2.unwrap().ssu2_ipv4_address().port(),
                 ipv4_host: Some("127.0.0.1".parse().unwrap()),
                 ipv6_host: None,
@@ -3161,6 +3214,7 @@ mod tests {
         manager.transports.push(Box::new(MockTransport {
             events: VecDeque::from_iter([TransportEvent::ConnectionEstablished {
                 address: "127.0.0.1:8888".parse().unwrap(),
+                encryption: EncryptionKind::X25519,
                 router_id: remote_router_id.clone(),
                 direction: Direction::Inbound,
             }]),
@@ -3202,6 +3256,8 @@ mod tests {
     async fn introducers_published() {
         let (router_info, static_key, signing_key) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                ml_kem: None,
+                disable_pq: false,
                 port: 888,
                 ipv4_host: None,
                 ipv6_host: None,
@@ -3453,6 +3509,8 @@ mod tests {
             };
 
             let ssu2_config = self.ssu2.is_some().then(|| Ssu2Config {
+                ml_kem: None,
+                disable_pq: false,
                 port: 8888,
                 ipv4_host: None,
                 ipv6_host: None,
@@ -3471,7 +3529,7 @@ mod tests {
                 ipv6: self.both || self.ipv6,
                 ipv4: self.both || !self.ipv6,
                 ml_kem: None,
-                disable_pq: None,
+                disable_pq: false,
                 publish: self.publish,
                 key: [0xaa; 32],
                 iv: [0xbb; 16],
@@ -3598,7 +3656,7 @@ mod tests {
                 ipv4,
                 ipv6: !ipv4,
                 ml_kem: None,
-                disable_pq: None,
+                disable_pq: false,
                 publish: true,
                 key: [0x11; 32],
                 iv: [0x22; 16],
@@ -3658,7 +3716,7 @@ mod tests {
                 ipv4: remote_ipv4,
                 ipv6: !remote_ipv4,
                 ml_kem: None,
-                disable_pq: None,
+                disable_pq: false,
                 publish: true,
                 key: [0x11; 32],
                 iv: [0x22; 16],
@@ -3718,6 +3776,8 @@ mod tests {
 
         let (router_info, ..) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                ml_kem: None,
+                disable_pq: false,
                 port: 9999,
                 ipv4_host: remote_ipv4.then_some("127.0.0.1".parse().unwrap()),
                 ipv6_host: (!remote_ipv4).then_some("::1".parse().unwrap()),
@@ -3781,7 +3841,7 @@ mod tests {
                 ipv6_host: None,
                 publish: true,
                 ml_kem: None,
-                disable_pq: None,
+                disable_pq: false,
                 key: [0x11; 32],
                 iv: [0x22; 16],
                 ipv4: true,
@@ -3841,6 +3901,8 @@ mod tests {
 
         let (router_info, ..) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                ml_kem: None,
+                disable_pq: false,
                 port: 9999,
                 ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
                 ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
@@ -3893,6 +3955,8 @@ mod tests {
 
         let (router_info, ..) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                ml_kem: None,
+                disable_pq: false,
                 port: 9999,
                 ipv4_host: Some("127.0.0.1".parse().unwrap()),
                 ipv6_host: None,
@@ -3954,6 +4018,8 @@ mod tests {
         let (introducer, introducer_router_id) = {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 9999,
                     ipv4_host: Some("127.0.0.1".parse().unwrap()),
                     ipv6_host: None,
@@ -3976,6 +4042,8 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 10000,
                     ipv4_host: None,
                     ipv6_host: None,
@@ -4053,6 +4121,8 @@ mod tests {
         let (introducer, introducer_router_id) = {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 9999,
                     ipv4_host: Some("127.0.0.1".parse().unwrap()),
                     ipv6_host: None,
@@ -4075,6 +4145,8 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 10000,
                     ipv4_host: None,
                     ipv6_host: None,
@@ -4188,6 +4260,7 @@ mod tests {
 
                 Poll::Ready(Some(TransportEvent::ConnectionEstablished {
                     address: "127.0.0.1:8888".parse().unwrap(),
+                    encryption: EncryptionKind::X25519,
                     direction: Direction::Outbound,
                     router_id,
                 }))
@@ -4197,6 +4270,8 @@ mod tests {
         let (introducer, introducer_router_id) = {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 9999,
                     ipv4_host: Some("127.0.0.1".parse().unwrap()),
                     ipv6_host: None,
@@ -4219,6 +4294,8 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 10000,
                     ipv4_host: None,
                     ipv6_host: None,
@@ -4337,6 +4414,8 @@ mod tests {
         let (introducer, introducer_router_id) = {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 9999,
                     ipv4_host: Some("127.0.0.1".parse().unwrap()),
                     ipv6_host: None,
@@ -4359,6 +4438,8 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 10000,
                     ipv4_host: None,
                     ipv6_host: None,
@@ -4477,6 +4558,7 @@ mod tests {
 
                 Poll::Ready(Some(TransportEvent::ConnectionEstablished {
                     address: "127.0.0.1:8888".parse().unwrap(),
+                    encryption: EncryptionKind::X25519,
                     direction: Direction::Outbound,
                     router_id,
                 }))
@@ -4486,6 +4568,8 @@ mod tests {
         let (introducer, introducer_router_id) = {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 9999,
                     ipv4_host: Some("127.0.0.1".parse().unwrap()),
                     ipv6_host: None,
@@ -4508,6 +4592,8 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 10000,
                     ipv4_host: None,
                     ipv6_host: None,
@@ -4621,6 +4707,7 @@ mod tests {
 
                 Poll::Ready(Some(TransportEvent::ConnectionEstablished {
                     address: "127.0.0.1:8888".parse().unwrap(),
+                    encryption: EncryptionKind::X25519,
                     direction: Direction::Outbound,
                     router_id,
                 }))
@@ -4630,6 +4717,8 @@ mod tests {
         let (_introducer, introducer_router_id) = {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 9999,
                     ipv4_host: Some("127.0.0.1".parse().unwrap()),
                     ipv6_host: None,
@@ -4652,6 +4741,8 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 10000,
                     ipv4_host: None,
                     ipv6_host: None,
@@ -4800,6 +4891,8 @@ mod tests {
         let (introducer, introducer_router_id) = {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 9999,
                     ipv4_host: Some("127.0.0.1".parse().unwrap()),
                     ipv6_host: None,
@@ -4822,6 +4915,8 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 10000,
                     ipv4_host: None,
                     ipv6_host: None,
@@ -4969,6 +5064,7 @@ mod tests {
 
                 Poll::Ready(Some(TransportEvent::ConnectionEstablished {
                     address: "127.0.0.1:8888".parse().unwrap(),
+                    encryption: EncryptionKind::X25519,
                     direction: Direction::Outbound,
                     router_id,
                 }))
@@ -4978,6 +5074,8 @@ mod tests {
         let (introducer, introducer_router_id) = {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 9999,
                     ipv4_host: Some("127.0.0.1".parse().unwrap()),
                     ipv6_host: None,
@@ -5000,6 +5098,8 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 10000,
                     ipv4_host: None,
                     ipv6_host: None,
@@ -5153,6 +5253,8 @@ mod tests {
             .map(|i| {
                 let (introducer, _, sigkey) = RouterInfoBuilder::default()
                     .with_ssu2(Ssu2Config {
+                        ml_kem: None,
+                        disable_pq: false,
                         port: 9999,
                         ipv4_host: Some("127.0.0.1".parse().unwrap()),
                         ipv6_host: None,
@@ -5176,6 +5278,8 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 10000,
                     ipv4_host: None,
                     ipv6_host: None,
@@ -5331,6 +5435,7 @@ mod tests {
                     Event::Success(router_id) =>
                         Poll::Ready(Some(TransportEvent::ConnectionEstablished {
                             address: "127.0.0.1:8888".parse().unwrap(),
+                            encryption: EncryptionKind::X25519,
                             direction: Direction::Outbound,
                             router_id,
                         })),
@@ -5342,6 +5447,8 @@ mod tests {
             .map(|i| {
                 let (introducer, _, sigkey) = RouterInfoBuilder::default()
                     .with_ssu2(Ssu2Config {
+                        ml_kem: None,
+                        disable_pq: false,
                         port: 9999,
                         ipv4_host: Some("127.0.0.1".parse().unwrap()),
                         ipv6_host: None,
@@ -5365,6 +5472,8 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 10000,
                     ipv4_host: None,
                     ipv6_host: None,
@@ -5521,6 +5630,7 @@ mod tests {
                     Event::Success(router_id) =>
                         Poll::Ready(Some(TransportEvent::ConnectionEstablished {
                             address: "127.0.0.1:8888".parse().unwrap(),
+                            encryption: EncryptionKind::X25519,
                             direction: Direction::Outbound,
                             router_id,
                         })),
@@ -5532,6 +5642,8 @@ mod tests {
             .map(|i| {
                 let (introducer, _, sigkey) = RouterInfoBuilder::default()
                     .with_ssu2(Ssu2Config {
+                        ml_kem: None,
+                        disable_pq: false,
                         port: 9999,
                         ipv4_host: Some("127.0.0.1".parse().unwrap()),
                         ipv6_host: None,
@@ -5555,6 +5667,8 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 10000,
                     ipv4_host: None,
                     ipv6_host: None,
@@ -5707,6 +5821,8 @@ mod tests {
             .map(|i| {
                 let (introducer, _, sigkey) = RouterInfoBuilder::default()
                     .with_ssu2(Ssu2Config {
+                        ml_kem: None,
+                        disable_pq: false,
                         port: 9999,
                         ipv4_host: Some("127.0.0.1".parse().unwrap()),
                         ipv6_host: None,
@@ -5730,6 +5846,8 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 10000,
                     ipv4_host: None,
                     ipv6_host: None,
@@ -5943,6 +6061,8 @@ mod tests {
             .map(|i| {
                 let (introducer, _, sigkey) = RouterInfoBuilder::default()
                     .with_ssu2(Ssu2Config {
+                        ml_kem: None,
+                        disable_pq: false,
                         port: 9999,
                         ipv4_host: Some("127.0.0.1".parse().unwrap()),
                         ipv6_host: None,
@@ -5966,6 +6086,8 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 10000,
                     ipv4_host: None,
                     ipv6_host: None,
@@ -6135,6 +6257,7 @@ mod tests {
                     Event::Success(router_id) =>
                         Poll::Ready(Some(TransportEvent::ConnectionEstablished {
                             address: "127.0.0.1:8888".parse().unwrap(),
+                            encryption: EncryptionKind::X25519,
                             direction: Direction::Outbound,
                             router_id,
                         })),
@@ -6146,6 +6269,8 @@ mod tests {
             .map(|i| {
                 let (introducer, _, sigkey) = RouterInfoBuilder::default()
                     .with_ssu2(Ssu2Config {
+                        ml_kem: None,
+                        disable_pq: false,
                         port: 9999,
                         ipv4_host: Some("127.0.0.1".parse().unwrap()),
                         ipv6_host: None,
@@ -6169,6 +6294,8 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 10000,
                     ipv4_host: None,
                     ipv6_host: None,
@@ -6805,6 +6932,8 @@ mod tests {
             .map(|i| {
                 let (introducer, _, sigkey) = RouterInfoBuilder::default()
                     .with_ssu2(Ssu2Config {
+                        ml_kem: None,
+                        disable_pq: false,
                         port: 8888 + i,
                         ipv4_host: (!ipv4).then_some("127.0.0.1".parse().unwrap()),
                         ipv6_host: ipv4.then_some("::1".parse().unwrap()),
@@ -6829,6 +6958,8 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 10000,
                     ipv4_host: Some("127.0.0.1".parse().unwrap()),
                     ipv6_host: Some("::1".parse().unwrap()),
@@ -6923,6 +7054,8 @@ mod tests {
         let ipv4_introducer = ipv4.then(|| {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 9999,
                     ipv4_host: Some("127.0.0.1".parse().unwrap()),
                     ipv6_host: None,
@@ -6944,6 +7077,8 @@ mod tests {
         let ipv6_introducer = (!ipv4).then(|| {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 9999,
                     ipv4_host: None,
                     ipv6_host: Some("::1".parse().unwrap()),
@@ -6967,6 +7102,8 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 10000,
                     ipv4_host: None,
                     ipv6_host: None,
@@ -7219,6 +7356,7 @@ mod tests {
                 if success {
                     Poll::Ready(Some(TransportEvent::ConnectionEstablished {
                         address: "127.0.0.1:8888".parse().unwrap(),
+                        encryption: EncryptionKind::X25519,
                         direction: Direction::Outbound,
                         router_id,
                     }))
@@ -7234,6 +7372,8 @@ mod tests {
         let (introducer, introducer_router_id) = {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 9999,
                     ipv4_host: Some("127.0.0.1".parse().unwrap()),
                     ipv6_host: None,
@@ -7256,6 +7396,8 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    ml_kem: None,
+                    disable_pq: false,
                     port: 10000,
                     ipv4_host: None,
                     ipv6_host: None,

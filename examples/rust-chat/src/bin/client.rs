@@ -93,7 +93,7 @@ impl Client {
                     key
                 },
                 ml_kem: Some(4),
-                disable_pq: Some(false),
+                disable_pq: false,
             }),
 
             // enable SAMv3 and bind TCP and UDP to random, OS-assigned ports

@@ -21,6 +21,7 @@ use crate::runtime::MetricType;
 use alloc::vec::Vec;
 
 // connection metrics
+pub const NUM_ACTIVE_CONNECTIONS: &str = "transport_active_connections_count";
 pub const NUM_CONNECTIONS: &str = "transport_connections_count";
 pub const NUM_REJECTED: &str = "transport_rejected_connections_count";
 pub const NUM_ACCEPTED: &str = "transport_accepted_connections_count";
@@ -76,10 +77,14 @@ pub fn register_metrics(mut metrics: Vec<MetricType>) -> Vec<MetricType> {
         name: CONNECTIONS_CLOSED,
         description: "how many connections have been closed",
     });
+    metrics.push(MetricType::Counter {
+        name: NUM_CONNECTIONS,
+        description: "total number of connections",
+    });
 
     // gauges
     metrics.push(MetricType::Gauge {
-        name: NUM_CONNECTIONS,
+        name: NUM_ACTIVE_CONNECTIONS,
         description: "number of active connections",
     });
     metrics.push(MetricType::Gauge {

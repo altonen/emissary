@@ -88,15 +88,18 @@ pub struct Ntcp2Config {
 
     /// Disable both inbound and outbound PQ connections.
     ///
-    /// PQ connections are enabled if `None`/`Some(false)`.
-    ///
     /// This option will be removed in the future.
-    pub disable_pq: Option<bool>,
+    pub disable_pq: bool,
 }
 
 /// SSU2 configuration.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Ssu2Config {
+    /// Disable both inbound and outbound PQ connections.
+    ///
+    /// This option will be removed in the future.
+    pub disable_pq: bool,
+
     /// SSU2 introduction key.
     pub intro_key: [u8; 32],
 
@@ -106,11 +109,17 @@ pub struct Ssu2Config {
     /// SSU2 listen address for IPv4.
     pub ipv4_host: Option<Ipv4Addr>,
 
+    /// IPv4 MTU.
+    pub ipv4_mtu: Option<usize>,
+
     /// Is IPv6 enabled.
     pub ipv6: bool,
 
     /// SSU2 listen address for IPv6.
     pub ipv6_host: Option<Ipv6Addr>,
+
+    /// IPv6 MTU.
+    pub ipv6_mtu: Option<usize>,
 
     /// SSU2 port.
     pub port: u16,
@@ -121,11 +130,10 @@ pub struct Ssu2Config {
     /// SSU2 static key.
     pub static_key: [u8; 32],
 
-    /// IPv4 MTU.
-    pub ipv4_mtu: Option<usize>,
-
-    /// IPv6 MTU.
-    pub ipv6_mtu: Option<usize>,
+    /// ML-KEM preference used for inbound PQ.
+    ///
+    /// If `None`, only x25519 is used.
+    pub ml_kem: Option<String>,
 }
 
 /// I2CP configuration.

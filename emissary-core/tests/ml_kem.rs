@@ -55,7 +55,7 @@ async fn make_router(
             ipv4: true,
             ipv6: true,
             ml_kem: None,
-            disable_pq: None,
+            disable_pq: false,
             publish: true,
         }),
         routers,

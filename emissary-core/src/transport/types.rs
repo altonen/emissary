@@ -23,7 +23,7 @@ use crate::{
 
 use futures::Stream;
 
-use core::{net::SocketAddr, time::Duration};
+use core::{fmt, net::SocketAddr, time::Duration};
 
 /// Termination reason.
 #[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
@@ -239,6 +239,33 @@ impl From<TerminationReason> for &'static str {
     }
 }
 
+/// Encryption kind for the connection,
+#[derive(Debug, Clone, Copy)]
+pub enum EncryptionKind {
+    /// X25519.
+    X25519,
+
+    /// ML-KEM-512-x25519
+    MlKem512X25519,
+
+    /// ML-KEM-768-x25519
+    MlKem768X25519,
+
+    /// ML-KEM-1024-x25519
+    MlKem1024X25519,
+}
+
+impl fmt::Display for EncryptionKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::X25519 => write!(f, "x25519"),
+            Self::MlKem512X25519 => write!(f, "ml-kem-512"),
+            Self::MlKem768X25519 => write!(f, "ml-kem-768"),
+            Self::MlKem1024X25519 => write!(f, "ml-kem-1024"),
+        }
+    }
+}
+
 /// Firewall status.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum FirewallStatus {
@@ -290,6 +317,9 @@ pub enum TransportEvent {
 
         /// ID of the connected router.
         router_id: RouterId,
+
+        /// Encryption kind.
+        encryption: EncryptionKind,
     },
 
     /// Connection closed to router.

@@ -287,6 +287,8 @@ impl TryInto<Option<crate::config::Ssu2Config>> for Ssu2Config {
                 .as_ref()
                 .map(|s| s.parse::<usize>().map_err(|_| String::from("Invalid SSU2 IPv6 MTU")))
                 .transpose()?,
+            disable_pq: Some(false),
+            ml_kem: Some("4".to_string()),
         }))
     }
 }
