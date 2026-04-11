@@ -18,7 +18,7 @@
 
 use anyhow::anyhow;
 use clap::Parser;
-use emissary_core::{router::Router, Config, Ntcp2Config, SamConfig};
+use emissary_core::{router::Router, Config, Ntcp2Config, SamConfig, Ssu2Config};
 use emissary_util::{reseeder::Reseeder, runtime::tokio::Runtime, su3::ReseedRouterInfo};
 use rand::prelude::*;
 use rust_chat::DEVNET_ID;
@@ -94,6 +94,35 @@ impl Client {
                 },
                 ml_kem: Some(4),
                 disable_pq: false,
+            }),
+
+            // create SSU2 config:
+            //   * allow SSU2 to bind itself to a random, OS-assigned port
+            //   * don't publish the router info to NetDb
+            //   * generate random static and intro keys for SSU2
+            //   * enable both IPv4 and IPv6
+            //   * enable PQ with preference: ML-KEM-768, ML-KEM-512
+            ssu2: Some(Ssu2Config {
+                intro_key: {
+                    let mut key = [0u8; 32];
+                    rng.fill_bytes(&mut key);
+                    key
+                },
+                ipv4: true,
+                ipv4_host: None,
+                ipv6: true,
+                ipv6_host: None,
+                port: 0,
+                publish: true,
+                static_key: {
+                    let mut key = [0u8; 32];
+                    rng.fill_bytes(&mut key);
+                    key
+                },
+                ipv4_mtu: None,
+                ipv6_mtu: None,
+                disable_pq: false,
+                ml_kem: Some("4,3".to_string()),
             }),
 
             // enable SAMv3 and bind TCP and UDP to random, OS-assigned ports

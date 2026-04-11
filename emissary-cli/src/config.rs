@@ -258,6 +258,17 @@ pub struct EmissaryConfig {
 
 impl EmissaryConfig {
     fn new<R: Runtime>() -> Self {
+        // generate random port
+        //
+        // the same port is used for both ntcp2 and ssu2
+        let port = loop {
+            let port: u16 = R::rng().random_range(9151..=30777);
+
+            if !RESERVED_PORTS.iter().any(|reserved_port| reserved_port == &port) {
+                break port;
+            }
+        };
+
         Self {
             address_book: Some(AddressBookConfig {
                 default: Some(String::from(
@@ -274,7 +285,7 @@ impl EmissaryConfig {
                 host: "127.0.0.1".to_string(),
                 port: 4444u16,
                 outproxy: None,
-                tunnel_config: Some(TunnelConfig::default()),
+                tunnel_config: None,
                 i2cp: None,
             }),
             socks_proxy: Some(SocksProxyConfig {
@@ -289,22 +300,26 @@ impl EmissaryConfig {
             }),
             metrics: Some(MetricsConfig { port: 7788 }),
             ntcp2: Some(Ntcp2Config {
-                port: {
-                    loop {
-                        let port: u16 = R::rng().random_range(9151..=30777);
-
-                        if !RESERVED_PORTS.iter().any(|reserved_port| reserved_port == &port) {
-                            break port;
-                        }
-                    }
-                },
+                port,
                 ipv4_host: None,
                 ipv6_host: None,
                 ipv4: Some(true),
                 ipv6: Some(true),
                 publish: Some(true),
+                disable_pq: None,
                 ml_kem: Some(4),
-                disable_pq: Some(false),
+            }),
+            ssu2: Some(Ssu2Config {
+                port,
+                ipv4: Some(true),
+                ipv4_host: None,
+                ipv4_mtu: None,
+                ipv6: Some(true),
+                ipv6_host: None,
+                ipv6_mtu: None,
+                publish: Some(true),
+                ml_kem: Some("4,3".to_string()),
+                disable_pq: None,
             }),
             port_forwarding: Some(PortForwardingConfig {
                 nat_pmp: true,
@@ -334,7 +349,6 @@ impl EmissaryConfig {
             insecure_tunnels: false,
             log: None,
             net_id: None,
-            ssu2: None,
             client_tunnels: None,
             client_tunnel_options: None,
             server_tunnels: None,

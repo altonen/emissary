@@ -2,15 +2,15 @@
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/eepnet/emissary/blob/master/LICENSE) [![Crates.io](https://img.shields.io/crates/v/emissary-core.svg)](https://crates.io/crates/emissary-core) [![docs.rs](https://img.shields.io/docsrs/emissary-core.svg)](https://docs.rs/emissary-core/latest/emissary_core/)
 
-![UI](docs/router-ui.webp)
+**`emissary` is a lightweight and embeddable [I2P](https://i2p.net/) router**
 
-`emissary` is a lightweight and embeddable [I2P](https://geti2p.net/) router
+![UI](docs/router-ui.webp)
 
 ### Features
 
 * Transports:
   * NTCP2
-  * SSU2 (experimental)
+  * SSU2
 * Client protocols:
   * I2CP
   * SAMv3

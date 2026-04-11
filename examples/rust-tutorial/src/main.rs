@@ -21,7 +21,7 @@ use std::sync::Arc;
 use anyhow::anyhow;
 use emissary_core::{
     router::{ProtocolAddressInfo, Router},
-    Config, Ntcp2Config, SamConfig, TransitConfig,
+    Config, Ntcp2Config, SamConfig, Ssu2Config, TransitConfig,
 };
 use emissary_util::{
     port_mapper::{PortMapper, PortMapperConfig},
@@ -67,8 +67,8 @@ async fn main() -> anyhow::Result<()> {
         mut routers,
         signing_key,
         static_key,
-        ssu2_intro_key: _,
-        ssu2_static_key: _,
+        ssu2_intro_key,
+        ssu2_static_key,
     } = storage.load().await;
 
     // reseed if there are no routers
@@ -112,7 +112,7 @@ async fn main() -> anyhow::Result<()> {
             // this allows the embedded router to accept incoming NTCP2 connections
             publish: true,
 
-            // set host to `None` and use NAT-PMP/UPnP to resolve external address of the router
+            // set host to `None` and use NAT-PMP/UPnP/SSU2 to resolve external address
             ipv4_host: None,
             ipv6_host: None,
 
@@ -123,6 +123,33 @@ async fn main() -> anyhow::Result<()> {
             // enable PQ and use ML-KEM-768
             ml_kem: Some(4),
             disable_pq: false,
+        }),
+
+        // enable SSU2
+        ssu2: Some(Ssu2Config {
+            // provide the SSU2 intro and static keys that were read from the disk
+            intro_key: ssu2_intro_key,
+            static_key: ssu2_static_key,
+
+            // enable IPv4 and IPv6 and use UPnP/NAT-PMP/SSU2 to resolve external address
+            ipv4: true,
+            ipv4_host: None,
+            ipv6: true,
+            ipv6_host: None,
+
+            // bind SSU2 to same port as NTCP2
+            port: 25515,
+
+            // publish the SSU2 address to NetDb
+            publish: true,
+
+            // use default MTU for both IPv4 and IPv6
+            ipv4_mtu: None,
+            ipv6_mtu: None,
+
+            // enable PQ and use ML-KEM-768
+            disable_pq: false,
+            ml_kem: Some("4".to_string()),
         }),
 
         // enable SAMv3 and bind TCP and UDP to random, OS-assigned ports

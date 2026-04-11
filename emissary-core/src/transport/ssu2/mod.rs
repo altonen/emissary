@@ -336,11 +336,6 @@ impl<R: Runtime> Ssu2Transport<R> {
             return Ok((None, None, None));
         };
 
-        tracing::warn!(
-            target: LOG_TARGET,
-            "ssu2 support is experimental and not recommend for general use",
-        );
-
         // create ipv4 address if it was enabled
         let (ipv4_socket, ipv4_socket_address, ipv4_address) = Self::configure_socket(
             &config,

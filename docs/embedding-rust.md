@@ -72,7 +72,7 @@ The `routerInfo` files received in the reseed bundle should be stored on disk so
 
 ## Configuring the router
 
-Below is an example router configuration. NTCP2 is enabled as the transport protocol and `publish` is set to `true`, meaning the router is accepting inbound connections on the NTCP2 transport. `host` is set `None` and later on `PortMapper` is used to discover the external address of the router.
+Below is an example router configuration. NTCP2 and SSU2 are enabled as the transport protocols and `publish` is set to `true`, meaning the router is accepting inbound connections on the transports. `ipv4_host` and `ipv6_host` are set to `None` and later on `PortMapper` is used to discover the external address of the router. ML-KEM-768 is enabled on both transports for inbound connections.
 
 SAMv3 server is enabled and its TCP and UDP sockets are bound to random, OS-assigned ports. The actual ports can be found by calling `Router::protocol_address_info()`.
 
@@ -85,7 +85,26 @@ let config = Config {
         key: ntcp2_key,
         iv: ntcp2_iv,
         publish: true,
-        host: None,
+        ipv4_host: None,
+        ipv6_host: None,
+        ipv4: true,
+        ipv6: true,
+        ml_kem: Some(4),
+        disable_pq: false,
+    }),
+    ssu2: Some(Ssu2Config {
+        intro_key: ssu2_intro_key,
+        static_key: ssu2_static_key,
+        ipv4: true,
+        ipv4_host: None,
+        ipv6: true,
+        ipv6_host: None,
+        port: 25515,
+        publish: true,
+        ipv4_mtu: None,
+        ipv6_mtu: None,
+        disable_pq: false,
+        ml_kem: Some("4".to_string()),
     }),
     samv3_config: Some(SamConfig {
         tcp_port: 0,
