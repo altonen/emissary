@@ -138,6 +138,7 @@ pub struct SocksProxyConfig {
     pub port: u16,
     pub host: String,
     pub i2cp: Option<I2cpOptions>,
+    pub outproxy: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -276,7 +277,12 @@ impl EmissaryConfig {
                 tunnel_config: Some(TunnelConfig::default()),
                 i2cp: None,
             }),
-            socks_proxy: None,
+            socks_proxy: Some(SocksProxyConfig {
+                port: 4447,
+                host: "127.0.0.1".to_string(),
+                i2cp: None,
+                outproxy: None,
+            }),
             i2cp: Some(I2cpConfig {
                 port: 7654,
                 host: None,
@@ -821,6 +827,7 @@ impl Config {
                 SocksProxyOptions {
                     socks_proxy_port,
                     socks_proxy_host,
+                    socks_outproxy,
                 },
             ) => {
                 if let Some(port) = socks_proxy_port {
@@ -830,18 +837,24 @@ impl Config {
                 if let Some(host) = &socks_proxy_host {
                     config.host = host.clone();
                 }
+
+                if let Some(outproxy) = &socks_outproxy {
+                    config.outproxy = Some(outproxy.clone());
+                }
             }
             (
                 None,
                 SocksProxyOptions {
                     socks_proxy_port: Some(port),
                     socks_proxy_host: Some(host),
+                    socks_outproxy,
                 },
             ) => {
                 self.socks_proxy = Some(SocksProxyConfig {
                     port: *port,
                     host: host.clone(),
                     i2cp: None,
+                    outproxy: socks_outproxy.clone(),
                 });
             }
             _ => {}
@@ -989,6 +1002,7 @@ mod tests {
             socks_proxy: SocksProxyOptions {
                 socks_proxy_port: None,
                 socks_proxy_host: None,
+                socks_outproxy: None,
             },
             transit: TransitOptions {
                 max_transit_tunnels: None,

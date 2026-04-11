@@ -212,6 +212,7 @@ impl From<&Option<crate::config::HttpProxyConfig>> for HttpProxyConfig {
 pub struct SocksProxyConfig {
     port: Option<String>,
     host: Option<String>,
+    outproxy: Option<String>,
     enabled: bool,
 }
 
@@ -222,6 +223,10 @@ impl SocksProxyConfig {
 
     fn host(&self) -> &str {
         self.host.as_ref().map_or("", |host| host.as_str())
+    }
+
+    fn outproxy(&self) -> &str {
+        self.outproxy.as_ref().map_or("", |outproxy| outproxy.as_str())
     }
 
     pub fn enabled(&self) -> bool {
@@ -238,6 +243,10 @@ impl SocksProxyConfig {
 
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
+    }
+
+    pub fn set_outproxy(&mut self, outproxy: String) {
+        self.outproxy = Some(outproxy);
     }
 }
 
@@ -265,6 +274,11 @@ impl TryInto<Option<crate::config::SocksProxyConfig>> for SocksProxyConfig {
                 host
             },
             i2cp: None,
+            outproxy: match self.outproxy {
+                None => None,
+                Some(host) if host.is_empty() => None,
+                Some(host) => Some(host.clone()),
+            },
         }))
     }
 }
@@ -275,12 +289,14 @@ impl From<&Option<crate::config::SocksProxyConfig>> for SocksProxyConfig {
             Some(value) => Self {
                 port: Some(value.port.to_string()),
                 host: Some(value.host.clone()),
+                outproxy: value.outproxy.clone(),
                 enabled: true,
             },
             None => Self {
                 port: None,
                 host: None,
                 enabled: false,
+                outproxy: None,
             },
         }
     }
@@ -525,6 +541,29 @@ impl RouterUi {
                     TextInput::new("Host", self.socks_proxy.host())
                         .size(15)
                         .on_input(Message::SocksHostChanged)
+                        .padding(10)
+                        .style(
+                            |_theme: &Theme, _status: _| iced::widget::text_input::Style {
+                                border: Border {
+                                    radius: Radius::from(6.0),
+                                    width: 1.0,
+                                    color: Color::from_rgb8(28, 36, 49),
+                                },
+                                background: iced::Background::Color(iced::Color::from_rgb8(
+                                    0x37, 0x41, 0x51,
+                                )),
+                                icon: Color::WHITE,
+                                placeholder: Color::from_rgb8(0x9b, 0xa2, 0xae),
+                                value: Color::from_rgb8(0xf3, 0xf3, 0xf2),
+                                selection: Color::from_rgb8(0x9b, 0xa2, 0xae),
+                            },
+                        ),
+                )
+                .push(Text::new("Outproxy").size(15).color(Color::from_rgb8(0x9b, 0xa2, 0xae)))
+                .push(
+                    TextInput::new("Outproxy", self.socks_proxy.outproxy())
+                        .size(15)
+                        .on_input(Message::SocksOutproxyHostChanged)
                         .padding(10)
                         .style(
                             |_theme: &Theme, _status: _| iced::widget::text_input::Style {

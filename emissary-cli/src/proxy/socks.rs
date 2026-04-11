@@ -34,6 +34,9 @@ const SOCKSV5_TCP: u8 = 0x01;
 /// SOCKSv5 Domain for TCP CONNECT.
 const SOCKSV5_DOMAIN: u8 = 0x03;
 
+/// SOCKSv5 success.
+const SOCKSV5_SUCCESS: u8 = 0x00;
+
 /// SOCKSv5 proxy.
 pub struct SocksProxy {
     /// Pending `TCP CONNECT` futures.
@@ -41,6 +44,9 @@ pub struct SocksProxy {
 
     /// TCP listener for the server.
     listener: TcpListener,
+
+    /// Outproxy, if specified.
+    outproxy: Option<String>,
 
     /// SAMv3 streaming session for the SOCKS proxy.
     session: Session<style::Stream>,
@@ -61,6 +67,7 @@ impl SocksProxy {
 
         Ok(Self {
             futures: JoinSet::new(),
+            outproxy: config.outproxy,
             listener,
             session,
         })
@@ -114,6 +121,125 @@ impl SocksProxy {
         Ok((stream, target, port))
     }
 
+    /// Handle parsed `TCP CONNECT` for `host:port`.
+    ///
+    /// If `host` is not an .i2p address and an outproxy was enabled, the request is routed there.
+    async fn handle_tcp_connect(&mut self, mut stream: TcpStream, host: String, port: u16) {
+        tracing::trace!(
+            target: LOG_TARGET,
+            %host,
+            %port,
+            "connect to remote destination"
+        );
+
+        // route connection request to sam server
+        if host.ends_with(".i2p") {
+            let future = self.session.connect_detached_with_options(
+                &host,
+                StreamOptions {
+                    dst_port: port,
+                    ..Default::default()
+                },
+            );
+
+            tokio::spawn(async move {
+                match future.await {
+                    Err(error) => {
+                        tracing::debug!(
+                            target: LOG_TARGET,
+                            ?error,
+                            "failed to connect to destination",
+                        );
+                        Err(error)
+                    }
+                    Ok(mut i2p_stream) =>
+                        tokio::io::copy_bidirectional(&mut i2p_stream, &mut stream)
+                            .await
+                            .map_err(From::from),
+                }
+            });
+
+            return;
+        }
+
+        // route non-.i2p host connections to outproxy if enabled
+        let outproxy = match &self.outproxy {
+            Some(outproxy) => {
+                tracing::trace!(
+                    target: LOG_TARGET,
+                    %host,
+                    %port,
+                    %outproxy,
+                    "connecting to outproxy",
+                );
+
+                outproxy.clone()
+            }
+            None => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    %host,
+                    %port,
+                    "tried to connect to non-.i2p host but outproxy not enabled",
+                );
+                return;
+            }
+        };
+
+        tokio::spawn(async move {
+            async fn connect(
+                mut stream: TcpStream,
+                host: &str,
+                port: u16,
+                outproxy: String,
+            ) -> anyhow::Result<()> {
+                let mut upstream = TcpStream::connect(outproxy).await?;
+
+                // handshake
+                //
+                // version 5, 1 method, no auth
+                upstream.write_all(&[0x05, 0x01, 0x00]).await?;
+                let mut handshake_res = [0u8; 2];
+                upstream.read_exact(&mut handshake_res).await?;
+
+                if handshake_res[1] != SOCKSV5_SUCCESS {
+                    anyhow::bail!("upstream proxy requires authentication");
+                }
+
+                // send connect request for `host`
+                //
+                // version 5, connect, reserved, domain
+                let mut request = vec![0x05, 0x01, 0x00, 0x03];
+                request.push(host.len() as u8);
+                request.extend_from_slice(host.as_bytes());
+                request.extend_from_slice(&port.to_be_bytes());
+                upstream.write_all(&request).await?;
+
+                let mut response = [0u8; 10];
+                upstream.read_exact(&mut response).await?;
+
+                if response[1] != SOCKSV5_SUCCESS {
+                    anyhow::bail!("upstream failed to connect")
+                }
+
+                tokio::io::copy_bidirectional(&mut stream, &mut upstream)
+                    .await
+                    .map(|_| ())
+                    .map_err(From::from)
+            }
+
+            if let Err(error) = connect(stream, &host, port, outproxy).await {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    %host,
+                    %port,
+                    ?error,
+                    "outproxy connection failed"
+                )
+            }
+        });
+    }
+
     /// Run event loop of [`SocksProxy`].
     pub async fn run(mut self) -> anyhow::Result<()> {
         loop {
@@ -134,40 +260,7 @@ impl SocksProxy {
                         %error,
                         "failed to parse TCP CONNECT",
                     ),
-                    Some(Ok(Ok((mut stream, host, port)))) => {
-                        tracing::trace!(
-                            target: LOG_TARGET,
-                            %host,
-                            %port,
-                            "connect to remote destination"
-                        );
-
-                        let future = self.session.connect_detached_with_options(
-                            &host,
-                            StreamOptions {
-                                dst_port: port,
-                                ..Default::default()
-                            },
-                        );
-
-                        tokio::spawn(async move {
-                            match future.await {
-                                Err(error) => {
-                                    tracing::debug!(
-                                        target: LOG_TARGET,
-                                        ?error,
-                                        "failed to connect to destination",
-                                    );
-                                    Err(error)
-                                }
-                                Ok(mut i2p_stream) => {
-                                    tokio::io::copy_bidirectional(&mut i2p_stream, &mut stream)
-                                        .await
-                                        .map_err(From::from)
-                                }
-                            }
-                        });
-                    }
+                    Some(Ok(Ok((stream, host, port)))) => self.handle_tcp_connect(stream, host, port).await,
                 }
             }
         }
@@ -179,8 +272,10 @@ mod tests {
     use super::*;
     use fast_socks5::{
         client::{Config, Socks5Stream},
+        server::Socks5ServerProtocol,
         socks4::client::Socks4Stream,
     };
+    use std::time::Duration;
     use tokio::io::{AsyncBufReadExt, BufReader};
 
     /// Fake SAMv3 server.
@@ -255,6 +350,7 @@ mod tests {
                 port: 0,
                 host: "127.0.0.1".to_string(),
                 i2cp: None,
+                outproxy: None,
             },
             sam_port,
         )
@@ -286,6 +382,7 @@ mod tests {
                 port: 0,
                 host: "127.0.0.1".to_string(),
                 i2cp: None,
+                outproxy: None,
             },
             sam_port,
         )
@@ -316,6 +413,7 @@ mod tests {
                 port: 0,
                 host: "127.0.0.1".to_string(),
                 i2cp: None,
+                outproxy: None,
             },
             sam_port,
         )
@@ -351,6 +449,7 @@ mod tests {
                 port: 0,
                 host: "127.0.0.1".to_string(),
                 i2cp: None,
+                outproxy: None,
             },
             sam_port,
         )
@@ -381,6 +480,7 @@ mod tests {
                 port: 0,
                 host: "127.0.0.1".to_string(),
                 i2cp: None,
+                outproxy: None,
             },
             sam_port,
         )
@@ -394,5 +494,64 @@ mod tests {
                 .await
                 .is_err()
         )
+    }
+
+    #[tokio::test]
+    async fn outproxy_works() {
+        let sam_port = {
+            let sam = SamServer::new().await;
+            let port = sam.listener.local_addr().unwrap().port();
+            tokio::spawn(sam.run());
+
+            port
+        };
+
+        // create mock socksv5 server
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+
+        let handle = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (_stream, command, address) = Socks5ServerProtocol::accept_no_auth(stream)
+                .await
+                .unwrap()
+                .read_command()
+                .await
+                .unwrap();
+
+            match command {
+                fast_socks5::Socks5Command::TCPConnect => address.to_string(),
+                _ => panic!("invalid command"),
+            }
+        });
+
+        let proxy = SocksProxy::new(
+            SocksProxyConfig {
+                port: 0,
+                host: "127.0.0.1".to_string(),
+                i2cp: None,
+                outproxy: Some(format!("{}:{}", address.ip().to_string(), address.port())),
+            },
+            sam_port,
+        )
+        .await
+        .unwrap();
+        let address = proxy.listener.local_addr().unwrap();
+        tokio::spawn(proxy.run());
+
+        let _stream = Socks5Stream::connect(
+            address,
+            "http://host.onion".to_string(),
+            1337,
+            Config::default(),
+        )
+        .await
+        .unwrap();
+
+        let destination = tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("no timeout")
+            .expect("to succeed");
+        assert_eq!(destination, "http://host.onion:1337".to_string());
     }
 }

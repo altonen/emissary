@@ -121,6 +121,7 @@ pub enum Message {
     HttpEnabled(bool),
     SocksPortChanged(String),
     SocksHostChanged(String),
+    SocksOutproxyHostChanged(String),
     SocksEnabled(bool),
     FloodfillEnabled(bool),
     TransitTunnelCountChanged(String),

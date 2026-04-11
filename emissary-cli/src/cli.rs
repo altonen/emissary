@@ -127,6 +127,10 @@ pub struct SocksProxyOptions {
     /// Defaults to 127.0.0.1
     #[arg(long, value_name = "HOST")]
     pub socks_proxy_host: Option<String>,
+
+    /// SOCKS outproxy.
+    #[arg(long, value_name = "OUTPROXY")]
+    pub socks_outproxy: Option<String>,
 }
 
 #[derive(Args, Default)]

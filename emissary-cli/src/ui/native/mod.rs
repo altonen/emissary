@@ -885,6 +885,12 @@ impl RouterUi {
 
                 Task::none()
             }
+            Message::SocksOutproxyHostChanged(data) => {
+                self.socks_proxy.set_outproxy(data);
+                self.settings_status = SettingsStatus::Idle(self.active_settings_tab);
+
+                Task::none()
+            }
             Message::SocksEnabled(enabled) => {
                 self.socks_proxy.set_enabled(enabled);
                 self.settings_status = SettingsStatus::Idle(self.active_settings_tab);
