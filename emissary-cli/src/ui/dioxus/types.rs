@@ -16,6 +16,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use std::time::Instant;
+
 /// Selected view in the sidebar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarSelection {
@@ -30,4 +32,52 @@ pub enum SidebarSelection {
 pub enum RouterStatus {
     Active,
     ShuttingDown,
+}
+
+/// Router state.
+#[derive(Clone, Copy)]
+pub struct RouterState {
+    /// Inbound bandwidth.
+    pub inbound_bandwidth: usize,
+
+    /// Number of connected routers.
+    pub num_routers: usize,
+
+    /// Number of transit tunnels.
+    pub num_transit_tunnels: usize,
+
+    /// Number of tunnel build failures.
+    pub num_tunnel_build_failures: usize,
+
+    /// Number of tunnels built.
+    pub num_tunnels_built: usize,
+
+    /// Outbound bandwidth.
+    pub outbound_bandwidth: usize,
+
+    /// Router ID
+    pub router_id: &'static str,
+
+    /// Should router ID be displayed.
+    pub show_router_id: bool,
+
+    /// Router uptime.
+    pub uptime: Instant,
+}
+
+impl RouterState {
+    /// Create new `RouterState`.
+    pub fn new(router_id: &'static str) -> Self {
+        Self {
+            inbound_bandwidth: 0usize,
+            num_routers: 0usize,
+            num_transit_tunnels: 0usize,
+            num_tunnel_build_failures: 0usize,
+            num_tunnels_built: 0usize,
+            outbound_bandwidth: 0usize,
+            router_id,
+            show_router_id: false,
+            uptime: Instant::now(),
+        }
+    }
 }

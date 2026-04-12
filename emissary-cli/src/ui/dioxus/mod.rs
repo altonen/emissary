@@ -18,11 +18,12 @@
 
 use crate::ui::dioxus::{
     style::{global_css, DESKTOP_HEAD},
-    types::{RouterStatus, SidebarSelection},
+    types::{RouterState, RouterStatus, SidebarSelection},
 };
 
 use dioxus::prelude::*;
 
+mod dashboard;
 mod sidebar;
 mod style;
 mod svg;
@@ -38,6 +39,9 @@ struct AppState {
 
     /// Router status.
     status: RouterStatus,
+
+    /// Router state.
+    state: RouterState,
 }
 
 impl AppState {
@@ -47,12 +51,44 @@ impl AppState {
             sidebar_collapsed: false,
             view: SidebarSelection::Dashboard,
             status: RouterStatus::Active,
+            state: RouterState::new("router-id"),
         }
     }
 
     /// Is the router active.
     fn is_active(&self) -> bool {
         std::matches!(self.status, RouterStatus::Active)
+    }
+
+    /// Get `RouterState`.
+    fn router_state(&self) -> RouterState {
+        self.state
+    }
+
+    /// Get network status.
+    ///
+    /// Returns the network status string and a color representing that status.
+    fn network_status(&self) -> (&'static str, &'static str) {
+        match &self.status {
+            RouterStatus::ShuttingDown => ("Shutting Down", "#e34234"),
+            RouterStatus::Active =>
+                if self.state.num_routers < 10 {
+                    ("Connecting", "#f59e0b")
+                } else {
+                    let total = self.state.num_tunnels_built + self.state.num_tunnel_build_failures;
+                    let rate = if total > 0 {
+                        self.state.num_tunnels_built as f64 / total as f64
+                    } else {
+                        1.0
+                    };
+
+                    if rate < 0.30 {
+                        ("Degraded", "#f97316")
+                    } else {
+                        ("Active", "#22c55e")
+                    }
+                },
+        }
     }
 }
 
@@ -70,13 +106,23 @@ pub fn start() {
 
 #[component]
 fn App() -> Element {
-    let _state = use_context_provider(move || Signal::new(AppState::new()));
+    let state = use_context_provider(move || Signal::new(AppState::new()));
+    let view = state.read().view;
 
     rsx! {
         style { { global_css() } }
         div {
             class: "app",
             sidebar::Sidebar { }
+            div { class: "main-content",
+                match view {
+                    SidebarSelection::Dashboard => rsx! { dashboard::Dashboard {} },
+                    SidebarSelection::Bandwidth => rsx! {},
+                    SidebarSelection::HiddenServices => rsx! {},
+                    SidebarSelection::Settings => rsx! {},
+                    SidebarSelection::AddressBook => rsx! {},
+                }
+            }
         }
     }
 }

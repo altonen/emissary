@@ -223,6 +223,76 @@ body {
 }
 .power-btn.shutting-down { background: #d32f2f; }
 .power-btn svg { width: 20px; height: 20px; fill: #fff; }
+
+.main-content {
+  flex: 1;
+  background: var(--em-bg-deep);
+  overflow-y: auto;
+  height: 100vh;
+}
+
+.page {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.page-title { display: flex; flex-direction: column; gap: 5px; }
+.page-title h1 { font-size: 26px; color: var(--em-text-inv); font-weight: 600; }
+.page-title p  { font-size: 17px; color: var(--em-text-2); }
+
+.status-cards { display: flex; gap: 10px; padding: 5px; }
+
+.status-card {
+  flex: 1;
+  background: var(--em-bg-surface);
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--em-border);
+}
+
+.status-card-icon {
+  width: 50px;
+  height: 50px;
+  background: var(--em-accent);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.status-card-icon svg { width: 28px; height: 28px; fill: #fff; }
+
+.status-card-info { display: flex; flex-direction: column; gap: 2px; }
+.status-card-title { font-size: 15px; color: var(--em-text-3); }
+.status-card-value { font-size: 20px; color: var(--em-text-inv); font-weight: 200; }
+.status-card-value-row { display: flex; align-items: center; gap: 6px; }
+.status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+
+.bottom-panels { display: flex; gap: 10px; padding: 5px; }
+
+.panel {
+  flex: 1;
+  background: var(--em-bg-surface);
+  border-radius: 12px;
+  border: 1px solid var(--em-border);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.panel-title { font-size: 21px; color: var(--em-text-inv); text-align: center; margin-bottom: 6px; }
+.panel-row   { display: flex; align-items: center; gap: 8px; }
+.panel-label { color: var(--em-text-3); font-size: 13px; flex: 1; }
+.panel-value { color: var(--em-text-3); font-size: 13px; }
+.panel-value.enabled  { color: var(--em-success); }
+.panel-value.disabled { color: var(--em-danger); }
+
+.router-id-btn { background: none; border: none; color: var(--em-link); cursor: pointer; font-size: 13px; padding: 0; }
 "#;
 
 /// Script to remove right-click menu from desktop view.

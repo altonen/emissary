@@ -68,29 +68,26 @@ impl fmt::Display for Status {
 
 /// Calculate bandwidth.
 #[allow(dead_code)]
-fn calculate_bandwidth(bandwidth: f64) -> (f64, String) {
+fn calculate_bandwidth(bandwidth: f64) -> (f64, &'static str) {
     if bandwidth < 1000f64 {
-        return (bandwidth, "B".to_string());
+        return (bandwidth, "B");
     }
 
     if bandwidth < 1000f64 * 1000f64 {
-        return (bandwidth / 1000f64, "KB".to_string());
+        return (bandwidth / 1000f64, "KB");
     }
 
     if bandwidth < 1000f64 * 1000f64 * 1000f64 {
-        return (bandwidth / (1000f64 * 1000f64), "MB".to_string());
+        return (bandwidth / (1000f64 * 1000f64), "MB");
     }
 
     if bandwidth < 1000f64 * 1000f64 * 1000f64 {
-        return (bandwidth / (1000f64 * 1000f64), "GB".to_string());
+        return (bandwidth / (1000f64 * 1000f64), "GB");
     }
 
     if bandwidth < 1000f64 * 1000f64 * 1000f64 * 1000f64 {
-        return (bandwidth / (1000f64 * 1000f64 * 1000f64), "GB".to_string());
+        return (bandwidth / (1000f64 * 1000f64 * 1000f64), "GB");
     }
 
-    (
-        bandwidth / (1000f64 * 1000f64 * 1000f64 * 1000f64),
-        "TB".to_string(),
-    )
+    (bandwidth / (1000f64 * 1000f64 * 1000f64 * 1000f64), "TB")
 }
