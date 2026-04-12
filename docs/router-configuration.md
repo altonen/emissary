@@ -49,51 +49,43 @@ Run `emissary-cli --help` to show the built-in help message with all available o
 <table>
   <thead>
     <tr>
-      <th>Option</th>
       <th>Config file</th>
-      <th style="width: 26%">CLI</th>
+      <th style="width: 32%">CLI</th>
       <th>Description</th>
     </tr>
   </thead>
   <tbody>
     <tr>
-      <td>Base path</td>
       <td>-</td>
       <td><code>-b, --base-path &lt;PATH&gt;</code></td>
-      <td>HTTP proxy port. (default: 4444)</td>
+      <td>Path where router files are stored. (default: <i>~/.emissary</i>)</td>
     </tr>
     <tr>
-      <td>Logging</td>
       <td><code>log</code></td>
       <td><code>-l, --log &lt;LOG&gt;</code></td>
       <td>Logging targets. By default, <code>INFO</code> is enabled for all logging targets</td>
     </tr>
     <tr>
-      <td>Floodfill</td>
       <td><code>floodfill</code></td>
       <td><code>--floodfill</code></td>
       <td>Run the router as a floodfill. (default: false)</td>
     </tr>
     <tr>
-      <td>Insecure tunnels</td>
       <td><code>insecure_tunnels</code></td>
       <td><code>--insecure-tunnels</code></td>
       <td>Allow insecure tunnels. Disables /16 subnet and maximum tunnel participation checks. Should only be used for testing. (default: false)</td>
     </tr>
     <tr>
-      <td>Capabilities</td>
       <td><code>caps</code></td>
       <td><code>--caps &lt;CAPS&gt;</code></td>
-      <td>Router capabilities</td>
+      <td>Router capabilities, not useful outside of testing</td>
     </tr>
     <tr>
-      <td>Network ID</td>
       <td><code>net_id</code></td>
       <td><code>--net-id &lt;NET-ID&gt;</code></td>
       <td>Network ID the router belongs to (default: 2)</td>
     </tr>
     <tr>
-      <td>Overwrite config</td>
       <td>-</td>
       <td><code>--ovewrite-config</code></td>
       <td>Overwrite existing configuration file with defaults.</td>
@@ -105,14 +97,26 @@ Run `emissary-cli --help` to show the built-in help message with all available o
 
 **Config file section:** `[ntcp2]`
 
-| Option | Config file | CLI | Description |
-|--------|-------------|-----|-------------|
-| Port | `port` | - | Port to listen for incoming NTCP2 connections. (default: random port between 9151-30777) |
-| IPv4 host | `ipv4_host` | - | Public IPv4 address for incoming connections. Can be auto-discovered via SSU2/UPnP/NAT-PMP if left empty. |
-| IPv6 host | `ipv6_host` | - | Public IPv6 address for incoming connections. Can be auto-discovered via SSU2/UPnP/NAT-PMP if left empty. |
-| Enable IPv4 | `ipv4` | - | Enable IPv4 (default: true) |
-| Enable IPv6 | `ipv6` | - | Enable IPv6 (default: true) |
-| Publish | `publish` | - | Publish the address(es) in router info for incoming connections. (default: true) |
+| Config file | CLI | Description |
+|-------------|-----|-------------|
+| `ipv4` | - | Enable IPv4 (default: true) |
+| `ipv4_host` | - | Public IPv4 address for incoming connections. Can be auto-discovered via SSU2/UPnP/NAT-PMP if left empty. |
+| `ipv6` | - | Enable IPv6 (default: true) |
+| `ipv6_host` | - | Public IPv6 address for incoming connections. Can be auto-discovered via SSU2 if left empty. |
+| `port` | - | Port to listen for incoming NTCP2 connections. (default: random port between 9151-30777) |
+| `publish` | - | Publish the address(es) in router info for incoming connections. (default: true) |
+| `disable_pq` | - | Disable PQ connections (default: false) |
+| `ml_kem` | - | ML-KEM preference for inbound connections (default: 4) |
+
+**ML-KEM preference (`ml_kem`)**
+
+`ml_kem` allows specifying an ML-KEM variant used for inbound connections. If `ml_kem` is not specified in `[ntcp2]`, the router will only accept x25519 connections.
+
+| Number | Protocol |
+|--------|----------|
+| `3` | ML-KEM-512 |
+| `4` | ML-KEM-768 |
+| `5` | ML-KEM-1024 |
 
 Example:
 
@@ -123,46 +127,146 @@ ipv4_host = "203.0.113.50"
 publish = true
 ipv4 = true
 ipv6 = false
+
+# use ml-kem-512 for inbound connections
+ml_kem = 3
 ```
 
 ### SSU2
 
-> [!warning]
-> SSU2 is still in development and is not recommended for general use
-
 **Config file section:** `[ssu2]`
 
-| Option | Config file | CLI | Description |
-|--------|-------------|-----|-------------|
-| Port | `port` | - | Port to listen for incoming SSU2 connections. |
-| Host | `host` | - | Public IPv4 address for incoming connections. Can be auto-discovered via UPnP/NAT-PMP if left empty. |
-| Publish | `publish` | - | Publish the address in router info for incoming connections. (default: false) |
+| Config file | CLI | Description |
+|-------------|-----|-------------|
+| `ipv4` | - | Enable IPv4 (default: true) |
+| `ipv4_host` | - | Public IPv4 address for incoming connections. Can be auto-discovered via SSU2/UPnP/NAT-PMP if left empty. |
+| `ipv4_mtu` | - | IPv4 MTU (default: 1500) |
+| `ipv6` | - | Enable IPv6 (default: true) |
+| `ipv6_host` | - | Public IPv6 address for incoming connections. Can be auto-discovered via SSU2 if left empty. |
+| `ipv6_mtu` | - | IPv6 MTU (default: 1500) |
+| `port` | - | Port to listen for incoming SSU2 connections. (default: random port between 9151-30777) |
+| `publish` | - | Publish the address(es) in router info for incoming connections. (default: true) |
+| `disable_pq` | - | Disable PQ connections (default: false) |
+| `ml_kem` | - | ML-KEM preferences for inbound connections (default: `4,3`) |
+
+**ML-KEM preference (`ml_kem`)**
+
+`ml_kem` allows specifying ML-KEM variants used for inbound connections. If `ml_kem` is not specified in `[ssu2]`, the router will only accept x25519 connections. If two numbers are given, the order specifies preference.
+
+| Number | Protocol |
+|--------|----------|
+| `3` | ML-KEM-512 only |
+| `3,4` | ML-KEM-512, ML-KEM-768 |
+| `4` | ML-KEM-768 |
+| `4,3` | ML-KEM-768, ML-KEM-512 |
+
 
 Example:
 
 ```toml
 [ssu2]
-port = 25516
+port = 25515
+ipv4 = false
+ipv6_mtu = 1300
 publish = true
+
+# use ml-kem-512, ml-kem-768
+ml_kem = "3,4"
 ```
 
-::: info
-IPv6 is currently **not** supported for either transport.
-:::
+### Bandwidth
+
+
+**Config file section:** `[bandwidth]`
+
+<table>
+  <thead>
+    <tr>
+      <th>Config file</th>
+      <th style="width: 22%">CLI</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>bandwidth</code></td>
+      <td><code>--bandwidth</code></td>
+      <td>Bandwidth limit in bytes (default: 1000000)</td>
+    </tr>
+    <tr>
+      <td><code>share_ratio</code></td>
+      <td><code>--share-ratio</code></td>
+      <td>How much of <code>bandwdith</code> can be allocated for transit traffic (default: 90%)</td>
+    </tr>
+  </tbody>
+</table>
+
+
+Example:
+
+```toml
+[bandwidth]
+bandwidth = 5000000 # 5 MB/s
+
+# only 50% allocated for transit (2.5 MB/s)
+share_ratio = 0.5
+```
 
 ### HTTP proxy
 
 **Config file section:** `[http-proxy]`
 
-| Option | Config file | CLI | Description |
-|--------|-------------|-----|-------------|
-| Port | `port` | `--http-proxy-port` | HTTP proxy port. (default: 4444) |
-| Host | `host` | `--http-proxy-host` | HTTP proxy bind address. (default: 127.0.0.1) |
-| Outproxy | `outproxy` | `--http-outproxy` | HTTP outproxy for clearnet access. |
-| Inbound tunnel length | `inbound_len` | - | Length of inbound tunnels. (default: 3) |
-| Inbound tunnel count | `inbound_count` | - | Number of inbound tunnels. (default: 2) |
-| Outbound tunnel length | `outbound_len` | - | Length of outbound tunnels. (default: 3) |
-| Outbound tunnel count | `outbound_count` | - | Number of outbound tunnels. (default: 2) |
+<table>
+  <thead>
+    <tr>
+      <th>Config file</th>
+      <th style="width: 26%">CLI</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>port</code></td>
+      <td><code>--http-proxy-port</code></td>
+      <td>HTTP proxy port. (default: 4444)</td>
+    </tr>
+    <tr>
+      <td><code>host</code></td>
+      <td><code>--http-proxy-host</code></td>
+      <td>HTTP proxy bind address. (default: 127.0.0.1)</td>
+    </tr>
+    <tr>
+      <td><code>outproxy</code></td>
+      <td><code>--http-outproxy</code></td>
+      <td>HTTP outproxy</td>
+    </tr>
+    <tr>
+      <td><code>inbound_len</code></td>
+      <td>-</td>
+      <td>Length of inbound tunnels. (default: 3)</td>
+    </tr>
+    <tr>
+      <td><code>inbound_count</code></td>
+      <td>-</td>
+      <td>Number of inbound tunnels. (default: 2)</td>
+    </tr>
+    <tr>
+      <td><code>outbound_len</code></td>
+      <td>-</td>
+      <td>Length of outbound tunnels. (default: 3)</td>
+    </tr>
+    <tr>
+      <td><code>outbound_count</code></td>
+      <td>-</td>
+      <td>Number of outbound tunnels. (default: 2)</td>
+    </tr>
+    <tr>
+      <td><code>i2cp.leaseSetEncType</code></td>
+      <td>-</td>
+      <td>Encryption type (default: <code>6,4</code>)</td>
+    </tr>
+  </tbody>
+</table>
 
 Example:
 
@@ -172,7 +276,13 @@ port = 4444
 host = "127.0.0.1"
 outproxy = "http://exit.stormycloud.i2p"
 
-# Optional
+# outproxy also accepts an optional port
+# outproxy = "http://outproxy.i2p:1337"
+
+# use x25519 only
+i2cp.leaseSetEncType = "4"
+
+# optional
 inbound_len = 3
 inbound_count = 2
 outbound_len = 3
@@ -190,7 +300,6 @@ HTTP proxy requires SAM to be enabled.
 <table>
   <thead>
     <tr>
-      <th>Option</th>
       <th>Config file</th>
       <th style="width: 35%">CLI</th>
       <th>Description</th>
@@ -198,16 +307,24 @@ HTTP proxy requires SAM to be enabled.
   </thead>
   <tbody>
     <tr>
-      <td>Port</td>
       <td><code>port</code></td>
       <td><code>--socks-proxy-port &lt;PORT&gt;</code></td>
       <td>SOCKS proxy port. (default: 4447)</td>
     </tr>
     <tr>
-      <td>Host</td>
       <td><code>host</code></td>
       <td><code>--socks-proxy-host &lt;HOST&gt;</code></td>
       <td>SOCKS proxy bind address. (default: 127.0.0.1)</td>
+    </tr>
+    <tr>
+      <td><code>outproxy</code></td>
+      <td><code>--socks-outproxy &lt;HOST&gt;</code></td>
+      <td>SOCKS outproxy</td>
+    </tr>
+    <tr>
+      <td><code>i2cp.leaseSetEncType</code></td>
+      <td>-</td>
+      <td>Encryption type (default: <code>6,4</code>)</td>
     </tr>
   </tbody>
 </table>
@@ -218,6 +335,7 @@ Example:
 [socks-proxy]
 port = 4447
 host = "127.0.0.1"
+outproxy = "127.0.0.1:9050"
 ```
 
 ::: info
@@ -228,11 +346,11 @@ SOCKS proxy requires SAM to be enabled.
 
 **Config file section:** `[sam]`
 
-| Option | Config file | CLI | Description |
-|--------|-------------|-----|-------------|
-| TCP Port | `tcp_port` | - | SAM TCP port. (default: 7656) |
-| UDP Port | `udp_port` | - | SAM UDP port for datagrams. (default: 7655) |
-| Host | `host` | - | SAM bind address. (default: 127.0.0.1) |
+| Config file | CLI | Description |
+|-------------|-----|-------------|
+| `tcp_port` | - | SAM TCP port. (default: 7656) |
+| `udp_port` | - | SAM UDP port for datagrams. (default: 7655) |
+| `host` | - | SAM bind address. (default: 127.0.0.1) |
 
 Example:
 
@@ -247,10 +365,10 @@ host = "127.0.0.1"
 
 **Config file section:** `[i2cp]`
 
-| Option | Config file | CLI | Description |
-|--------|-------------|-----|-------------|
-| Port | `port` | - | I2CP port. (default: 7654) |
-| Host | `host` | - | I2CP bind address. (default: 127.0.0.1) |
+| Config file | CLI | Description |
+|-------------|-----|-------------|
+| `port` | - | I2CP port. (default: 7654) |
+| `host` | - | I2CP bind address. (default: 127.0.0.1) |
 
 Example:
 
@@ -264,10 +382,10 @@ host = "127.0.0.1"
 
 **Config file section:** `[address-book]`
 
-| Option | Config file | CLI | Description |
-|--------|-------------|-----|-------------|
-| Default | `default` | - | Default address book subscription URL for initial bootstrap. |
-| Subscriptions | `subscriptions` | - | List of additional address book subscription URLs. |
+| Config file | CLI | Description |
+|-------------|-----|-------------|
+| `default` | - | Default address book subscription URL for initial bootstrap. |
+| `subscriptions` | - | List of additional address book subscription URLs. |
 
 Example:
 
@@ -288,33 +406,28 @@ Address book requires SAM to be enabled. If disabled, `.i2p` host lookups are no
 <table>
   <thead>
     <tr>
-      <th>Option</th>
       <th>Config file</th>
-      <th style="width: 35%">CLI</th>
+      <th style="width: 45%">CLI</th>
       <th>Description</th>
     </tr>
   </thead>
   <tbody>
     <tr>
-      <td>Inbound length</td>
       <td><code>inbound_len</code></td>
       <td><code>--exploratory-inbound-len &lt;NUM&gt;</code></td>
       <td>Length of inbound exploratory tunnels.</td>
     </tr>
     <tr>
-      <td>Inbound count</td>
       <td><code>inbound_count</code></td>
       <td><code>--exploratory-inbound-count &lt;NUM&gt;</code></td>
       <td>Number of inbound exploratory tunnels.</td>
     </tr>
     <tr>
-      <td>Outbound length</td>
       <td><code>outbound_len</code></td>
       <td><code>--exploratory-outbound-len &lt;NUM&gt;</code></td>
       <td>Length of outbound exploratory tunnels.</td>
     </tr>
     <tr>
-      <td>Outbound count</td>
       <td><code>outbound_count</code></td>
       <td><code>--exploratory-outbound-count &lt;NUM&gt;</code></td>
       <td>Number of outbound exploratory tunnels.</td>
@@ -341,21 +454,18 @@ Transit tunnels allow your router to participate in the I2P network by relaying 
 <table>
   <thead>
     <tr>
-      <th>Option</th>
       <th>Config file</th>
-      <th style="width: 36%">CLI</th>
+      <th style="width: 37%">CLI</th>
       <th>Description</th>
     </tr>
   </thead>
   <tbody>
     <tr>
-      <td>Max tunnels</td>
       <td><code>max_tunnels</code></td>
       <td><code>--max-transit-tunnels &lt;NUM&gt;</code></td>
       <td>Maximum number of transit tunnels. (default: 1000)</td>
     </tr>
     <tr>
-      <td>Disable</td>
       <td>-</td>
       <td><code>--disable-transit-tunnels</code></td>
       <td>Disable transit tunnel participation entirely. Router will publish <code>G</code> caps.</td>
@@ -383,7 +493,6 @@ Automatic port forwarding and external address discovery.
 <table>
   <thead>
     <tr>
-      <th>Option</th>
       <th style="width: 24%">Config file</th>
       <th style="width: 28%">CLI</th>
       <th>Description</th>
@@ -391,31 +500,26 @@ Automatic port forwarding and external address discovery.
   </thead>
   <tbody>
     <tr>
-      <td>UPnP</td>
       <td><code>upnp = true</code></td>
       <td>-</td>
       <td>Enable UPnP. (default: true)</td>
     </tr>
     <tr>
-      <td>NAT-PMP</td>
       <td><code>nat_pmp = true</code></td>
       <td>-</td>
       <td>Enable NAT-PMP. (default: true)</td>
     </tr>
     <tr>
-      <td>Name</td>
       <td><code>name</code></td>
       <td><code>--upnp-name &lt;NAME&gt;</code></td>
       <td></td>
     </tr>
     <tr>
-      <td>Disable UPnP</td>
       <td><code>upnp = false</code></td>
       <td><code>--disable-upnp</code></td>
       <td>Disable UPnP via CLI.</td>
     </tr>
     <tr>
-      <td>Disable NAT-PMP</td>
       <td><code>nat_pmp = false</code></td>
       <td><code>--disable-nat-pmp</code></td>
       <td>Disable NAT-PMP via CLI.</td>
@@ -443,39 +547,33 @@ NAT-PMP is tried first and if it's not available, UPnP is used as a fallback. If
 <table>
   <thead>
     <tr>
-      <th>Option</th>
-      <th style="width: 24%">Config file</th>
-      <th style="width: 33%">CLI</th>
+      <th>Config file</th>
+      <th style="width: 35%">CLI</th>
       <th>Description</th>
     </tr>
   </thead>
   <tbody>
     <tr>
-      <td>Hosts</td>
       <td><code>hosts</code></td>
-      <td><code>--reseed-hosts &lt;HOST&gt;...</code></td>
+      <td><code>--reseed-hosts &lt;HOST&gt;,...</code></td>
       <td>Comma-separated list of reseed host URLs.</td>
     </tr>
     <tr>
-      <td>Threshold</td>
       <td><code>reseed_threshold</code></td>
       <td><code>--reseed-threshold &lt;NUM&gt;</code></td>
       <td>Minimum number of known routers before requesting reseed. (default: 25)</td>
     </tr>
     <tr>
-      <td>Disable</td>
       <td>-</td>
       <td><code>--disable-reseed</code></td>
       <td>Don't reseed even if there aren't enough routers.</td>
     </tr>
     <tr>
-      <td>Force</td>
       <td>-</td>
       <td><code>--force-reseed</code></td>
       <td>Forcibly reseed even if there are enough routers.</td>
     </tr>
     <tr>
-      <td>Disable force IPv4</td>
       <td>-</td>
       <td><code>--disable-force-ipv4</code></td>
       <td>Disable forcing IPv4 when connecting to reseed hosts.</td>
@@ -502,21 +600,18 @@ See [the debugging guide](debugging.md#prometheus-and-grafana) for more informat
 <table>
   <thead>
     <tr>
-      <th>Option</th>
       <th>Config file</th>
-      <th style="width: 40%">CLI</th>
+      <th style="width: 42%">CLI</th>
       <th>Description</th>
     </tr>
   </thead>
   <tbody>
     <tr>
-      <td>Port</td>
       <td><code>port</code></td>
-      <td><code>--metrics-server-port &lt;PORT&gt;...</code></td>
+      <td><code>--metrics-server-port &lt;PORT&gt;</code></td>
       <td>Metrics server port. (default: 7788)</td>
     </tr>
     <tr>
-      <td>Disable</td>
       <td>-</td>
       <td><code>--disable-metrics</code></td>
       <td>Disable metrics server</td>
@@ -537,17 +632,27 @@ Client tunnels forward local ports to remote I2P destinations.
 
 **Config file section:** `[[client-tunnels]]`
 
-| Option | Config file | Description |
-|--------|-------------|-------------|
-| Name | `name` | Unique name for the tunnel. |
-| Address | `address` | Local bind address. |
-| Port | `port` | Local port to listen on. |
-| Destination | `destination` | Remote I2P destination (`.i2p` or `.b32.i2p`). |
-| Destination port | `destination_port` | Remote destination port. |
+| Config file | Description |
+|-------------|-------------|
+| `name` | Unique name for the tunnel. |
+| `address` | Local bind address. |
+| `port` | Local port to listen on. |
+| `destination` | Remote I2P destination (`.i2p` or `.b32.i2p`). |
+| `destination_port` | Remote destination port. |
+
+Client tunnels share the same destination and tunnel pool and they can be configured with `[client-tunnel-options]`
+
+| Config file | Description |
+|-------------|-------------|
+| `i2cp.leaseSetEncType` | Encryption type (default: `6,4`) |
 
 Example:
 
 ```toml
+[client-tunnel-options]
+# use ml-kem-768 only
+i2cp.leaseSetEncType = "6"
+
 [[client-tunnels]]
 name = "irc"
 address = "127.0.0.1"
@@ -566,11 +671,12 @@ Server tunnels expose local services to the I2P network.
 
 **Config file section:** `[[server-tunnels]]`
 
-| Option | Config file | Description |
-|--------|-------------|-------------|
-| Name | `name` | Unique name for the tunnel. |
-| Port | `port` | Local port where the service is running. |
-| Destination path | `destination_path` | Path to the destination keys file. |
+| Config file | Description |
+|-------------|-------------|
+| `name` | Unique name for the tunnel. |
+| `port` | Local port where the service is running. |
+| `destination_path` | Path to the destination keys file. |
+| `i2cp.leaseSetEncType` | Encryption type (default: `6,4`) |
 
 Example:
 
@@ -591,11 +697,11 @@ Server tunnels require SAM to be enabled. Each tunnel must have a unique name, p
 
 Starts a local webserver on the specified `port`.
 
-| Option | Config file | Description |
-|--------|-------------|-------------|
-| Theme | `theme` | Options: `light`, `dark`. (default: dark). |
-| Refresh interval | `refresh_interval` | How often the web UI should update. (default: 5). |
-| Port | `port` | The port to start the webserver on. (default: 7657) |
+| Config file | Description |
+|-------------|-------------|
+| `theme` | Options: `light`, `dark`. (default: dark). |
+| `refresh_interval` | How often the web UI should update. (default: 5). |
+| `port` | The port to start the webserver on. (default: 7657) |
 
 Example:
 

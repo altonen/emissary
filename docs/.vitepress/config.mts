@@ -43,7 +43,7 @@ export default defineConfig({
     ],
 
     socialLinks: [
-      { icon: "github", link: "https://github.com/altonen/emissary" }
+      { icon: "github", link: "https://github.com/eepnet/emissary" }
     ],
   }
 })
