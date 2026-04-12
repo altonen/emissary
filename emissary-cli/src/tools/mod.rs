@@ -21,7 +21,7 @@ use clap::{ArgGroup, Subcommand};
 mod base64;
 mod devnet;
 
-#[cfg(any(feature = "native-ui", feature = "web-ui"))]
+#[cfg(any(feature = "native-ui", feature = "web-ui", feature = "dioxus"))]
 mod router_ui_dev;
 
 /// Logging target for the file.
@@ -99,7 +99,7 @@ pub enum RouterCommand {
     /// Start the router UI (either native or web) in development mode.
     ///
     /// The actual router is not started and the router UI is fed mock data.
-    #[cfg(any(feature = "native-ui", feature = "web-ui"))]
+    #[cfg(any(feature = "native-ui", feature = "web-ui", feature = "dioxus"))]
     RouterUiDev,
 }
 
@@ -138,7 +138,7 @@ impl RouterCommand {
                 num_routers,
                 path,
             } => devnet::spawn_network(num_floodfills, num_routers, path).await,
-            #[cfg(any(feature = "native-ui", feature = "web-ui"))]
+            #[cfg(any(feature = "native-ui", feature = "web-ui", feature = "dioxus"))]
             RouterCommand::RouterUiDev => router_ui_dev::run().await,
         }
 

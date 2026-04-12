@@ -27,7 +27,11 @@ pub mod native;
 #[cfg(feature = "web-ui")]
 pub mod web;
 
+#[cfg(feature = "dioxus")]
+pub mod dioxus;
+
 /// Router status.
+#[allow(dead_code)]
 enum Status {
     /// Router is active.
     Active,
@@ -63,6 +67,7 @@ impl fmt::Display for Status {
 }
 
 /// Calculate bandwidth.
+#[allow(dead_code)]
 fn calculate_bandwidth(bandwidth: f64) -> (f64, String) {
     if bandwidth < 1000f64 {
         return (bandwidth, "B".to_string());

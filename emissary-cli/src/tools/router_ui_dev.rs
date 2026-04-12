@@ -16,7 +16,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#![cfg(any(feature = "native-ui", feature = "web-ui"))]
+#![cfg(any(feature = "native-ui", feature = "web-ui", feature = "dioxus"))]
+#![allow(unused)]
 
 use crate::ui;
 
@@ -117,7 +118,7 @@ impl RouterState {
 ///
 /// The actual router is not started and the router UI is fed mock data.
 pub async fn run() {
-    let (shutdown_tx, _shutdown_rx) = tokio::sync::mpsc::channel(1);
+    let (shutdown_tx, _shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
     let metrics_handle = TokioRuntime::register_metrics(vec![], None);
     let (manager, subscriber, handle) = EventManager::<TokioRuntime>::new(None, metrics_handle);
 
@@ -152,5 +153,11 @@ pub async fn run() {
     #[cfg(feature = "web-ui")]
     {
         ui::web::RouterUi::new(subscriber, None, 1, shutdown_tx).run().await;
+    }
+
+    #[cfg(feature = "dioxus")]
+    {
+        // dioxus::launch(ui::dioxus::App)
+        ui::dioxus::start();
     }
 }
