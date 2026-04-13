@@ -16,9 +16,12 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::ui::{
-    calculate_bandwidth,
-    dioxus::{svg::*, types::RouterState, AppState},
+use crate::{
+    config::PortForwardingConfig,
+    ui::{
+        calculate_bandwidth,
+        dioxus::{svg::*, types::RouterState, AppState},
+    },
 };
 
 use dioxus::prelude::*;
@@ -80,13 +83,34 @@ pub fn Dashboard() -> Element {
         0
     };
 
-    // TODO: add proper config support
-    let (http_text, http_class) = (format!("Port {}", 4444), "panel-value enabled");
-    let (socks_text, socks_class) = (String::from("Disabled"), "panel-value disabled");
-    let (i2cp_text, i2cp_class) = (format!("Port {}", 7654), "panel-value enabled");
-    let (sam_tcp_text, sam_tcp_class) = (format!("Port {}", 7656), "panel-value enabled");
-    let (sam_udp_text, sam_udp_class) = (format!("Port {}", 7655), "panel-value enabled");
-    let (pf_text, pf_class) = (String::from("NAT-PMP"), "panel-value enabled");
+    let (http_text, http_class) = match &state.read().config.http_proxy {
+        None => (String::from("Disabled"), "panel-value disabled"),
+        Some(config) => (format!("Port {}", config.port), "panel-value enabled"),
+    };
+    let (socks_text, socks_class) = match &state.read().config.socks_proxy {
+        None => (String::from("Disabled"), "panel-value disabled"),
+        Some(config) => (format!("Port {}", config.port), "panel-value enabled"),
+    };
+    let (i2cp_text, i2cp_class) = match &state.read().config.i2cp {
+        None => (String::from("Disabled"), "panel-value disabled"),
+        Some(config) => (format!("Port {}", config.port), "panel-value enabled"),
+    };
+    let (sam_tcp_text, sam_tcp_class) = match &state.read().config.sam {
+        None => (String::from("Disabled"), "panel-value disabled"),
+        Some(config) => (format!("Port {}", config.tcp_port), "panel-value enabled"),
+    };
+    let (sam_udp_text, sam_udp_class) = match &state.read().config.sam {
+        None => (String::from("Disabled"), "panel-value disabled"),
+        Some(config) => (format!("Port {}", config.udp_port), "panel-value enabled"),
+    };
+    let (pf_text, pf_class) = match &state.read().config.port_forwarding {
+        None => (String::from("Off"), "panel-value disabled"),
+        Some(PortForwardingConfig { nat_pmp: true, .. }) =>
+            (String::from("NAT-PMP"), "panel-value enabled"),
+        Some(PortForwardingConfig { upnp: true, .. }) =>
+            (String::from("UPnP"), "panel-value enabled"),
+        _ => (String::from("Off"), "panel-value disabled"),
+    };
 
     rsx! {
         div {
