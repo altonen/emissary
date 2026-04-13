@@ -157,7 +157,26 @@ pub async fn run() {
 
     #[cfg(feature = "dioxus")]
     {
-        // dioxus::launch(ui::dioxus::App)
-        ui::dioxus::start();
+        use crate::{cli::Arguments, config::Config};
+        use emissary_core::primitives::RouterId;
+        use emissary_util::storage::Storage;
+        use tempfile::tempdir;
+
+        let dir = tempdir().expect("to succeed");
+        let base_path = dir.path().to_owned();
+        let storage = Storage::new::<TokioRuntime>(Some(base_path.clone())).await.unwrap();
+        let mut config =
+            Config::parse::<TokioRuntime>(&Arguments::default(), &storage).await.unwrap();
+
+        println!("configuration path = {}", base_path.display());
+
+        ui::dioxus::start(
+            subscriber,
+            config.config.take().unwrap(),
+            base_path,
+            None,
+            RouterId::from(TokioRuntime::rng().random::<[u8; 32]>()),
+            shutdown_tx,
+        );
     }
 }

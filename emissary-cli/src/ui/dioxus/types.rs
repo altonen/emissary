@@ -81,3 +81,21 @@ impl RouterState {
         }
     }
 }
+
+#[derive(Default)]
+pub struct Traffic {
+    /// Previous inbound bandwidth.
+    pub prev_inbound_bandwidth: usize,
+
+    /// Previous outbound bandwidth.
+    pub prev_outbound_bandwidth: usize,
+
+    /// Peak traffict.
+    pub peak_traffic: usize,
+
+    /// Transit inbound bandwidth.
+    pub transit_inbound_bandwidth: usize,
+
+    /// Transit inbound bandwidth.
+    pub transit_outbound_bandwidth: usize,
+}

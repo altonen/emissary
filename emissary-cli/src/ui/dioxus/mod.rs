@@ -16,12 +16,28 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::ui::dioxus::{
-    style::{global_css, DESKTOP_HEAD},
-    types::{RouterState, RouterStatus, SidebarSelection},
+use crate::{
+    address_book::AddressBookHandle,
+    config::EmissaryConfig,
+    ui::dioxus::{
+        style::{global_css, DESKTOP_HEAD},
+        types::{RouterState, RouterStatus, SidebarSelection, Traffic},
+    },
 };
 
 use dioxus::prelude::*;
+use emissary_core::{
+    crypto::base64_encode,
+    events::{Event, EventSubscriber},
+    primitives::RouterId,
+};
+use tokio::sync::mpsc::Sender;
+
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 mod dashboard;
 mod sidebar;
@@ -30,28 +46,62 @@ mod svg;
 mod types;
 
 /// Application state.
+#[allow(unused)]
 struct AppState {
+    /// Address book handle, if enabled.
+    address_book_handle: Option<Arc<AddressBookHandle>>,
+
+    /// Router base path.
+    base_path: PathBuf,
+
+    /// Router configuration.
+    config: EmissaryConfig,
+
+    /// Event subscriber for the router.
+    events: EventSubscriber,
+
+    /// TX channel for sending shutdown signal.
+    shutdown_tx: Sender<()>,
+
     /// Has the sidebar been collapsed.
     sidebar_collapsed: bool,
 
-    /// Currently active view.
-    view: SidebarSelection,
+    /// Router state.
+    state: RouterState,
 
     /// Router status.
     status: RouterStatus,
 
-    /// Router state.
-    state: RouterState,
+    /// Traffic info.
+    traffic: Traffic,
+
+    /// Currently active view.
+    view: SidebarSelection,
 }
 
 impl AppState {
     /// Create new `AppState`.
-    fn new() -> Self {
+    fn new(options: AppOptions) -> Self {
+        let AppOptions {
+            events,
+            config,
+            base_path,
+            address_book_handle,
+            router_id,
+            shutdown_tx,
+        } = options;
+
         Self {
+            address_book_handle,
+            base_path,
+            config,
+            events,
+            shutdown_tx,
             sidebar_collapsed: false,
-            view: SidebarSelection::Dashboard,
+            state: RouterState::new(base64_encode(router_id.to_vec()).leak()),
             status: RouterStatus::Active,
-            state: RouterState::new("router-id"),
+            traffic: Default::default(),
+            view: SidebarSelection::Dashboard,
         }
     }
 
@@ -90,9 +140,81 @@ impl AppState {
                 },
         }
     }
+
+    /// Advance the state of the router UI.
+    ///
+    /// Poll the event channel and update router state.
+    fn tick(&mut self) {
+        while let Some(event) = self.events.router_status() {
+            match event {
+                Event::RouterStatus {
+                    transit,
+                    transport,
+                    tunnel,
+                    ..
+                } => {
+                    self.state.num_transit_tunnels = transit.num_tunnels;
+                    self.state.num_routers = transport.num_connected_routers;
+                    self.state.num_tunnels_built = tunnel.num_tunnels_built;
+                    self.state.num_tunnel_build_failures = tunnel.num_tunnel_build_failures;
+
+                    self.traffic.prev_inbound_bandwidth = self.state.inbound_bandwidth;
+                    self.traffic.prev_outbound_bandwidth = self.state.outbound_bandwidth;
+
+                    let inbound_diff =
+                        transport.inbound_bandwidth.saturating_sub(self.state.inbound_bandwidth);
+                    let outbound_diff =
+                        transport.outbound_bandwidth.saturating_sub(self.state.outbound_bandwidth);
+                    let total_diff = inbound_diff + outbound_diff;
+                    if total_diff > self.traffic.peak_traffic {
+                        self.traffic.peak_traffic = total_diff;
+                    }
+                    self.state.inbound_bandwidth = transport.inbound_bandwidth;
+                    self.state.outbound_bandwidth = transport.outbound_bandwidth;
+
+                    self.traffic.transit_inbound_bandwidth = transit.inbound_bandwidth;
+                    self.traffic.transit_outbound_bandwidth = transit.outbound_bandwidth;
+                }
+                Event::ShuttingDown =>
+                    if matches!(self.status, RouterStatus::Active) {
+                        self.status = RouterStatus::ShuttingDown;
+                    },
+                Event::ShutDown => {}
+            }
+        }
+    }
 }
 
-pub fn start() {
+/// `App` properties.
+struct AppOptions {
+    /// Event subscriber for the router.
+    events: EventSubscriber,
+
+    /// Router configuration.
+    config: EmissaryConfig,
+
+    /// Router base path.
+    base_path: PathBuf,
+
+    /// Address book handle, if enabled.
+    address_book_handle: Option<Arc<AddressBookHandle>>,
+
+    /// Local router ID.
+    router_id: RouterId,
+
+    /// TX channel for sending shutdown signal.
+    shutdown_tx: Sender<()>,
+}
+
+/// Start the Dioxus router UI.
+pub fn start(
+    events: EventSubscriber,
+    config: EmissaryConfig,
+    base_path: PathBuf,
+    address_book_handle: Option<Arc<AddressBookHandle>>,
+    router_id: RouterId,
+    shutdown_tx: Sender<()>,
+) {
     let cfg = dioxus::desktop::Config::default()
         .with_menu(None)
         .with_custom_head(DESKTOP_HEAD.to_string())
@@ -101,13 +223,35 @@ pub fn start() {
                 .with_title("emissary")
                 .with_inner_size(dioxus::desktop::LogicalSize::new(1200.0, 800.0)),
         );
-    dioxus::LaunchBuilder::desktop().with_cfg(cfg).launch(App);
+    dioxus::LaunchBuilder::desktop()
+        .with_cfg(cfg)
+        .with_context(Arc::new(Mutex::new(Some(AppOptions {
+            events,
+            config,
+            base_path,
+            address_book_handle,
+            router_id,
+            shutdown_tx,
+        }))))
+        .launch(App)
 }
 
 #[component]
 fn App() -> Element {
-    let state = use_context_provider(move || Signal::new(AppState::new()));
+    let options = use_context::<Arc<Mutex<Option<AppOptions>>>>();
+    let mut state = use_context_provider(move || {
+        Signal::new(AppState::new(
+            options.lock().expect("unpoisoned lock").take().expect("value to exist"),
+        ))
+    });
     let view = state.read().view;
+
+    use_future(move || async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            state.write().tick();
+        }
+    });
 
     rsx! {
         style { { global_css() } }
