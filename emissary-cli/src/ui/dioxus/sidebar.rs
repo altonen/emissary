@@ -26,7 +26,7 @@ use dioxus::prelude::*;
 
 #[component]
 pub fn Sidebar() -> Element {
-    let mut state = use_context::<Signal<AppState>>();
+    let mut state = use_context::<SyncSignal<AppState>>();
 
     let collapsed = state.read().sidebar_collapsed;
     let is_active = state.read().is_active();

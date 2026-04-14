@@ -20,7 +20,12 @@ use crate::{
     config::PortForwardingConfig,
     ui::{
         calculate_bandwidth,
-        dioxus::{svg::*, types::RouterState, AppState},
+        dioxus::{
+            bandwidth::{BandwidthChart, ChartSource},
+            svg::*,
+            types::RouterState,
+            AppState,
+        },
     },
 };
 
@@ -46,19 +51,19 @@ fn status_card(title: &str, value: String, icon_svg: &str) -> Element {
 
 #[component]
 pub fn Dashboard() -> Element {
-    let mut state = use_context::<Signal<AppState>>();
+    let mut state = use_context::<SyncSignal<AppState>>();
 
     let RouterState {
-        inbound_bandwidth,
         num_routers,
         num_transit_tunnels,
         num_tunnel_build_failures,
         num_tunnels_built,
-        outbound_bandwidth,
         router_id,
         show_router_id,
         uptime,
     } = state.read().router_state();
+    let inbound_bandwidth = state.read().traffic.inbound_bandwidth;
+    let outbound_bandwidth = state.read().traffic.outbound_bandwidth;
 
     // create router's network status info
     let (net_label, net_color) = state.read().network_status();
@@ -148,7 +153,33 @@ pub fn Dashboard() -> Element {
                 { status_card("Total transferred", format!("{total_val:.2} {total_unit}"), BANDWIDTH_SVG) }
             }
 
-            // TODO: bandwidth graph
+            // bandwidth graph
+            div { class: "bandwidth-card",
+                div { class: "bandwidth-card-title", "Bandwidth usage" }
+                div { class: "chart-container",
+                    BandwidthChart { source: ChartSource::Total }
+                }
+                div { class: "chart-legend",
+                    button {
+                        class: "chart-legend-btn",
+                        style: "color: #4682b4;",
+                        onclick: move |_| {
+                            let show_outbound = state.read().traffic.options.show_outbound;
+                            state.write().traffic.options.show_outbound = !show_outbound;
+                        },
+                        "Inbound"
+                    }
+                    button {
+                        class: "chart-legend-btn",
+                        style: "color: #ffa500;",
+                        onclick: move |_| {
+                            let show_inbound = state.read().traffic.options.show_inbound;
+                            state.write().traffic.options.show_inbound = !show_inbound;
+                        },
+                        "Outbound"
+                    }
+                }
+            }
 
             // bottom panels
             div {

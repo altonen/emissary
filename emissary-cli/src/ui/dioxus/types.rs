@@ -18,6 +18,8 @@
 
 use std::time::Instant;
 
+use crate::ui::dioxus::bandwidth_monitor::{BandwidthMonitor, TimeRange};
+
 /// Selected view in the sidebar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarSelection {
@@ -37,9 +39,6 @@ pub enum RouterStatus {
 /// Router state.
 #[derive(Clone, Copy)]
 pub struct RouterState {
-    /// Inbound bandwidth.
-    pub inbound_bandwidth: usize,
-
     /// Number of connected routers.
     pub num_routers: usize,
 
@@ -51,9 +50,6 @@ pub struct RouterState {
 
     /// Number of tunnels built.
     pub num_tunnels_built: usize,
-
-    /// Outbound bandwidth.
-    pub outbound_bandwidth: usize,
 
     /// Router ID
     pub router_id: &'static str,
@@ -69,12 +65,10 @@ impl RouterState {
     /// Create new `RouterState`.
     pub fn new(router_id: &'static str) -> Self {
         Self {
-            inbound_bandwidth: 0usize,
             num_routers: 0usize,
             num_transit_tunnels: 0usize,
             num_tunnel_build_failures: 0usize,
             num_tunnels_built: 0usize,
-            outbound_bandwidth: 0usize,
             router_id,
             show_router_id: false,
             uptime: Instant::now(),
@@ -82,20 +76,69 @@ impl RouterState {
     }
 }
 
-#[derive(Default)]
+/// Traffic options for visualization.
+pub struct TrafficOptions {
+    /// Show inbound traffic.
+    pub show_inbound: bool,
+
+    /// Show outbound traffic.
+    pub show_outbound: bool,
+
+    /// Selected time range.
+    pub range: TimeRange,
+}
+
+/// Router traffic data.
 pub struct Traffic {
+    /// Inbound bandwidth.
+    pub inbound_bandwidth: usize,
+
+    /// Traffic visualization options.
+    pub options: TrafficOptions,
+
+    /// Outbound bandwidth.
+    pub outbound_bandwidth: usize,
+
+    /// Peak traffict.
+    pub peak_traffic: usize,
+
     /// Previous inbound bandwidth.
     pub prev_inbound_bandwidth: usize,
 
     /// Previous outbound bandwidth.
     pub prev_outbound_bandwidth: usize,
 
-    /// Peak traffict.
-    pub peak_traffic: usize,
+    /// Total bandwidth monitor.
+    pub total_bandwidth: BandwidthMonitor,
+
+    /// Transit bandwidth monitor.
+    pub transit_bandwidth: BandwidthMonitor,
 
     /// Transit inbound bandwidth.
     pub transit_inbound_bandwidth: usize,
 
     /// Transit inbound bandwidth.
     pub transit_outbound_bandwidth: usize,
+}
+
+impl Traffic {
+    /// Create new `Traffic`
+    pub fn new() -> Self {
+        Self {
+            outbound_bandwidth: 0usize,
+            inbound_bandwidth: 0usize,
+            prev_inbound_bandwidth: 0usize,
+            prev_outbound_bandwidth: 0usize,
+            peak_traffic: 0usize,
+            transit_inbound_bandwidth: 0usize,
+            transit_outbound_bandwidth: 0usize,
+            total_bandwidth: BandwidthMonitor::new(),
+            transit_bandwidth: BandwidthMonitor::new(),
+            options: TrafficOptions {
+                show_inbound: true,
+                show_outbound: true,
+                range: TimeRange::default(),
+            },
+        }
+    }
 }

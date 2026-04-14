@@ -39,6 +39,8 @@ use std::{
     time::Duration,
 };
 
+mod bandwidth;
+mod bandwidth_monitor;
 mod dashboard;
 mod sidebar;
 mod style;
@@ -100,7 +102,7 @@ impl AppState {
             sidebar_collapsed: false,
             state: RouterState::new(base64_encode(router_id.to_vec()).leak()),
             status: RouterStatus::Active,
-            traffic: Default::default(),
+            traffic: Traffic::new(),
             view: SidebarSelection::Dashboard,
         }
     }
@@ -158,22 +160,33 @@ impl AppState {
                     self.state.num_tunnels_built = tunnel.num_tunnels_built;
                     self.state.num_tunnel_build_failures = tunnel.num_tunnel_build_failures;
 
-                    self.traffic.prev_inbound_bandwidth = self.state.inbound_bandwidth;
-                    self.traffic.prev_outbound_bandwidth = self.state.outbound_bandwidth;
+                    self.traffic.prev_inbound_bandwidth = self.traffic.inbound_bandwidth;
+                    self.traffic.prev_outbound_bandwidth = self.traffic.outbound_bandwidth;
 
                     let inbound_diff =
-                        transport.inbound_bandwidth.saturating_sub(self.state.inbound_bandwidth);
-                    let outbound_diff =
-                        transport.outbound_bandwidth.saturating_sub(self.state.outbound_bandwidth);
+                        transport.inbound_bandwidth.saturating_sub(self.traffic.inbound_bandwidth);
+                    let outbound_diff = transport
+                        .outbound_bandwidth
+                        .saturating_sub(self.traffic.outbound_bandwidth);
                     let total_diff = inbound_diff + outbound_diff;
                     if total_diff > self.traffic.peak_traffic {
                         self.traffic.peak_traffic = total_diff;
                     }
-                    self.state.inbound_bandwidth = transport.inbound_bandwidth;
-                    self.state.outbound_bandwidth = transport.outbound_bandwidth;
+                    self.traffic.inbound_bandwidth = transport.inbound_bandwidth;
+                    self.traffic.outbound_bandwidth = transport.outbound_bandwidth;
+                    self.traffic.total_bandwidth.update(inbound_diff as f64, outbound_diff as f64);
 
+                    let transit_in_diff = transit
+                        .inbound_bandwidth
+                        .saturating_sub(self.traffic.transit_inbound_bandwidth);
+                    let transit_out_diff = transit
+                        .outbound_bandwidth
+                        .saturating_sub(self.traffic.transit_outbound_bandwidth);
                     self.traffic.transit_inbound_bandwidth = transit.inbound_bandwidth;
                     self.traffic.transit_outbound_bandwidth = transit.outbound_bandwidth;
+                    self.traffic
+                        .transit_bandwidth
+                        .update(transit_in_diff as f64, transit_out_diff as f64);
                 }
                 Event::ShuttingDown =>
                     if matches!(self.status, RouterStatus::Active) {
@@ -240,17 +253,20 @@ pub fn start(
 fn App() -> Element {
     let options = use_context::<Arc<Mutex<Option<AppOptions>>>>();
     let mut state = use_context_provider(move || {
-        Signal::new(AppState::new(
+        SyncSignal::new_maybe_sync(AppState::new(
             options.lock().expect("unpoisoned lock").take().expect("value to exist"),
         ))
     });
     let view = state.read().view;
 
-    use_future(move || async move {
-        loop {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            state.write().tick();
-        }
+    use_hook(|| {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(1));
+            loop {
+                interval.tick().await;
+                state.write().tick();
+            }
+        });
     });
 
     rsx! {
@@ -261,7 +277,7 @@ fn App() -> Element {
             div { class: "main-content",
                 match view {
                     SidebarSelection::Dashboard => rsx! { dashboard::Dashboard {} },
-                    SidebarSelection::Bandwidth => rsx! {},
+                    SidebarSelection::Bandwidth => rsx! { bandwidth::BandwidthView {} },
                     SidebarSelection::HiddenServices => rsx! {},
                     SidebarSelection::Settings => rsx! {},
                     SidebarSelection::AddressBook => rsx! {},

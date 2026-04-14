@@ -293,6 +293,80 @@ body {
 .panel-value.disabled { color: var(--em-danger); }
 
 .router-id-btn { background: none; border: none; color: var(--em-link); cursor: pointer; font-size: 13px; padding: 0; }
+
+.bandwidth-card {
+  background: var(--em-bg-surface);
+  border-radius: 12px;
+  border: 1px solid var(--em-border);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.bandwidth-card-title { font-size: 21px; color: var(--em-text-inv); text-align: center; }
+
+.chart-container {
+  background: var(--em-bg-raised);
+  border-radius: 12px;
+  height: 280px;
+  overflow: hidden;
+  position: relative;
+}
+.chart-container svg { width: 100%; height: 100%; }
+
+.chart-x-axis {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 52px 0 52px;
+  font-size: 10px;
+  color: var(--em-text-4);
+}
+
+.chart-legend { display: flex; justify-content: center; gap: 20px; }
+
+.chart-legend-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0;
+}
+
+.chart-title {
+  font-size:12px;
+  font-weight:600;
+  color:#9ba2ae;
+  text-transform:uppercase;
+  letter-spacing:0.05em;
+  margin:12px 0 4px 5px;
+}
+
+.chart-label {
+  padding-top: 5px;
+  position:absolute;
+  right:6px;
+  font-size:10px;
+  color:#9ba2ae;
+  transform:translateY(50%);
+  white-space:nowrap;
+  line-height:1;
+}
+
+.time-buttons { display: flex; gap: 8px; }
+
+.time-btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--em-border-sub);
+  background: var(--em-bg-raised);
+  color: var(--em-text-2);
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s;
+}
+.time-btn.active { background: var(--em-accent); color: #fff; border-color: var(--em-accent); }
+
+.bandwidth-controls { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
 "#;
 
 /// Script to remove right-click menu from desktop view.
