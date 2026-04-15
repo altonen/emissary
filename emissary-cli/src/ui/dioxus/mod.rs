@@ -20,7 +20,7 @@ use crate::{
     address_book::AddressBookHandle,
     config::EmissaryConfig,
     ui::dioxus::{
-        style::{global_css, DESKTOP_HEAD},
+        style::global_css,
         types::{RouterState, RouterStatus, SidebarSelection, Traffic},
     },
 };
@@ -47,6 +47,43 @@ mod style;
 mod svg;
 mod types;
 
+#[cfg(feature = "dioxus")]
+mod native;
+
+#[cfg(feature = "dioxus")]
+pub use native::start;
+
+#[cfg(feature = "web-ui")]
+mod web;
+
+#[cfg(feature = "web-ui")]
+pub use web::start;
+
+/// `App` options.
+#[derive(Clone)]
+struct AppOptions {
+    /// Event subscriber for the router.
+    events: Arc<Mutex<EventSubscriber>>,
+
+    /// Router configuration.
+    config: EmissaryConfig,
+
+    /// Router base path.
+    base_path: PathBuf,
+
+    /// Address book handle, if enabled.
+    address_book_handle: Option<Arc<AddressBookHandle>>,
+
+    /// Local router ID.
+    router_id: RouterId,
+
+    /// TX channel for sending shutdown signal.
+    shutdown_tx: Sender<()>,
+
+    /// Shared traffic state, persisted across reconnections.
+    traffic: Arc<Mutex<Traffic>>,
+}
+
 /// Application state.
 #[allow(unused)]
 struct AppState {
@@ -60,7 +97,7 @@ struct AppState {
     config: EmissaryConfig,
 
     /// Event subscriber for the router.
-    events: EventSubscriber,
+    events: Arc<Mutex<EventSubscriber>>,
 
     /// TX channel for sending shutdown signal.
     shutdown_tx: Sender<()>,
@@ -74,8 +111,8 @@ struct AppState {
     /// Router status.
     status: RouterStatus,
 
-    /// Traffic info.
-    traffic: Traffic,
+    /// Traffic info, shared across reconnections.
+    traffic: Arc<Mutex<Traffic>>,
 
     /// Currently active view.
     view: SidebarSelection,
@@ -91,6 +128,7 @@ impl AppState {
             address_book_handle,
             router_id,
             shutdown_tx,
+            traffic,
         } = options;
 
         Self {
@@ -102,7 +140,7 @@ impl AppState {
             sidebar_collapsed: false,
             state: RouterState::new(base64_encode(router_id.to_vec()).leak()),
             status: RouterStatus::Active,
-            traffic: Traffic::new(),
+            traffic,
             view: SidebarSelection::Dashboard,
         }
     }
@@ -147,7 +185,8 @@ impl AppState {
     ///
     /// Poll the event channel and update router state.
     fn tick(&mut self) {
-        while let Some(event) = self.events.router_status() {
+        let mut traffic = self.traffic.lock().expect("to succeed");
+        while let Some(event) = self.events.lock().expect("to succeed").router_status() {
             match event {
                 Event::RouterStatus {
                     transit,
@@ -160,31 +199,29 @@ impl AppState {
                     self.state.num_tunnels_built = tunnel.num_tunnels_built;
                     self.state.num_tunnel_build_failures = tunnel.num_tunnel_build_failures;
 
-                    self.traffic.prev_inbound_bandwidth = self.traffic.inbound_bandwidth;
-                    self.traffic.prev_outbound_bandwidth = self.traffic.outbound_bandwidth;
+                    traffic.prev_inbound_bandwidth = traffic.inbound_bandwidth;
+                    traffic.prev_outbound_bandwidth = traffic.outbound_bandwidth;
 
                     let inbound_diff =
-                        transport.inbound_bandwidth.saturating_sub(self.traffic.inbound_bandwidth);
-                    let outbound_diff = transport
-                        .outbound_bandwidth
-                        .saturating_sub(self.traffic.outbound_bandwidth);
+                        transport.inbound_bandwidth.saturating_sub(traffic.inbound_bandwidth);
+                    let outbound_diff =
+                        transport.outbound_bandwidth.saturating_sub(traffic.outbound_bandwidth);
                     let total_diff = inbound_diff + outbound_diff;
-                    if total_diff > self.traffic.peak_traffic {
-                        self.traffic.peak_traffic = total_diff;
+                    if total_diff > traffic.peak_traffic {
+                        traffic.peak_traffic = total_diff;
                     }
-                    self.traffic.inbound_bandwidth = transport.inbound_bandwidth;
-                    self.traffic.outbound_bandwidth = transport.outbound_bandwidth;
-                    self.traffic.total_bandwidth.update(inbound_diff as f64, outbound_diff as f64);
+                    traffic.inbound_bandwidth = transport.inbound_bandwidth;
+                    traffic.outbound_bandwidth = transport.outbound_bandwidth;
+                    traffic.total_bandwidth.update(inbound_diff as f64, outbound_diff as f64);
 
-                    let transit_in_diff = transit
-                        .inbound_bandwidth
-                        .saturating_sub(self.traffic.transit_inbound_bandwidth);
+                    let transit_in_diff =
+                        transit.inbound_bandwidth.saturating_sub(traffic.transit_inbound_bandwidth);
                     let transit_out_diff = transit
                         .outbound_bandwidth
-                        .saturating_sub(self.traffic.transit_outbound_bandwidth);
-                    self.traffic.transit_inbound_bandwidth = transit.inbound_bandwidth;
-                    self.traffic.transit_outbound_bandwidth = transit.outbound_bandwidth;
-                    self.traffic
+                        .saturating_sub(traffic.transit_outbound_bandwidth);
+                    traffic.transit_inbound_bandwidth = transit.inbound_bandwidth;
+                    traffic.transit_outbound_bandwidth = transit.outbound_bandwidth;
+                    traffic
                         .transit_bandwidth
                         .update(transit_in_diff as f64, transit_out_diff as f64);
                 }
@@ -198,57 +235,6 @@ impl AppState {
     }
 }
 
-/// `App` properties.
-struct AppOptions {
-    /// Event subscriber for the router.
-    events: EventSubscriber,
-
-    /// Router configuration.
-    config: EmissaryConfig,
-
-    /// Router base path.
-    base_path: PathBuf,
-
-    /// Address book handle, if enabled.
-    address_book_handle: Option<Arc<AddressBookHandle>>,
-
-    /// Local router ID.
-    router_id: RouterId,
-
-    /// TX channel for sending shutdown signal.
-    shutdown_tx: Sender<()>,
-}
-
-/// Start the Dioxus router UI.
-pub fn start(
-    events: EventSubscriber,
-    config: EmissaryConfig,
-    base_path: PathBuf,
-    address_book_handle: Option<Arc<AddressBookHandle>>,
-    router_id: RouterId,
-    shutdown_tx: Sender<()>,
-) {
-    let cfg = dioxus::desktop::Config::default()
-        .with_menu(None)
-        .with_custom_head(DESKTOP_HEAD.to_string())
-        .with_window(
-            dioxus::desktop::WindowBuilder::default()
-                .with_title("emissary")
-                .with_inner_size(dioxus::desktop::LogicalSize::new(1200.0, 800.0)),
-        );
-    dioxus::LaunchBuilder::desktop()
-        .with_cfg(cfg)
-        .with_context(Arc::new(Mutex::new(Some(AppOptions {
-            events,
-            config,
-            base_path,
-            address_book_handle,
-            router_id,
-            shutdown_tx,
-        }))))
-        .launch(App)
-}
-
 #[component]
 fn App() -> Element {
     let options = use_context::<Arc<Mutex<Option<AppOptions>>>>();
@@ -259,6 +245,15 @@ fn App() -> Element {
     });
     let view = state.read().view;
 
+    #[cfg(feature = "web-ui")]
+    use_future(move || async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        loop {
+            interval.tick().await;
+            state.write().tick();
+        }
+    });
+    #[cfg(feature = "dioxus")]
     use_hook(|| {
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(1));

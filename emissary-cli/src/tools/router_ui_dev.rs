@@ -150,12 +150,12 @@ pub async fn run() {
         );
     }
 
-    #[cfg(feature = "web-ui")]
-    {
-        ui::web::RouterUi::new(subscriber, None, 1, shutdown_tx).run().await;
-    }
+    // #[cfg(feature = "web-ui")]
+    // {
+    //     ui::web::RouterUi::new(subscriber, None, 1, shutdown_tx).run().await;
+    // }
 
-    #[cfg(feature = "dioxus")]
+    #[cfg(any(feature = "dioxus", feature = "web-ui"))]
     {
         use crate::{cli::Arguments, config::Config};
         use emissary_core::primitives::RouterId;
@@ -177,6 +177,7 @@ pub async fn run() {
             None,
             RouterId::from(TokioRuntime::rng().random::<[u8; 32]>()),
             shutdown_tx,
-        );
+        )
+        .await;
     }
 }

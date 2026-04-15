@@ -26,6 +26,9 @@ thiserror = "2.0.12"
 tokio-tungstenite = { version = "0.27.0", default-features = false, features = ["native-tls"], optional = true }
 url = "2.5.4"
 
+scraper = { version = "0.21", optional = true }
+ego-tree = { version = "0.9", optional = true }
+
 # workspace dependencies
 anyhow = { workspace = true }
 parking_lot = { workspace = true }
@@ -40,13 +43,15 @@ tracing = { workspace = true, features = ["log"] }
 yosemite = { workspace = true }
 dioxus = { version = "=0.7.3" }
 dioxus-core = { version = "=0.7.3" }
+dioxus-liveview = { version = "=0.7.3", features = ["axum"], optional = true }
 
 [dev-dependencies]
 fast-socks5 = { version = "1.0.0", features = ["socks4"] }
 
 [features]
+# default = ["web-ui"]
 default = ["dioxus"]
 dioxus = ["dioxus/desktop"]
 native-ui = ["chrono", "iced", "plotters", "plotters-iced2"]
-web-ui = ["axum", "serde_json", "tokio-tungstenite"]
+web-ui = ["dioxus/liveview", "dioxus-liveview", "axum", "chrono", "scraper", "ego-tree"]
 metrics = ["emissary-util/metrics"]

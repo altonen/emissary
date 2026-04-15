@@ -383,7 +383,7 @@ async fn router_event_loop(
     }
 }
 
-#[cfg(not(any(feature = "native-ui", feature = "web-ui")))]
+#[cfg(not(any(feature = "native-ui", feature = "web-ui", feature = "dioxus")))]
 fn main() -> anyhow::Result<()> {
     let runtime = tokio::runtime::Runtime::new()?;
     let (_tx, shutdown_rx) = channel(1);
@@ -399,43 +399,11 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "web-ui")]
+#[cfg(any(feature = "web-ui", feature = "dioxus"))]
 fn main() -> anyhow::Result<()> {
     let runtime = tokio::runtime::Runtime::new()?;
     let (shutdown_tx, shutdown_rx) = channel(1);
     let arguments = runtime.block_on(parse_arguments());
-    let RouterContext {
-        events,
-        port_mapper,
-        router,
-        router_ui_config,
-        ..
-    } = runtime.block_on(setup_router::<TokioRuntime>(arguments))?;
-
-    match router_ui_config {
-        None => {
-            runtime.block_on(router_event_loop(router, port_mapper, shutdown_rx));
-        }
-        Some(RouterUiConfig {
-            refresh_interval,
-            port,
-            ..
-        }) => {
-            runtime.spawn(async move {
-                ui::web::RouterUi::new(events, port, refresh_interval, shutdown_tx).run().await;
-            });
-            runtime.block_on(router_event_loop(router, port_mapper, shutdown_rx));
-        }
-    }
-
-    Ok(())
-}
-
-/// A main function which should be run within an async context.
-#[cfg(feature = "native-ui")]
-async fn native_main() -> anyhow::Result<()> {
-    let (shutdown_tx, shutdown_rx) = channel(1);
-    let arguments = parse_arguments().await;
     let RouterContext {
         router,
         port_mapper,
@@ -445,31 +413,28 @@ async fn native_main() -> anyhow::Result<()> {
         base_path,
         address_book_handle,
         router_id,
-    } = setup_router::<TokioRuntime>(arguments).await?;
+        ..
+    } = runtime.block_on(setup_router::<TokioRuntime>(arguments))?;
+
     match router_ui_config {
         None => {
-            router_event_loop(router, port_mapper, shutdown_rx).await;
-            Ok(())
+            runtime.block_on(router_event_loop(router, port_mapper, shutdown_rx));
         }
-        Some(RouterUiConfig { .. }) => {
-            tokio::spawn(async {
-                router_event_loop(router, port_mapper, shutdown_rx).await;
-                std::process::exit(0);
+        Some(_) => {
+            runtime.spawn(async move {
+                ui::dioxus::start(
+                    events,
+                    config,
+                    base_path,
+                    address_book_handle,
+                    router_id,
+                    shutdown_tx,
+                )
+                .await;
             });
-            ui::native::RouterUi::start(
-                events,
-                config,
-                base_path,
-                address_book_handle,
-                router_id,
-                shutdown_tx,
-            )
+            runtime.block_on(router_event_loop(router, port_mapper, shutdown_rx));
         }
     }
-}
 
-#[cfg(feature = "native-ui")]
-fn main() -> anyhow::Result<()> {
-    let runtime = tokio::runtime::Runtime::new()?;
-    runtime.block_on(native_main())
+    Ok(())
 }

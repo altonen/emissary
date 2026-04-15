@@ -62,8 +62,8 @@ pub fn Dashboard() -> Element {
         show_router_id,
         uptime,
     } = state.read().router_state();
-    let inbound_bandwidth = state.read().traffic.inbound_bandwidth;
-    let outbound_bandwidth = state.read().traffic.outbound_bandwidth;
+    let inbound_bandwidth = state.read().traffic.lock().expect("to succeed").inbound_bandwidth;
+    let outbound_bandwidth = state.read().traffic.lock().expect("to succeed").outbound_bandwidth;
 
     // create router's network status info
     let (net_label, net_color) = state.read().network_status();
@@ -164,8 +164,9 @@ pub fn Dashboard() -> Element {
                         class: "chart-legend-btn",
                         style: "color: #4682b4;",
                         onclick: move |_| {
-                            let show_outbound = state.read().traffic.options.show_outbound;
-                            state.write().traffic.options.show_outbound = !show_outbound;
+                            let app = state.write();
+                            let mut traffic = app.traffic.lock().unwrap();
+                            traffic.options.show_outbound = !traffic.options.show_outbound;
                         },
                         "Inbound"
                     }
@@ -173,8 +174,9 @@ pub fn Dashboard() -> Element {
                         class: "chart-legend-btn",
                         style: "color: #ffa500;",
                         onclick: move |_| {
-                            let show_inbound = state.read().traffic.options.show_inbound;
-                            state.write().traffic.options.show_inbound = !show_inbound;
+                            let app = state.write();
+                            let mut traffic = app.traffic.lock().unwrap();
+                            traffic.options.show_inbound = !traffic.options.show_inbound;
                         },
                         "Outbound"
                     }

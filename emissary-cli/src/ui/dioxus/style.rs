@@ -370,4 +370,5 @@ body {
 "#;
 
 /// Script to remove right-click menu from desktop view.
+#[cfg(feature = "dioxus")]
 pub const DESKTOP_HEAD: &str = r#"<script>document.addEventListener('contextmenu',function(e){e.preventDefault();},true);</script>"#;

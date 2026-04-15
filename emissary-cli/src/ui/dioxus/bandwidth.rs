@@ -98,12 +98,13 @@ pub fn BandwidthChart(source: ChartSource) -> Element {
 
     let (buckets_in, buckets_out, show_in, show_out, max_val) = {
         let state = state.read();
+        let traffic = state.traffic.lock().expect("to succeed");
         let monitor = match source {
-            ChartSource::Total => &state.traffic.total_bandwidth,
-            ChartSource::Transit => &state.traffic.transit_bandwidth,
+            ChartSource::Total => &traffic.total_bandwidth,
+            ChartSource::Transit => &traffic.transit_bandwidth,
         };
 
-        let buckets: &VecDeque<TimeBucket> = match state.traffic.options.range {
+        let buckets: &VecDeque<TimeBucket> = match traffic.options.range {
             TimeRange::Live => monitor.get_live(),
             TimeRange::TenMin => monitor.get_10min(),
             TimeRange::OneHour => monitor.get_1hr(),
@@ -114,8 +115,8 @@ pub fn BandwidthChart(source: ChartSource) -> Element {
         (
             in_norm,
             out_norm,
-            state.traffic.options.show_inbound,
-            state.traffic.options.show_outbound,
+            traffic.options.show_inbound,
+            traffic.options.show_outbound,
             mv,
         )
     };
@@ -238,13 +239,14 @@ pub fn BandwidthView() -> Element {
 
     let (inbound_bw, outbound_bw, peak_traffic, uptime_secs, selected_range) = {
         let state = state.read();
+        let traffic = state.traffic.lock().expect("to succeed");
         let up = state.state.uptime.elapsed().as_secs_f64().max(1.0);
         (
-            state.traffic.inbound_bandwidth,
-            state.traffic.outbound_bandwidth,
-            state.traffic.peak_traffic,
+            traffic.inbound_bandwidth,
+            traffic.outbound_bandwidth,
+            traffic.peak_traffic,
             up,
-            state.traffic.options.range,
+            traffic.options.range,
         )
     };
 
@@ -282,22 +284,22 @@ pub fn BandwidthView() -> Element {
                         class: "time-buttons",
                         button {
                             class: if selected_range == TimeRange::Live     { "time-btn active" } else { "time-btn" },
-                            onclick: move |_| { state.write().traffic.options.range = TimeRange::Live; },
+                            onclick: move |_| { state.write().traffic.lock().expect("to succeed").options.range = TimeRange::Live; },
                             "Live"
                         }
                         button {
                             class: if selected_range == TimeRange::TenMin   { "time-btn active" } else { "time-btn" },
-                            onclick: move |_| { state.write().traffic.options.range = TimeRange::TenMin; },
+                            onclick: move |_| { state.write().traffic.lock().expect("to succeed").options.range = TimeRange::TenMin; },
                             "10 min"
                         }
                         button {
                             class: if selected_range == TimeRange::OneHour  { "time-btn active" } else { "time-btn" },
-                            onclick: move |_| { state.write().traffic.options.range = TimeRange::OneHour; },
+                            onclick: move |_| { state.write().traffic.lock().expect("to succeed").options.range = TimeRange::OneHour; },
                             "1 h"
                         }
                         button {
                             class: if selected_range == TimeRange::SixHours { "time-btn active" } else { "time-btn" },
-                            onclick: move |_| { state.write().traffic.options.range = TimeRange::SixHours; },
+                            onclick: move |_| { state.write().traffic.lock().expect("to succeed").options.range = TimeRange::SixHours; },
                             "6 h"
                         }
                     }
@@ -309,8 +311,9 @@ pub fn BandwidthView() -> Element {
                             class: "chart-legend-btn",
                             style: "color:#4682b4;",
                             onclick: move |_| {
-                                let show_inbound = state.read().traffic.options.show_inbound;
-                                state.write().traffic.options.show_inbound = !show_inbound;
+                                let app = state.write();
+                                let mut traffic = app.traffic.lock().expect("to succeed");
+                                traffic.options.show_inbound = !traffic.options.show_inbound;
                             },
                             "● Inbound"
                         }
@@ -318,8 +321,9 @@ pub fn BandwidthView() -> Element {
                             class: "chart-legend-btn",
                             style: "color:#ffa500;",
                             onclick: move |_| {
-                                let show_outbound = state.read().traffic.options.show_outbound;
-                                state.write().traffic.options.show_outbound = !show_outbound;
+                                let app = state.write();
+                                let mut traffic = app.traffic.lock().expect("to succeed");
+                                traffic.options.show_outbound = !traffic.options.show_outbound;
                             },
                             "● Outbound"
                         }
