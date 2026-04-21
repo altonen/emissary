@@ -149,7 +149,7 @@ pub async fn run() {
         );
     }
 
-    #[cfg(feature = "web-ui")]
+    #[cfg(all(feature = "web-ui", not(feature = "native-ui")))]
     {
         ui::web::RouterUi::new(subscriber, None, 1, shutdown_tx).run().await;
     }

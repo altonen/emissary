@@ -211,6 +211,8 @@ pub struct RouterUiConfig {
     pub theme: Theme,
     pub refresh_interval: usize,
     pub port: Option<u16>,
+    #[serde(rename = "web-ui")]
+    pub web_ui: Option<bool>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -334,6 +336,7 @@ impl EmissaryConfig {
                 theme: Theme::Dark,
                 refresh_interval: 5usize,
                 port: None,
+                web_ui: None,
             }),
             sam: Some(SamConfig {
                 tcp_port: 7656,
@@ -925,6 +928,7 @@ impl Config {
             theme,
             refresh_interval,
             port,
+            web_ui,
         }) = &mut self.router_ui
         {
             if let Some(selected) = arguments.router_ui.theme {
@@ -937,6 +941,10 @@ impl Config {
 
             if let Some(selected) = arguments.router_ui.web_ui_port {
                 *port = Some(selected);
+            }
+
+            if let Some(selected) = arguments.router_ui.web_ui {
+                *web_ui = Some(selected);
             }
 
             if let Some(true) = arguments.router_ui.disable_ui {
@@ -984,6 +992,7 @@ mod tests {
                 refresh_interval: None,
                 theme: None,
                 web_ui_port: None,
+                web_ui: None,
             },
             floodfill: None,
             allow_local: None,
