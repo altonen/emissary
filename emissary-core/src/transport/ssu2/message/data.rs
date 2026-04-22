@@ -746,13 +746,12 @@ impl<'a> DataMessageBuilder<'a> {
                     out.put_u32(ack_through);
                     out.put_u8(num_acks);
 
-                    ranges
-                        .iter()
-                        .take(bytes_left.saturating_sub(ACK_BLOCK_MIN_SIZE) / 2)
-                        .for_each(|(nack, ack)| {
+                    ranges.iter().take(bytes_left.saturating_sub(ACK_BLOCK_MIN_SIZE) / 2).for_each(
+                        |(nack, ack)| {
                             out.put_u8(*nack);
                             out.put_u8(*ack);
-                        });
+                        },
+                    );
                 }
                 _ => {}
             }
