@@ -774,8 +774,8 @@ impl<R: Runtime> Stream<R> {
 
         let acked = self
             .unacked
-            .iter()
-            .filter_map(|(seq_nro, _)| {
+            .keys()
+            .filter_map(|seq_nro| {
                 (seq_nro <= &ack_through && !nacks.iter().any(|nack| nack == seq_nro))
                     .then_some(*seq_nro)
             })
