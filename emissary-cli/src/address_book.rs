@@ -47,9 +47,31 @@ const SUBSCRIPTION_NUM_RETRIES: usize = 5usize;
 
 /// Used when requesting address books from servers. This should reduce load to servers whose
 /// address books haven't changed since our last lookup.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct Modified {
-    etag: Option<HeaderValue>,
-    last_modified: Option<HeaderValue>,
+    etag: String,
+    last_modified: String,
+}
+
+/// The on-disk representation of our hosts modified times.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct HostModified {
+    host_modified_times: Vec<(String, Modified)>,
+}
+
+impl From<HashMap<String, Modified>> for HostModified {
+    fn from(value: HashMap<String, Modified>) -> Self {
+        let host_modified_times = value.into_iter().collect::<Vec<(String, Modified)>>();
+        Self {
+            host_modified_times,
+        }
+    }
+}
+
+impl From<HostModified> for HashMap<String, Modified> {
+    fn from(value: HostModified) -> HashMap<String, Modified> {
+        HashMap::from_iter(value.host_modified_times)
+    }
 }
 
 /// Only modified responses are passed on.
@@ -82,9 +104,6 @@ pub struct AddressBookManager {
 
     /// Additional subscriptions.
     subscriptions: Vec<String>,
-
-    /// ETag/Last modified info for requests.
-    modified: HashMap<String, Modified>,
 }
 
 impl AddressBookManager {
@@ -122,7 +141,6 @@ impl AddressBookManager {
             hosts_url: config.default,
             serialized: Arc::new(RwLock::new(serialized)),
             subscriptions: config.subscriptions.unwrap_or_default(),
-            modified: HashMap::new(),
         }
     }
 
@@ -142,17 +160,22 @@ impl AddressBookManager {
         modified: Option<&Modified>,
     ) -> Result<Response, Error> {
         let mut headers = HeaderMap::from_iter([(CONNECTION, HeaderValue::from_static("close"))]);
+        // Consider refactoring some of this. if-let chaings may make this nicer.
         if let Some(modified) = modified {
-            if let Some(etag) = &modified.etag {
-                headers.insert(IF_NONE_MATCH, etag.clone());
+            if !modified.etag.is_empty() {
+                if let Ok(etag) = HeaderValue::from_str(&modified.etag) {
+                    headers.insert(IF_NONE_MATCH, etag);
+                }
             }
-            if let Some(last_modified) = &modified.last_modified {
-                headers.insert(IF_MODIFIED_SINCE, last_modified.clone());
+            if !modified.last_modified.is_empty() {
+                if let Ok(last_modified) = HeaderValue::from_str(&modified.last_modified) {
+                    headers.insert(IF_MODIFIED_SINCE, last_modified);
+                }
             }
         }
         let response = match client.get(url.to_string()).headers(headers).send().await {
             Err(error) => {
-                tracing::debug!(
+                tracing::warn!(
                     target: LOG_TARGET,
                     ?url,
                     ?error,
@@ -166,7 +189,7 @@ impl AddressBookManager {
             return Ok(Response::NotModified);
         }
         if !response.status().is_success() {
-            tracing::debug!(
+            tracing::warn!(
                 target: LOG_TARGET,
                 ?url,
                 status = ?response.status(),
@@ -174,9 +197,21 @@ impl AddressBookManager {
             );
             return Err(Error::Server);
         }
+        let etag = response
+            .headers()
+            .get(ETAG)
+            .and_then(|e| e.to_str().ok())
+            .map(String::from)
+            .unwrap_or_default();
+        let last_modified = response
+            .headers()
+            .get(LAST_MODIFIED)
+            .and_then(|l| l.to_str().ok())
+            .map(String::from)
+            .unwrap_or_default();
         let modified = Modified {
-            etag: response.headers().get(ETAG).cloned(),
-            last_modified: response.headers().get(LAST_MODIFIED).cloned(),
+            etag,
+            last_modified,
         };
         match response.bytes().await {
             Ok(response) => match std::str::from_utf8(&response) {
@@ -185,7 +220,7 @@ impl AddressBookManager {
                     body: response.to_owned(),
                 }),
                 Err(error) => {
-                    tracing::debug!(
+                    tracing::warn!(
                         target: LOG_TARGET,
                         ?url,
                         ?error,
@@ -195,7 +230,7 @@ impl AddressBookManager {
                 }
             },
             Err(error) => {
-                tracing::debug!(
+                tracing::warn!(
                     target: LOG_TARGET,
                     ?url,
                     ?error,
@@ -267,12 +302,68 @@ impl AddressBookManager {
         }
     }
 
+    /// Loads the modified info for each endpoint we request. In case we can't load it, we return an
+    /// empty `HashMap` so the whole process doesn't fail.
+    ///
+    /// If we can't load it for `std::io::Error` reasons, then we probably won't be able to save
+    /// either.
+    async fn load_host_modified_times(&self) -> HashMap<String, Modified> {
+        let path = self.address_book_path.join("host_modified_times");
+        let raw = match tokio::fs::read_to_string(path).await {
+            Ok(r) => r,
+            Err(error) => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?error,
+                    "could not read host_modified_times",
+                );
+                return HashMap::new();
+            }
+        };
+        match toml::from_str::<HostModified>(&raw) {
+            Ok(h) => h.into(),
+            Err(error) => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?error,
+                    "could not deserialize host_modified_times",
+                );
+                HashMap::new()
+            }
+        }
+    }
+
+    /// Serializes the host modified times as a `Vec<(String, Modified)>`. Warns on error instead of
+    /// failing.
+    async fn save_host_modified_times(&self, host_modified_times: HashMap<String, Modified>) {
+        let path = self.address_book_path.join("host_modified_times");
+        let modified = HostModified::from(host_modified_times);
+        let raw = match toml::to_string(&modified) {
+            Ok(r) => r,
+            Err(error) => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?error,
+                    "could not serialize host_modified_times",
+                );
+                return;
+            }
+        };
+        if let Err(error) = tokio::fs::write(path, raw).await {
+            tracing::warn!(
+                target: LOG_TARGET,
+                ?error,
+                "could not write host_modified_times",
+            );
+        }
+    }
+
     /// Start event loop for [`AddressBookManager`].
     ///
     /// Before the address book subscription download starts, [`AddressBook`] waits on
     /// `http_proxy_ready_rx` which the HTTP proxy sends a signal to once it's ready.
     pub async fn run(
-        mut self,
+        self,
         http_port: u16,
         http_host: String,
         http_proxy_ready_rx: oneshot::Receiver<()>,
@@ -310,9 +401,10 @@ impl AddressBookManager {
             .expect("to succeed");
 
         let mut addresses = HashMap::<String, (String, String)>::new();
+        let mut host_modified_times = self.load_host_modified_times().await;
 
         loop {
-            match Self::download(&client, hosts_url, self.modified.get(hosts_url)).await {
+            match Self::download(&client, hosts_url, host_modified_times.get(hosts_url)).await {
                 Ok(Response::NotModified) => {
                     tracing::info!(
                         target: LOG_TARGET,
@@ -328,11 +420,11 @@ impl AddressBookManager {
                         "hosts.txt downloaded",
                     );
                     self.parse_and_merge(&mut addresses, body).await;
-                    self.modified.insert(hosts_url.to_string(), modified);
+                    host_modified_times.insert(hosts_url.to_string(), modified);
                     break;
                 }
                 Err(_) => {
-                    self.modified.remove(hosts_url);
+                    host_modified_times.remove(hosts_url);
                     tokio::time::sleep(RETRY_BACKOFF).await;
                 }
             }
@@ -344,7 +436,9 @@ impl AddressBookManager {
 
         for subscription in &self.subscriptions {
             for _ in 0..SUBSCRIPTION_NUM_RETRIES {
-                match Self::download(&client, subscription, self.modified.get(subscription)).await {
+                match Self::download(&client, subscription, host_modified_times.get(subscription))
+                    .await
+                {
                     Ok(Response::NotModified) => {
                         tracing::info!(
                             target: LOG_TARGET,
@@ -360,11 +454,11 @@ impl AddressBookManager {
                             "hosts.txt downloaded",
                         );
                         self.parse_and_merge(&mut addresses, body).await;
-                        self.modified.insert(subscription.to_string(), modified);
+                        host_modified_times.insert(subscription.to_string(), modified);
                         break;
                     }
                     Err(_) => {
-                        self.modified.remove(subscription);
+                        host_modified_times.remove(subscription);
                         tokio::time::sleep(RETRY_BACKOFF).await;
                     }
                 }
@@ -372,6 +466,7 @@ impl AddressBookManager {
         }
 
         self.save_to_disk(addresses).await;
+        self.save_host_modified_times(host_modified_times).await;
     }
 
     /// Save `addresses` to disk.
