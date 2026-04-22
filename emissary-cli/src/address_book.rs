@@ -26,8 +26,10 @@ use emissary_core::{
 use futures::channel::oneshot;
 use parking_lot::RwLock;
 use reqwest::{
-    header::{HeaderMap, HeaderValue, CONNECTION},
-    Client, Proxy,
+    header::{
+        HeaderMap, HeaderValue, CONNECTION, ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED,
+    },
+    Client, Proxy, StatusCode,
 };
 
 use std::{
@@ -42,6 +44,27 @@ const RETRY_BACKOFF: Duration = Duration::from_secs(30);
 
 /// How many times each subscription is tried before giving up.
 const SUBSCRIPTION_NUM_RETRIES: usize = 5usize;
+
+/// Used when requesting address books from servers. This should reduce load to servers whose
+/// address books haven't changed since our last lookup.
+struct Modified {
+    etag: Option<HeaderValue>,
+    last_modified: Option<HeaderValue>,
+}
+
+/// Only modified responses are passed on.
+enum Response {
+    NotModified,
+    Modified { modified: Modified, body: String },
+}
+
+/// When a request fails, we remove the cache entry and sleep for `RETRY_BACKOFF`.
+enum Error {
+    Client,
+    Server,
+    Encoding,
+    Response,
+}
 
 /// Address book.
 pub struct AddressBookManager {
@@ -59,6 +82,9 @@ pub struct AddressBookManager {
 
     /// Additional subscriptions.
     subscriptions: Vec<String>,
+
+    /// ETag/Last modified info for requests.
+    modified: HashMap<String, Modified>,
 }
 
 impl AddressBookManager {
@@ -96,6 +122,7 @@ impl AddressBookManager {
             hosts_url: config.default,
             serialized: Arc::new(RwLock::new(serialized)),
             subscriptions: config.subscriptions.unwrap_or_default(),
+            modified: HashMap::new(),
         }
     }
 
@@ -109,16 +136,21 @@ impl AddressBookManager {
     }
 
     /// Attempt to download `hosts.txt` from `url`.
-    async fn download(client: &Client, url: &str) -> Option<String> {
-        let response = match client
-            .get(url.to_string())
-            .headers(HeaderMap::from_iter([(
-                CONNECTION,
-                HeaderValue::from_static("close"),
-            )]))
-            .send()
-            .await
-        {
+    async fn download(
+        client: &Client,
+        url: &str,
+        modified: Option<&Modified>,
+    ) -> Result<Response, Error> {
+        let mut headers = HeaderMap::from_iter([(CONNECTION, HeaderValue::from_static("close"))]);
+        if let Some(modified) = modified {
+            if let Some(etag) = &modified.etag {
+                headers.insert(IF_NONE_MATCH, etag.clone());
+            }
+            if let Some(last_modified) = &modified.last_modified {
+                headers.insert(IF_MODIFIED_SINCE, last_modified.clone());
+            }
+        }
+        let response = match client.get(url.to_string()).headers(headers).send().await {
             Err(error) => {
                 tracing::debug!(
                     target: LOG_TARGET,
@@ -126,11 +158,13 @@ impl AddressBookManager {
                     ?error,
                     "failed to fetch hosts.txt"
                 );
-                return None;
+                return Err(Error::Client);
             }
             Ok(response) => response,
         };
-
+        if response.status() == StatusCode::NOT_MODIFIED {
+            return Ok(Response::NotModified);
+        }
         if !response.status().is_success() {
             tracing::debug!(
                 target: LOG_TARGET,
@@ -138,12 +172,18 @@ impl AddressBookManager {
                 status = ?response.status(),
                 "request to address book server failed",
             );
-            return None;
+            return Err(Error::Server);
         }
-
+        let modified = Modified {
+            etag: response.headers().get(ETAG).cloned(),
+            last_modified: response.headers().get(LAST_MODIFIED).cloned(),
+        };
         match response.bytes().await {
             Ok(response) => match std::str::from_utf8(&response) {
-                Ok(response) => Some(response.to_owned()),
+                Ok(response) => Ok(Response::Modified {
+                    modified,
+                    body: response.to_owned(),
+                }),
                 Err(error) => {
                     tracing::debug!(
                         target: LOG_TARGET,
@@ -151,7 +191,7 @@ impl AddressBookManager {
                         ?error,
                         "failed to convert `hosts.txt` to utf-8",
                     );
-                    None
+                    Err(Error::Encoding)
                 }
             },
             Err(error) => {
@@ -161,7 +201,7 @@ impl AddressBookManager {
                     ?error,
                     "failed to get response from address book server"
                 );
-                None
+                Err(Error::Response)
             }
         }
     }
@@ -232,7 +272,7 @@ impl AddressBookManager {
     /// Before the address book subscription download starts, [`AddressBook`] waits on
     /// `http_proxy_ready_rx` which the HTTP proxy sends a signal to once it's ready.
     pub async fn run(
-        self,
+        mut self,
         http_port: u16,
         http_host: String,
         http_proxy_ready_rx: oneshot::Receiver<()>,
@@ -271,18 +311,29 @@ impl AddressBookManager {
         let mut addresses = HashMap::<String, (String, String)>::new();
 
         loop {
-            match Self::download(&client, hosts_url).await {
-                Some(hosts) => {
+            match Self::download(&client, hosts_url, self.modified.get(hosts_url)).await {
+                Ok(Response::NotModified) => {
+                    tracing::info!(
+                        target: LOG_TARGET,
+                        url = %hosts_url,
+                        "hosts.txt not changed since last download",
+                    );
+                    continue;
+                }
+                Ok(Response::Modified { modified, body }) => {
                     tracing::info!(
                         target: LOG_TARGET,
                         url = %hosts_url,
                         "hosts.txt downloaded",
                     );
-
-                    self.parse_and_merge(&mut addresses, hosts).await;
+                    self.parse_and_merge(&mut addresses, body).await;
+                    self.modified.insert(hosts_url.to_string(), modified);
                     break;
                 }
-                None => tokio::time::sleep(RETRY_BACKOFF).await,
+                Err(_) => {
+                    self.modified.remove(hosts_url);
+                    tokio::time::sleep(RETRY_BACKOFF).await;
+                }
             }
         }
 
@@ -292,18 +343,29 @@ impl AddressBookManager {
 
         for subscription in &self.subscriptions {
             for _ in 0..SUBSCRIPTION_NUM_RETRIES {
-                match Self::download(&client, subscription).await {
-                    Some(hosts) => {
+                match Self::download(&client, subscription, self.modified.get(subscription)).await {
+                    Ok(Response::NotModified) => {
+                        tracing::info!(
+                            target: LOG_TARGET,
+                            url = %hosts_url,
+                            "hosts.txt not changed since last download",
+                        );
+                        continue;
+                    }
+                    Ok(Response::Modified { modified, body }) => {
                         tracing::info!(
                             target: LOG_TARGET,
                             url = subscription,
                             "hosts.txt downloaded",
                         );
-
-                        self.parse_and_merge(&mut addresses, hosts).await;
+                        self.parse_and_merge(&mut addresses, body).await;
+                        self.modified.insert(subscription.to_string(), modified);
                         break;
                     }
-                    None => tokio::time::sleep(RETRY_BACKOFF).await,
+                    Err(_) => {
+                        self.modified.remove(subscription);
+                        tokio::time::sleep(RETRY_BACKOFF).await;
+                    }
                 }
             }
         }
