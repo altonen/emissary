@@ -291,6 +291,7 @@ impl AddressBookManager {
                 ?error,
                 "http proxy failed to start, cannot start address book",
             );
+            return;
         }
 
         tracing::info!(
