@@ -734,28 +734,26 @@ impl<'a> DataMessageBuilder<'a> {
 
             match self.acks.take() {
                 None => {}
-                Some((ack_through, num_acks, None)) =>
-                    if bytes_left > ACK_BLOCK_MIN_SIZE {
-                        out.put_u8(BlockType::Ack.as_u8());
-                        out.put_u16(5u16);
-                        out.put_u32(ack_through);
-                        out.put_u8(num_acks);
-                    },
-                Some((ack_through, num_acks, Some(ranges))) =>
-                    if bytes_left > ACK_BLOCK_MIN_SIZE {
-                        out.put_u8(BlockType::Ack.as_u8());
-                        out.put_u16((5usize + ranges.len() * 2) as u16);
-                        out.put_u32(ack_through);
-                        out.put_u8(num_acks);
+                Some((ack_through, num_acks, None)) if bytes_left > ACK_BLOCK_MIN_SIZE => {
+                    out.put_u8(BlockType::Ack.as_u8());
+                    out.put_u16(5u16);
+                    out.put_u32(ack_through);
+                    out.put_u8(num_acks);
+                }
+                Some((ack_through, num_acks, Some(ranges))) if bytes_left > ACK_BLOCK_MIN_SIZE => {
+                    out.put_u8(BlockType::Ack.as_u8());
+                    out.put_u16((5usize + ranges.len() * 2) as u16);
+                    out.put_u32(ack_through);
+                    out.put_u8(num_acks);
 
-                        ranges
-                            .iter()
-                            .take(bytes_left.saturating_sub(ACK_BLOCK_MIN_SIZE) / 2)
-                            .for_each(|(nack, ack)| {
-                                out.put_u8(*nack);
-                                out.put_u8(*ack);
-                            });
-                    },
+                    ranges.iter().take(bytes_left.saturating_sub(ACK_BLOCK_MIN_SIZE) / 2).for_each(
+                        |(nack, ack)| {
+                            out.put_u8(*nack);
+                            out.put_u8(*ack);
+                        },
+                    );
+                }
+                _ => {}
             }
 
             if let Some(reason) = self.termination_reason {

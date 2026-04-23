@@ -145,7 +145,11 @@ impl Profile {
     fn has_recently_declined<R: Runtime>(&self) -> bool {
         self.last_declined.map_or_else(
             || false,
-            |last_declined| R::time_since_epoch() - last_declined < LAST_DECLINE_THRESHOLD,
+            |last_declined| {
+                R::time_since_epoch()
+                    .checked_sub(last_declined)
+                    .is_some_and(|elapsed| elapsed < LAST_DECLINE_THRESHOLD)
+            },
         )
     }
 
@@ -177,7 +181,9 @@ impl Profile {
         self.last_dial_failure.map_or_else(
             || false,
             |last_dial_failure| {
-                R::time_since_epoch() - last_dial_failure > UNREACHABILITY_THRESHOLD
+                R::time_since_epoch()
+                    .checked_sub(last_dial_failure)
+                    .is_some_and(|elapsed| elapsed > UNREACHABILITY_THRESHOLD)
             },
         )
     }

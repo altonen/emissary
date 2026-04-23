@@ -107,7 +107,7 @@ impl KBucket {
     pub fn closest_iter<K: Clone>(&self, target: &Key<K>) -> impl Iterator<Item = RouterId> {
         let mut floodfills = self.floodfills.clone();
 
-        floodfills.sort_by(|a, b| target.distance(&a.key).cmp(&target.distance(&b.key)));
+        floodfills.sort_by_key(|a| target.distance(&a.key));
         floodfills.into_iter().map(|router| router.key.preimage().clone())
     }
 }

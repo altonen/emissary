@@ -1152,11 +1152,7 @@ impl<R: Runtime> Session<R> {
             });
         }
 
-        loop {
-            let Some((created, _)) = self.expiring.front() else {
-                break;
-            };
-
+        while let Some((created, _)) = self.expiring.front() {
             if created.elapsed() < PREV_TAG_MAX_AGE {
                 break;
             }
