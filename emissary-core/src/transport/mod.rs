@@ -215,6 +215,7 @@ impl<R: Runtime> TransportManagerBuilder<R> {
             supported_transports: self.supported_transports,
             transit_tunnels_disabled: self.transit_tunnels_disabled,
             transports: self.transports,
+            terminated_transports: HashSet::new(),
             transport_tx: self.transport_tx.clone(),
         }
     }
@@ -349,6 +350,10 @@ pub struct TransportManager<R: Runtime> {
 
     /// Enabled transports.
     transports: Vec<Box<dyn Transport<Item = TransportEvent>>>,
+
+    /// Indices in `transports` whose stream has terminated. Skipped by the poll loop; the
+    /// manager keeps running as long as at least one transport is alive.
+    terminated_transports: HashSet<usize>,
 }
 
 impl<R: Runtime> TransportManager<R> {
@@ -1137,16 +1142,44 @@ impl<R: Runtime> Future for TransportManager<R> {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = Pin::into_inner(self);
         let len = this.transports.len();
+
+        if len > 0 && this.terminated_transports.len() >= len {
+            return Poll::Ready(());
+        }
+
         let start_index = this.poll_index;
 
         loop {
             let index = this.poll_index % len;
             this.poll_index += 1;
 
+            if this.terminated_transports.contains(&index) {
+                if this.poll_index == start_index + len {
+                    break;
+                }
+                continue;
+            }
+
             loop {
                 match this.transports[index].poll_next_unpin(cx) {
                     Poll::Pending => break,
-                    Poll::Ready(None) => return Poll::Ready(()),
+                    Poll::Ready(None) => {
+                        tracing::error!(
+                            target: LOG_TARGET,
+                            %index,
+                            total_transports = len,
+                            "transport stream ended",
+                        );
+                        this.terminated_transports.insert(index);
+                        if this.terminated_transports.len() >= len {
+                            tracing::error!(
+                                target: LOG_TARGET,
+                                "all transports terminated, shutting down transport manager",
+                            );
+                            return Poll::Ready(());
+                        }
+                        break;
+                    }
                     Poll::Ready(Some(TransportEvent::ConnectionEstablished {
                         address,
                         direction,

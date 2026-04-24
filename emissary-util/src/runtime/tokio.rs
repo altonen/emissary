@@ -281,7 +281,24 @@ impl UdpSocket for TokioUdpSocket {
         buf: &[u8],
         target: SocketAddr,
     ) -> Poll<Option<usize>> {
-        Poll::Ready(futures::ready!(self.socket.poll_send_to(cx, buf, target)).ok())
+        // A per-packet send error (e.g. NetworkUnreachable when dialing an IPv6 peer from a
+        // host without IPv6 connectivity) does not mean the UDP socket is permanently dead —
+        // it just means this datagram didn't go out. Report 0 bytes sent so the upper
+        // protocol treats it as a dropped packet and retransmits, rather than tearing down
+        // the session / transport / router.
+        match futures::ready!(self.socket.poll_send_to(cx, buf, target)) {
+            Ok(n) => Poll::Ready(Some(n)),
+            Err(err) => {
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    kind = ?err.kind(),
+                    raw_os_error = ?err.raw_os_error(),
+                    %target,
+                    "UDP send failed, dropping datagram",
+                );
+                Poll::Ready(Some(0))
+            }
+        }
     }
 
     #[inline]
@@ -293,7 +310,19 @@ impl UdpSocket for TokioUdpSocket {
         let mut buf = ReadBuf::new(buf);
 
         match futures::ready!(self.socket.poll_recv_from(cx, &mut buf)) {
-            Err(_) => Poll::Ready(None),
+            Err(err) => {
+                // A per-datagram recv error (e.g. ConnectionReset on Windows when a prior
+                // send triggered an ICMP port-unreachable) is not terminal — the tokio
+                // socket registration has already installed our waker, so returning
+                // Pending schedules us for the next read event.
+                tracing::debug!(
+                    target: LOG_TARGET,
+                    kind = ?err.kind(),
+                    raw_os_error = ?err.raw_os_error(),
+                    "UDP recv failed, ignoring",
+                );
+                Poll::Pending
+            }
             Ok(from) => {
                 let nread = buf.filled().len();
                 Poll::Ready(Some((nread, from)))
