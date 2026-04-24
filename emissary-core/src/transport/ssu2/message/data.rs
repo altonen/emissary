@@ -741,17 +741,20 @@ impl<'a> DataMessageBuilder<'a> {
                     out.put_u8(num_acks);
                 }
                 Some((ack_through, num_acks, Some(ranges))) if bytes_left > ACK_BLOCK_MIN_SIZE => {
+                    // Cap the pair count by both the ranges available and the remaining
+                    // payload budget so the declared size matches the bytes actually written.
+                    let num_ranges =
+                        ranges.len().min(bytes_left.saturating_sub(ACK_BLOCK_MIN_SIZE) / 2);
+
                     out.put_u8(BlockType::Ack.as_u8());
-                    out.put_u16((5usize + ranges.len() * 2) as u16);
+                    out.put_u16((5usize + num_ranges * 2) as u16);
                     out.put_u32(ack_through);
                     out.put_u8(num_acks);
 
-                    ranges.iter().take(bytes_left.saturating_sub(ACK_BLOCK_MIN_SIZE) / 2).for_each(
-                        |(nack, ack)| {
-                            out.put_u8(*nack);
-                            out.put_u8(*ack);
-                        },
-                    );
+                    ranges.iter().take(num_ranges).for_each(|(nack, ack)| {
+                        out.put_u8(*nack);
+                        out.put_u8(*ack);
+                    });
                 }
                 _ => {}
             }
