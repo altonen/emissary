@@ -183,7 +183,7 @@ impl Profile {
             |last_dial_failure| {
                 R::time_since_epoch()
                     .checked_sub(last_dial_failure)
-                    .is_some_and(|elapsed| elapsed > UNREACHABILITY_THRESHOLD)
+                    .is_some_and(|elapsed| elapsed < UNREACHABILITY_THRESHOLD)
             },
         )
     }
