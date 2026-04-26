@@ -24,6 +24,7 @@ use crate::ui::dioxus::{
 
 use dioxus::prelude::*;
 
+mod client;
 mod transports;
 
 #[component]
@@ -52,79 +53,79 @@ pub fn SettingsView() -> Element {
                 class: "settings-card",
                 div {
                     class: "settings-container",
-                // Tab bar
-                div {
-                    class: "tabs",
-                    button {
-                        class: if active_tab == SettingsTab::Transports { "tab-btn active" } else { "tab-btn" },
-                        onclick: move |_| {
-                            let mut w = state.write();
-                            if w.settings.active_tab != SettingsTab::Transports {
-                                w.settings.status = SettingsStatus::Idle(SettingsTab::Transports);
-                            }
-                            w.settings.active_tab = SettingsTab::Transports;
-                        },
-                        span { style: "display:inline-flex;width:18px;height:18px;", dangerous_inner_html: SETTINGS_SVG }
-                        "Transports"
-                    }
-                    button {
-                        class: if active_tab == SettingsTab::Client { "tab-btn active" } else { "tab-btn" },
-                        onclick: move |_| {
-                            let mut w = state.write();
-                            if w.settings.active_tab != SettingsTab::Client {
-                                w.settings.status = SettingsStatus::Idle(SettingsTab::Client);
-                            }
-                            w.settings.active_tab = SettingsTab::Client;
-                        },
-                        span { style: "display:inline-flex;width:18px;height:18px;", dangerous_inner_html: HANDSHAKE_SVG }
-                        "Clients"
-                    }
-                    button {
-                        class: if active_tab == SettingsTab::Proxies { "tab-btn active" } else { "tab-btn" },
-                        onclick: move |_| {
-                            let mut w = state.write();
-                            if w.settings.active_tab != SettingsTab::Proxies {
-                                w.settings.status = SettingsStatus::Idle(SettingsTab::Proxies);
-                            }
-                            w.settings.active_tab = SettingsTab::Proxies;
-                        },
-                        span { style: "display:inline-flex;width:18px;height:18px;", dangerous_inner_html: ALT_ROUTE_SVG }
-                        "Proxies"
-                    }
-                    button {
-                        class: if active_tab == SettingsTab::Tunnels { "tab-btn active" } else { "tab-btn" },
-                        onclick: move |_| {
-                            let mut w = state.write();
-                            if w.settings.active_tab != SettingsTab::Tunnels {
-                                w.settings.status = SettingsStatus::Idle(SettingsTab::Tunnels);
-                            }
-                            w.settings.active_tab = SettingsTab::Tunnels;
-                        },
-                        span { style: "display:inline-flex;width:18px;height:18px;", dangerous_inner_html: TUNNELS_SVG }
-                        "Tunnels"
-                    }
-                    button {
-                        class: if active_tab == SettingsTab::Advanced { "tab-btn active" } else { "tab-btn" },
-                        onclick: move |_| {
-                            let mut w = state.write();
-                            if w.settings.active_tab != SettingsTab::Advanced {
-                                w.settings.status = SettingsStatus::Idle(SettingsTab::Advanced);
-                            }
-                            w.settings.active_tab = SettingsTab::Advanced;
-                        },
-                        span { style: "display:inline-flex;width:18px;height:18px;", dangerous_inner_html: ADVANCED_SVG }
-                        "Advanced"
-                    }
-                }
 
-                // tabs
-                match active_tab {
-                    SettingsTab::Transports => rsx! { transports::TransportsTab {} },
-                    SettingsTab::Client => rsx! { },
-                    SettingsTab::Proxies => rsx! { },
-                    SettingsTab::Tunnels => rsx! { },
-                    SettingsTab::Advanced => rsx! { },
-                }
+                    div {
+                        class: "tabs",
+                        button {
+                            class: if active_tab == SettingsTab::Transports { "tab-btn active" } else { "tab-btn" },
+                            onclick: move |_| {
+                                let mut w = state.write();
+                                if w.settings.active_tab != SettingsTab::Transports {
+                                    w.settings.status = SettingsStatus::Idle(SettingsTab::Transports);
+                                }
+                                w.settings.active_tab = SettingsTab::Transports;
+                            },
+                            span { style: "display:inline-flex;width:18px;height:18px;", dangerous_inner_html: SETTINGS_SVG }
+                            "Transports"
+                        }
+                        button {
+                            class: if active_tab == SettingsTab::Client { "tab-btn active" } else { "tab-btn" },
+                            onclick: move |_| {
+                                let mut w = state.write();
+                                if w.settings.active_tab != SettingsTab::Client {
+                                    w.settings.status = SettingsStatus::Idle(SettingsTab::Client);
+                                }
+                                w.settings.active_tab = SettingsTab::Client;
+                            },
+                            span { style: "display:inline-flex;width:18px;height:18px;", dangerous_inner_html: HANDSHAKE_SVG }
+                            "Clients"
+                        }
+                        button {
+                            class: if active_tab == SettingsTab::Proxies { "tab-btn active" } else { "tab-btn" },
+                            onclick: move |_| {
+                                let mut w = state.write();
+                                if w.settings.active_tab != SettingsTab::Proxies {
+                                    w.settings.status = SettingsStatus::Idle(SettingsTab::Proxies);
+                                }
+                                w.settings.active_tab = SettingsTab::Proxies;
+                            },
+                            span { style: "display:inline-flex;width:18px;height:18px;", dangerous_inner_html: ALT_ROUTE_SVG }
+                            "Proxies"
+                        }
+                        button {
+                            class: if active_tab == SettingsTab::Tunnels { "tab-btn active" } else { "tab-btn" },
+                            onclick: move |_| {
+                                let mut w = state.write();
+                                if w.settings.active_tab != SettingsTab::Tunnels {
+                                    w.settings.status = SettingsStatus::Idle(SettingsTab::Tunnels);
+                                }
+                                w.settings.active_tab = SettingsTab::Tunnels;
+                            },
+                            span { style: "display:inline-flex;width:18px;height:18px;", dangerous_inner_html: TUNNELS_SVG }
+                            "Tunnels"
+                        }
+                        button {
+                            class: if active_tab == SettingsTab::Advanced { "tab-btn active" } else { "tab-btn" },
+                            onclick: move |_| {
+                                let mut w = state.write();
+                                if w.settings.active_tab != SettingsTab::Advanced {
+                                    w.settings.status = SettingsStatus::Idle(SettingsTab::Advanced);
+                                }
+                                w.settings.active_tab = SettingsTab::Advanced;
+                            },
+                            span { style: "display:inline-flex;width:18px;height:18px;", dangerous_inner_html: ADVANCED_SVG }
+                            "Advanced"
+                        }
+                    }
+
+                    // tabs
+                    match active_tab {
+                        SettingsTab::Transports => rsx! { transports::TransportsTab {} },
+                        SettingsTab::Client => rsx! { client::ClientTab {} },
+                        SettingsTab::Proxies => rsx! { },
+                        SettingsTab::Tunnels => rsx! { },
+                        SettingsTab::Advanced => rsx! { },
+                    }
                 }
 
                 // settings save footer

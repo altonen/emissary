@@ -255,6 +255,115 @@ impl TryInto<Option<crate::config::PortForwardingConfig>> for PortForwardingConf
     }
 }
 
+/// I2CP config.
+#[derive(Default, Clone)]
+pub struct I2cpConfig {
+    pub port: Option<String>,
+    pub host: Option<String>,
+    pub enabled: bool,
+}
+
+impl From<&EmissaryConfig> for I2cpConfig {
+    fn from(value: &EmissaryConfig) -> Self {
+        let Some(ref config) = value.i2cp else {
+            return Self {
+                enabled: false,
+                ..Default::default()
+            };
+        };
+
+        Self {
+            port: Some(config.port.to_string()),
+            host: config.host.clone(),
+            enabled: true,
+        }
+    }
+}
+
+impl TryInto<Option<crate::config::I2cpConfig>> for I2cpConfig {
+    type Error = String;
+
+    fn try_into(self) -> Result<Option<crate::config::I2cpConfig>, Self::Error> {
+        if !self.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(crate::config::I2cpConfig {
+            port: self
+                .port
+                .ok_or_else(|| String::from("I2CP port missing"))?
+                .parse::<u16>()
+                .map_err(|_| String::from("Invalid I2CP port"))?,
+            host: match self.host {
+                None => None,
+                Some(host) => Some(
+                    host.parse::<Ipv4Addr>()
+                        .map_err(|_| String::from("Invalid I2CP host"))?
+                        .to_string(),
+                ),
+            },
+        }))
+    }
+}
+
+/// SAMv3 config.
+#[derive(Default, Clone)]
+pub struct SamConfig {
+    pub tcp_port: Option<String>,
+    pub udp_port: Option<String>,
+    pub host: Option<String>,
+    pub enabled: bool,
+}
+
+impl From<&EmissaryConfig> for SamConfig {
+    fn from(value: &EmissaryConfig) -> Self {
+        let Some(ref config) = value.sam else {
+            return Self {
+                enabled: false,
+                ..Default::default()
+            };
+        };
+
+        Self {
+            tcp_port: Some(config.tcp_port.to_string()),
+            udp_port: Some(config.udp_port.to_string()),
+            host: config.host.clone(),
+            enabled: true,
+        }
+    }
+}
+
+impl TryInto<Option<crate::config::SamConfig>> for SamConfig {
+    type Error = String;
+
+    fn try_into(self) -> Result<Option<crate::config::SamConfig>, Self::Error> {
+        if !self.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(crate::config::SamConfig {
+            tcp_port: self
+                .tcp_port
+                .ok_or_else(|| String::from("SAMv3 TCP port missing"))?
+                .parse::<u16>()
+                .map_err(|_| String::from("Invalid SAMv3 TCP port"))?,
+            udp_port: self
+                .udp_port
+                .ok_or_else(|| String::from("SAMv3 UDP port missing"))?
+                .parse::<u16>()
+                .map_err(|_| String::from("Invalid SAMv3 UDP port"))?,
+            host: match self.host {
+                None => None,
+                Some(host) => Some(
+                    host.parse::<Ipv4Addr>()
+                        .map_err(|_| String::from("Invalid SAMv3 host"))?
+                        .to_string(),
+                ),
+            },
+        }))
+    }
+}
+
 /// Save router configuration to disk.
 pub fn save_router_config(path: PathBuf, config: &EmissaryConfig) {
     if let Ok(serialized) = toml::to_string(config) {

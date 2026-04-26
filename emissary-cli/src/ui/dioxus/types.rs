@@ -22,7 +22,7 @@ use crate::{
     config::EmissaryConfig,
     ui::dioxus::{
         bandwidth_monitor::{BandwidthMonitor, TimeRange},
-        config::{Ntcp2Config, PortForwardingConfig, Ssu2Config},
+        config::{I2cpConfig, Ntcp2Config, PortForwardingConfig, SamConfig, Ssu2Config},
     },
 };
 
@@ -197,18 +197,26 @@ pub struct Settings {
 
     /// Port forwarding settings.
     pub port_forwarding: PortForwardingConfig,
+
+    /// I2CP.
+    pub i2cp: I2cpConfig,
+
+    /// SAMv3.
+    pub sam: SamConfig,
 }
 
 impl Settings {
     /// Create new `Settings`.
     pub fn new(config: &EmissaryConfig) -> Self {
         Self {
-            dirty: false,
             active_tab: SettingsTab::Transports,
-            status: SettingsStatus::Idle(SettingsTab::Transports),
+            dirty: false,
+            i2cp: I2cpConfig::from(config),
             ntcp2: Ntcp2Config::from(config),
-            ssu2: Ssu2Config::from(config),
             port_forwarding: PortForwardingConfig::from(config),
+            sam: SamConfig::from(config),
+            ssu2: Ssu2Config::from(config),
+            status: SettingsStatus::Idle(SettingsTab::Transports),
         }
     }
 }

@@ -261,7 +261,14 @@ impl AppState {
                         self.settings.port_forwarding.clone(),
                     )?;
             }
-            SettingsTab::Client => {}
+            SettingsTab::Client => {
+                self.config.i2cp = TryInto::<Option<crate::config::I2cpConfig>>::try_into(
+                    self.settings.i2cp.clone(),
+                )?;
+                self.config.sam = TryInto::<Option<crate::config::SamConfig>>::try_into(
+                    self.settings.sam.clone(),
+                )?;
+            }
             SettingsTab::Proxies => {}
             SettingsTab::Tunnels => {}
             SettingsTab::Advanced => {}
