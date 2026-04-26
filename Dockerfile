@@ -1,14 +1,21 @@
-FROM rust:1.82.0 AS builder
+FROM rust:latest AS builder
 WORKDIR /usr/src/emissary
 
-ARG PROFILE=release
+COPY . .
 
-RUN apt-get update && apt-get install -y cmake
+WORKDIR /usr/src/emissary
 
-RUN cargo install --profile $PROFILE --no-default-features emissary-cli
+RUN apt-get update && apt-get install -y cmake && rm -rf /var/lib/apt/lists/*
 
-FROM debian:bookworm
-RUN apt-get update && apt-get install -y libssl-dev && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /usr/local/cargo/bin/emissary-cli /usr/local/bin/emissary-cli
+RUN cargo build --release --no-default-features --features web-ui --bin emissary-cli
 
-CMD ["emissary-cli"]
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y \
+    libssl3 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/src/emissary/target/release/emissary-cli /usr/local/bin/emissary-cli
+RUN chmod +x /usr/local/bin/emissary-cli
+
+ENTRYPOINT ["/usr/local/bin/emissary-cli"]
