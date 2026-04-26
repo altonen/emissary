@@ -2,9 +2,7 @@ name: Build and Publish to GHCR
 
 on:
   push:
-    branches: [ "master", "docker-fixes"]
-  pull_request:
-    branches: [ "master" ]
+    branches: [ "master"]
 
 env:
   REGISTRY: ghcr.io

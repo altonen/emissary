@@ -1,131 +1,131 @@
-# name: CI
+name: CI
 
-# on:
-#   push:
-#     branches:
-#       - master
-#   pull_request:
-#     branches:
-#       - master
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
 
-# concurrency:
-#   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-#   cancel-in-progress: true
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
-# jobs:
-#   fmt:
-#     runs-on: ubuntu-latest
-#     steps:
-#     - uses: actions/checkout@v4
-#     - uses: actions-rust-lang/setup-rust-toolchain@v1
-#       with:
-#         components: rustfmt
-#         toolchain: nightly
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        components: rustfmt
+        toolchain: nightly
 
-#     - name: cargo-fmt emissary-core
-#       working-directory: emissary-core
-#       run: cargo +nightly fmt -- --check
+    - name: cargo-fmt emissary-core
+      working-directory: emissary-core
+      run: cargo +nightly fmt -- --check
 
-#     - name: cargo-fmt emissary-cli
-#       working-directory: emissary-cli
-#       run: cargo +nightly fmt -- --check
+    - name: cargo-fmt emissary-cli
+      working-directory: emissary-cli
+      run: cargo +nightly fmt -- --check
 
-#     - name: cargo-fmt emissary-util
-#       working-directory: emissary-util
-#       run: cargo +nightly fmt -- --check
+    - name: cargo-fmt emissary-util
+      working-directory: emissary-util
+      run: cargo +nightly fmt -- --check
 
-#   clippy:
-#     runs-on: ubuntu-latest
-#     steps:
-#     - uses: actions/checkout@v4
-#     - uses: actions-rust-lang/setup-rust-toolchain@v1
-#       with:
-#         components: clippy
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        components: clippy
 
-#     - name: Install fontconfig
-#       run: sudo apt-get update && sudo apt-get install -y pkg-config libfontconfig1-dev
+    - name: Install fontconfig
+      run: sudo apt-get update && sudo apt-get install -y pkg-config libfontconfig1-dev
 
-#     - name: cargo-clippy emissary-core
-#       working-directory: emissary-core
-#       run: cargo clippy -- -D warnings
+    - name: cargo-clippy emissary-core
+      working-directory: emissary-core
+      run: cargo clippy -- -D warnings
 
-#     - name: cargo-clippy emissary-cli
-#       working-directory: emissary-cli
-#       run: cargo clippy -- -D warnings
+    - name: cargo-clippy emissary-cli
+      working-directory: emissary-cli
+      run: cargo clippy -- -D warnings
 
-#     - name: cargo-clippy emissary-util
-#       working-directory: emissary-util
-#       run: cargo clippy --all-features -- -D warnings
+    - name: cargo-clippy emissary-util
+      working-directory: emissary-util
+      run: cargo clippy --all-features -- -D warnings
 
-#   check:
-#     runs-on: ubuntu-latest
-#     steps:
-#     - uses: actions/checkout@v4
-#     - uses: actions-rust-lang/setup-rust-toolchain@v1
+  check:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions-rust-lang/setup-rust-toolchain@v1
 
-#     - name: cargo-check emissary-core no-std
-#       working-directory: emissary-core
-#       run: cargo check --no-default-features --features no_std
+    - name: cargo-check emissary-core no-std
+      working-directory: emissary-core
+      run: cargo check --no-default-features --features no_std
 
-#     - name: cargo-check emissary-core no events
-#       working-directory: emissary-core
-#       run: cargo check --no-default-features --features=std
+    - name: cargo-check emissary-core no events
+      working-directory: emissary-core
+      run: cargo check --no-default-features --features=std
 
-#     - name: cargo-check emissary-cli web-ui
-#       working-directory: emissary-cli
-#       run: cargo check --no-default-features --features web-ui
+    - name: cargo-check emissary-cli web-ui
+      working-directory: emissary-cli
+      run: cargo check --no-default-features --features web-ui
 
-#     - name: cargo-check rust-tutorial
-#       run: cargo check -p rust-tutorial
+    - name: cargo-check rust-tutorial
+      run: cargo check -p rust-tutorial
 
-#     - name: cargo-check rust-chat
-#       run: cargo check -p rust-chat
+    - name: cargo-check rust-chat
+      run: cargo check -p rust-chat
 
-#   fuzz:
-#     runs-on: ubuntu-latest
-#     steps:
-#     - uses: actions/checkout@v4
-#     - uses: actions-rust-lang/setup-rust-toolchain@v1
-#       with:
-#         toolchain: nightly
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: nightly
 
-#     - name: Install cargo-fuzz
-#       run: cargo install cargo-fuzz
+    - name: Install cargo-fuzz
+      run: cargo install cargo-fuzz
 
-#     - name: cargo-fuzz build
-#       working-directory: emissary-core
-#       run: cargo +nightly fuzz build
+    - name: cargo-fuzz build
+      working-directory: emissary-core
+      run: cargo +nightly fuzz build
 
-#     - name: cargo-fuzz primitives
-#       working-directory: emissary-core
-#       run: cargo +nightly fuzz run primitives -- -max_total_time=30
+    - name: cargo-fuzz primitives
+      working-directory: emissary-core
+      run: cargo +nightly fuzz run primitives -- -max_total_time=30
 
-#     - name: cargo-fuzz i2np
-#       working-directory: emissary-core
-#       run: cargo +nightly fuzz run i2np -- -max_total_time=30
+    - name: cargo-fuzz i2np
+      working-directory: emissary-core
+      run: cargo +nightly fuzz run i2np -- -max_total_time=30
 
-#     - name: cargo-fuzz messages
-#       working-directory: emissary-core
-#       run: cargo +nightly fuzz run messages -- -max_total_time=30
+    - name: cargo-fuzz messages
+      working-directory: emissary-core
+      run: cargo +nightly fuzz run messages -- -max_total_time=30
 
-#   test:
-#     runs-on: ubuntu-latest
-#     needs: [fmt, clippy, check]
-#     timeout-minutes: 30
-#     steps:
-#     - uses: actions/checkout@v4
-#     - uses: actions-rust-lang/setup-rust-toolchain@v1
-#     - uses: taiki-e/install-action@v2
-#       with:
-#         tool: nextest
-#     - name: Install fontconfig
-#       run: sudo apt-get update && sudo apt-get install -y pkg-config libfontconfig1-dev
-#     - name: cargo-nextest emissary-cli
-#       run:
-#         cargo nextest run --package emissary-cli --cargo-profile testnet
-#     - name: cargo-nextest emissary-core
-#       run:
-#         cargo nextest run --package emissary-core --cargo-profile testnet
-#     - name: cargo-nextest emissary-util
-#       run:
-#         cargo nextest run --package emissary-util --cargo-profile testnet
+  test:
+    runs-on: ubuntu-latest
+    needs: [fmt, clippy, check]
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions-rust-lang/setup-rust-toolchain@v1
+    - uses: taiki-e/install-action@v2
+      with:
+        tool: nextest
+    - name: Install fontconfig
+      run: sudo apt-get update && sudo apt-get install -y pkg-config libfontconfig1-dev
+    - name: cargo-nextest emissary-cli
+      run:
+        cargo nextest run --package emissary-cli --cargo-profile testnet
+    - name: cargo-nextest emissary-core
+      run:
+        cargo nextest run --package emissary-core --cargo-profile testnet
+    - name: cargo-nextest emissary-util
+      run:
+        cargo nextest run --package emissary-util --cargo-profile testnet
