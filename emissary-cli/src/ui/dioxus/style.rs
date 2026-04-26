@@ -367,6 +367,191 @@ body {
 .time-btn.active { background: var(--em-accent); color: #fff; border-color: var(--em-accent); }
 
 .bandwidth-controls { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+
+.settings-card {
+  background: var(--em-bg-surface);
+  border-radius: 12px;
+  border: 1px solid var(--em-border);
+  display: flex;
+  flex-direction: column;
+  max-height: 750px;
+}
+
+.settings-container {
+  padding: 16px;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.settings-footer {
+  border-top: 1px solid var(--em-border-sub);
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.settings-section { padding: 10px; display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.settings-section-title {
+  display: flex; justify-content: flex-start; align-items: center; gap: 14px;
+  font-size: 17px; color: var(--em-text-inv); font-weight: 600; margin-bottom: 8px;
+}
+
+/* Two-column settings grid: label column auto-sizes to widest label in the section */
+.sf-grid {
+  display: grid;
+  grid-template-columns: max-content auto;
+  gap: 6px 12px;
+  align-items: center;
+}
+.sf-label { font-size: 13px; color: var(--em-text-3); }
+.sf-grid input[type="text"] { width: auto; max-width: 180px; }
+.sf-input-short { max-width: 88px !important; }
+.sf-input-wide  { max-width: 300px !important; }
+
+/* Paired sub-fields (e.g. length + count on one row) */
+.sf-pair { display: flex; align-items: center; gap: 8px; }
+.sf-pair-label { font-size: 12px; color: var(--em-text-4); }
+.sf-pair input[type="text"] { width: 64px; }
+
+/* Dim body rows when the section is disabled */
+.sf-disabled .sf-grid,
+.sf-disabled .sf-ip-cols { opacity: 0.4; pointer-events: none; }
+
+/* Side-by-side IPv4 / IPv6 panels inside a transport section */
+.sf-ip-cols { display: flex; gap: 12px; width: fit-content; }
+.sf-ip-col {
+  width: fit-content;
+  background: var(--em-bg-raised);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sf-ip-col-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--em-text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.sf-ip-col .sf-grid { margin-top: 0; }
+
+label.field-label { font-size: 13px; color: var(--em-text-3); }
+
+input[type="text"],
+input[type="number"],
+textarea {
+  background: var(--em-bg-raised);
+  border: 1px solid var(--em-border);
+  border-radius: 6px;
+  color: var(--em-text-1);
+  font-size: 13px;
+  padding: 8px 10px;
+  width: 100%;
+  outline: none;
+}
+input[type="text"]::placeholder,
+textarea::placeholder { color: var(--em-text-3); }
+input[type="text"]:focus,
+textarea:focus { border-color: var(--em-focus); }
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.checkbox-row input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  border: 2px solid var(--em-border);
+  border-radius: 4px;
+  background: var(--em-bg-raised);
+  cursor: pointer;
+  flex-shrink: 0;
+  display: grid;
+  place-content: center;
+  transition: background 0.12s, border-color 0.12s;
+}
+.checkbox-row input[type="checkbox"]::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  transform: scale(0);
+  transition: transform 0.1s;
+  background: #fff;
+  clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+}
+.checkbox-row input[type="checkbox"]:checked {
+  background: var(--em-focus);
+  border-color: var(--em-focus);
+}
+.checkbox-row input[type="checkbox"]:checked::before {
+  transform: scale(1);
+}
+.checkbox-row span {
+  font-size: 13px;
+  color: var(--em-text-3);
+  }
+
+.tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--em-border-sub);
+  margin-bottom: 12px;
+}
+
+.tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  color: var(--em-text-5);
+  font-size: 14px;
+  transition: color 0.15s, border-color 0.15s;
+}
+.tab-btn svg { width: 18px; height: 18px; fill: currentColor; }
+.tab-btn.active { color: var(--em-focus); border-bottom-color: var(--em-focus); }
+
+.btn {
+  padding: 8px 18px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.15s;
+}
+.btn-primary            { background: var(--em-accent); color: #fff; }
+.btn-primary:hover      { background: var(--em-accent-hover); }
+.btn-secondary          { background: var(--em-bg-raised); color: var(--em-text-2); }
+.btn-secondary:hover    { background: #4b5563; }
+.btn-danger             { background: var(--em-danger); color: #fff; }
+.btn-icon {
+  background: none; border: none; cursor: pointer; padding: 3px;
+  display: inline-flex; align-items: center; color: var(--em-text-3);
+}
+.btn-icon:hover { color: var(--em-text-inv); }
+.btn-icon svg { width: 18px; height: 18px; fill: currentColor; }
+
+.status-ok    { color: var(--em-success); font-size: 13px; padding: 6px 0; }
+.status-error { color: var(--em-danger);  font-size: 13px; padding: 6px 0; }
+
+.input-error {
+  border-color: var(--em-danger) !important;
+  background: rgba(227,66,52,0.06) !important;
+}
 "#;
 
 /// Script to remove right-click menu from desktop view.

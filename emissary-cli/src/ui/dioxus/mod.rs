@@ -20,8 +20,9 @@ use crate::{
     address_book::AddressBookHandle,
     config::EmissaryConfig,
     ui::dioxus::{
+        config::save_router_config,
         style::global_css,
-        types::{RouterState, RouterStatus, SidebarSelection, Traffic},
+        types::{RouterState, RouterStatus, Settings, SettingsTab, SidebarSelection, Traffic},
     },
 };
 
@@ -41,7 +42,9 @@ use std::{
 
 mod bandwidth;
 mod bandwidth_monitor;
+mod config;
 mod dashboard;
+mod settings;
 mod sidebar;
 mod style;
 mod svg;
@@ -99,6 +102,9 @@ struct AppState {
     /// Event subscriber for the router.
     events: Arc<Mutex<EventSubscriber>>,
 
+    /// Settings info.
+    settings: Settings,
+
     /// TX channel for sending shutdown signal.
     shutdown_tx: Sender<()>,
 
@@ -134,8 +140,9 @@ impl AppState {
         Self {
             address_book_handle,
             base_path,
-            config,
             events,
+            settings: Settings::new(&config),
+            config,
             shutdown_tx,
             sidebar_collapsed: false,
             state: RouterState::new(base64_encode(router_id.to_vec()).leak()),
@@ -233,6 +240,38 @@ impl AppState {
             }
         }
     }
+
+    pub fn save_settings(&mut self) -> Result<(), String> {
+        match self.settings.active_tab {
+            SettingsTab::Transports => {
+                if !self.settings.ntcp2.enabled && !self.settings.ssu2.enabled {
+                    return Err(String::from(
+                        "At least one transport (NTCP2 or SSU2) must be enabled",
+                    ));
+                }
+
+                self.config.ntcp2 = TryInto::<Option<crate::config::Ntcp2Config>>::try_into(
+                    self.settings.ntcp2.clone(),
+                )?;
+                self.config.ssu2 = TryInto::<Option<crate::config::Ssu2Config>>::try_into(
+                    self.settings.ssu2.clone(),
+                )?;
+                self.config.port_forwarding =
+                    TryInto::<Option<crate::config::PortForwardingConfig>>::try_into(
+                        self.settings.port_forwarding.clone(),
+                    )?;
+            }
+            SettingsTab::Client => {}
+            SettingsTab::Proxies => {}
+            SettingsTab::Tunnels => {}
+            SettingsTab::Advanced => {}
+        }
+
+        save_router_config(self.base_path.join("router.toml"), &self.config);
+        self.settings.dirty = false;
+
+        Ok(())
+    }
 }
 
 #[component]
@@ -273,9 +312,9 @@ fn App() -> Element {
                 match view {
                     SidebarSelection::Dashboard => rsx! { dashboard::Dashboard {} },
                     SidebarSelection::Bandwidth => rsx! { bandwidth::BandwidthView {} },
-                    SidebarSelection::HiddenServices => rsx! {},
-                    SidebarSelection::Settings => rsx! {},
                     SidebarSelection::AddressBook => rsx! {},
+                    SidebarSelection::HiddenServices => rsx! {},
+                    SidebarSelection::Settings => rsx! { settings::SettingsView {} },
                 }
             }
         }

@@ -18,7 +18,13 @@
 
 use std::time::Instant;
 
-use crate::ui::dioxus::bandwidth_monitor::{BandwidthMonitor, TimeRange};
+use crate::{
+    config::EmissaryConfig,
+    ui::dioxus::{
+        bandwidth_monitor::{BandwidthMonitor, TimeRange},
+        config::{Ntcp2Config, PortForwardingConfig, Ssu2Config},
+    },
+};
 
 /// Selected view in the sidebar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,6 +145,70 @@ impl Traffic {
                 show_outbound: true,
                 range: TimeRange::default(),
             },
+        }
+    }
+}
+
+/// Settings tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsTab {
+    Transports,
+    Client,
+    Proxies,
+    Tunnels,
+    Advanced,
+}
+
+/// Settings status.
+#[derive(Debug, Clone)]
+#[allow(unused)]
+pub enum SettingsStatus {
+    Idle(SettingsTab),
+    Saved(SettingsTab),
+    Error(SettingsTab, String),
+}
+
+impl SettingsStatus {
+    #[allow(unused)]
+    /// Return current tab.
+    pub fn tab(&self) -> SettingsTab {
+        match self {
+            Self::Idle(t) | Self::Saved(t) | Self::Error(t, _) => *t,
+        }
+    }
+}
+
+/// Settings info.
+pub struct Settings {
+    /// Does the settings view contain unsaved changes.
+    pub dirty: bool,
+
+    /// Active tab.
+    pub active_tab: SettingsTab,
+
+    /// Settings status.
+    pub status: SettingsStatus,
+
+    /// NTCP2 config.
+    pub ntcp2: Ntcp2Config,
+
+    /// SSU2 settings.
+    pub ssu2: Ssu2Config,
+
+    /// Port forwarding settings.
+    pub port_forwarding: PortForwardingConfig,
+}
+
+impl Settings {
+    /// Create new `Settings`.
+    pub fn new(config: &EmissaryConfig) -> Self {
+        Self {
+            dirty: false,
+            active_tab: SettingsTab::Transports,
+            status: SettingsStatus::Idle(SettingsTab::Transports),
+            ntcp2: Ntcp2Config::from(config),
+            ssu2: Ssu2Config::from(config),
+            port_forwarding: PortForwardingConfig::from(config),
         }
     }
 }
