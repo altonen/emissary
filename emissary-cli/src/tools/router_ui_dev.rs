@@ -117,7 +117,7 @@ impl RouterState {
 /// Start the router UI (either native or web) in development mode.
 ///
 /// The actual router is not started and the router UI is fed mock data.
-pub async fn run() {
+pub async fn run(path: Option<String>) {
     let (shutdown_tx, _shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
     let metrics_handle = TokioRuntime::register_metrics(vec![], None);
     let (manager, subscriber, handle) = EventManager::<TokioRuntime>::new(None, metrics_handle);
@@ -130,10 +130,23 @@ pub async fn run() {
         use crate::{cli::Arguments, config::Config};
         use emissary_core::primitives::RouterId;
         use emissary_util::storage::Storage;
+        use std::path::PathBuf;
         use tempfile::tempdir;
 
-        let dir = tempdir().expect("to succeed");
-        let base_path = dir.path().to_owned();
+        let (base_path, _dir) = match path {
+            Some(path) => {
+                if let Err(error) = tokio::fs::create_dir_all(&path).await {
+                    eprintln!("failed to create directory ({path}): {error:?}");
+                    std::process::exit(1)
+                }
+
+                (PathBuf::from(path), None)
+            }
+            None => {
+                let dir = tempdir().expect("to succeed");
+                (dir.path().to_owned(), Some(dir))
+            }
+        };
         let storage = Storage::new::<TokioRuntime>(Some(base_path.clone())).await.unwrap();
         let mut config =
             Config::parse::<TokioRuntime>(&Arguments::default(), &storage).await.unwrap();
@@ -160,10 +173,23 @@ pub async fn run() {
         use crate::{cli::Arguments, config::Config};
         use emissary_core::primitives::RouterId;
         use emissary_util::storage::Storage;
+        use std::path::PathBuf;
         use tempfile::tempdir;
 
-        let dir = tempdir().expect("to succeed");
-        let base_path = dir.path().to_owned();
+        let (base_path, _dir) = match path {
+            Some(path) => {
+                if let Err(error) = tokio::fs::create_dir_all(&path).await {
+                    eprintln!("failed to create directory ({path}): {error:?}");
+                    std::process::exit(1)
+                }
+
+                (PathBuf::from(path), None)
+            }
+            None => {
+                let dir = tempdir().expect("to succeed");
+                (dir.path().to_owned(), Some(dir))
+            }
+        };
         let storage = Storage::new::<TokioRuntime>(Some(base_path.clone())).await.unwrap();
         let mut config =
             Config::parse::<TokioRuntime>(&Arguments::default(), &storage).await.unwrap();

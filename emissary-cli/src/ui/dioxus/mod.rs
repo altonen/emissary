@@ -269,7 +269,16 @@ impl AppState {
                     self.settings.sam.clone(),
                 )?;
             }
-            SettingsTab::Proxies => {}
+            SettingsTab::Proxies => {
+                self.config.http_proxy =
+                    TryInto::<Option<crate::config::HttpProxyConfig>>::try_into(
+                        self.settings.http_proxy.clone(),
+                    )?;
+                self.config.socks_proxy =
+                    TryInto::<Option<crate::config::SocksProxyConfig>>::try_into(
+                        self.settings.socks_proxy.clone(),
+                    )?;
+            }
             SettingsTab::Tunnels => {}
             SettingsTab::Advanced => {}
         }

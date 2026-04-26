@@ -22,7 +22,10 @@ use crate::{
     config::EmissaryConfig,
     ui::dioxus::{
         bandwidth_monitor::{BandwidthMonitor, TimeRange},
-        config::{I2cpConfig, Ntcp2Config, PortForwardingConfig, SamConfig, Ssu2Config},
+        config::{
+            HttpProxyConfig, I2cpConfig, Ntcp2Config, PortForwardingConfig, SamConfig,
+            SocksProxyConfig, Ssu2Config,
+        },
     },
 };
 
@@ -203,6 +206,12 @@ pub struct Settings {
 
     /// SAMv3.
     pub sam: SamConfig,
+
+    /// HTTP proxy.
+    pub http_proxy: HttpProxyConfig,
+
+    /// SOCKS proxy.
+    pub socks_proxy: SocksProxyConfig,
 }
 
 impl Settings {
@@ -217,6 +226,8 @@ impl Settings {
             sam: SamConfig::from(config),
             ssu2: Ssu2Config::from(config),
             status: SettingsStatus::Idle(SettingsTab::Transports),
+            http_proxy: HttpProxyConfig::from(config),
+            socks_proxy: SocksProxyConfig::from(config),
         }
     }
 }

@@ -25,6 +25,7 @@ use crate::ui::dioxus::{
 use dioxus::prelude::*;
 
 mod client;
+mod proxies;
 mod transports;
 
 #[component]
@@ -122,7 +123,7 @@ pub fn SettingsView() -> Element {
                     match active_tab {
                         SettingsTab::Transports => rsx! { transports::TransportsTab {} },
                         SettingsTab::Client => rsx! { client::ClientTab {} },
-                        SettingsTab::Proxies => rsx! { },
+                        SettingsTab::Proxies => rsx! { proxies::ProxiesTab {} },
                         SettingsTab::Tunnels => rsx! { },
                         SettingsTab::Advanced => rsx! { },
                     }

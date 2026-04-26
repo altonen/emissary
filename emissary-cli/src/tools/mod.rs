@@ -100,7 +100,13 @@ pub enum RouterCommand {
     ///
     /// The actual router is not started and the router UI is fed mock data.
     #[cfg(any(feature = "native-ui", feature = "web-ui", feature = "dioxus"))]
-    RouterUiDev,
+    RouterUiDev {
+        /// Path where router files are stored.
+        ///
+        /// If not specified, a random directory is created.
+        #[arg(short = 'p', long, value_name = "PATH")]
+        path: Option<String>,
+    },
 }
 
 impl RouterCommand {
@@ -139,7 +145,7 @@ impl RouterCommand {
                 path,
             } => devnet::spawn_network(num_floodfills, num_routers, path).await,
             #[cfg(any(feature = "native-ui", feature = "web-ui", feature = "dioxus"))]
-            RouterCommand::RouterUiDev => router_ui_dev::run().await,
+            RouterCommand::RouterUiDev { path } => router_ui_dev::run(path).await,
         }
 
         std::process::exit(0);

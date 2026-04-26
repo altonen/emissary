@@ -23,6 +23,13 @@ use std::{
     path::PathBuf,
 };
 
+/// Save router configuration to disk.
+pub fn save_router_config(path: PathBuf, config: &EmissaryConfig) {
+    if let Ok(serialized) = toml::to_string(config) {
+        let _ = std::fs::write(path, serialized);
+    }
+}
+
 /// NTCP2 config.
 #[derive(Default, Clone)]
 pub struct Ntcp2Config {
@@ -364,9 +371,214 @@ impl TryInto<Option<crate::config::SamConfig>> for SamConfig {
     }
 }
 
-/// Save router configuration to disk.
-pub fn save_router_config(path: PathBuf, config: &EmissaryConfig) {
-    if let Ok(serialized) = toml::to_string(config) {
-        let _ = std::fs::write(path, serialized);
+#[derive(Debug, Clone, Default)]
+pub struct TunnelConfig {
+    pub inbound_len: Option<String>,
+    pub inbound_count: Option<String>,
+    pub outbound_len: Option<String>,
+    pub outbound_count: Option<String>,
+}
+
+impl From<&Option<crate::config::TunnelConfig>> for TunnelConfig {
+    fn from(value: &Option<crate::config::TunnelConfig>) -> Self {
+        let Some(config) = value else {
+            return Default::default();
+        };
+
+        Self {
+            inbound_len: Some(config.inbound_len.to_string()),
+            inbound_count: Some(config.inbound_count.to_string()),
+            outbound_len: Some(config.outbound_len.to_string()),
+            outbound_count: Some(config.outbound_count.to_string()),
+        }
+    }
+}
+
+impl TryInto<Option<crate::config::TunnelConfig>> for TunnelConfig {
+    type Error = String;
+
+    fn try_into(self) -> Result<Option<crate::config::TunnelConfig>, String> {
+        if self.inbound_len.as_ref().is_none_or(|value| value.is_empty())
+            && self.inbound_count.as_ref().is_none_or(|value| value.is_empty())
+            && self.outbound_len.as_ref().is_none_or(|value| value.is_empty())
+            && self.outbound_count.as_ref().is_none_or(|value| value.is_empty())
+        {
+            return Ok(None);
+        }
+
+        Ok(Some(crate::config::TunnelConfig {
+            inbound_len: self
+                .inbound_len
+                .and_then(|x| x.parse::<usize>().ok())
+                .ok_or(String::from("Invalid inbound tunnel length"))?,
+            inbound_count: self
+                .inbound_count
+                .and_then(|x| x.parse::<usize>().ok())
+                .ok_or(String::from("Invalid inbound tunnel count"))?,
+            outbound_len: self
+                .outbound_len
+                .and_then(|x| x.parse::<usize>().ok())
+                .ok_or(String::from("Invalid outbound tunnel length"))?,
+            outbound_count: self
+                .outbound_count
+                .and_then(|x| x.parse::<usize>().ok())
+                .ok_or(String::from("Invalid outbound tunnel count"))?,
+        }))
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct I2cpOptions {
+    pub encryption: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct HttpProxyConfig {
+    pub port: Option<String>,
+    pub host: Option<String>,
+    pub outproxy: Option<String>,
+    pub tunnel_config: TunnelConfig,
+    pub i2cp: I2cpOptions,
+    pub enabled: bool,
+}
+
+impl From<&EmissaryConfig> for HttpProxyConfig {
+    fn from(value: &EmissaryConfig) -> Self {
+        let Some(ref config) = value.http_proxy else {
+            return Self {
+                enabled: false,
+                ..Default::default()
+            };
+        };
+
+        Self {
+            enabled: true,
+            port: Some(config.port.to_string()),
+            host: Some(config.host.clone()),
+            outproxy: config.outproxy.clone(),
+            tunnel_config: TunnelConfig::from(&config.tunnel_config),
+            i2cp: match config.i2cp {
+                None => I2cpOptions::default(),
+                Some(ref config) => I2cpOptions {
+                    encryption: config.lease_set_enc_type.clone(),
+                },
+            },
+        }
+    }
+}
+
+impl TryInto<Option<crate::config::HttpProxyConfig>> for HttpProxyConfig {
+    type Error = String;
+
+    fn try_into(self) -> Result<Option<crate::config::HttpProxyConfig>, String> {
+        if !self.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(crate::config::HttpProxyConfig {
+            port: match self.port {
+                Some(port) =>
+                    port.parse::<u16>().map_err(|_| String::from("Invalid HTTP proxy port"))?,
+                None => 0,
+            },
+            host: {
+                let host = self.host.ok_or_else(|| String::from("Invalid HTTP proxy host"))?;
+
+                if host.is_empty() || host.parse::<Ipv4Addr>().is_err() {
+                    return Err(String::from("Invalid HTTP proxy host"));
+                }
+
+                host
+            },
+            tunnel_config: self.tunnel_config.try_into()?,
+            outproxy: {
+                if self.outproxy.as_ref().is_some_and(|value| !value.is_empty()) {
+                    self.outproxy
+                } else {
+                    None
+                }
+            },
+            i2cp: match self.i2cp.encryption {
+                None => None,
+                Some(encryption) if encryption.is_empty() => None,
+                Some(encryption) => Some(crate::config::I2cpOptions {
+                    lease_set_enc_type: Some(encryption),
+                }),
+            },
+        }))
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SocksProxyConfig {
+    pub port: Option<String>,
+    pub host: Option<String>,
+    pub outproxy: Option<String>,
+    pub i2cp: I2cpOptions,
+    pub enabled: bool,
+}
+
+impl From<&EmissaryConfig> for SocksProxyConfig {
+    fn from(value: &EmissaryConfig) -> Self {
+        let Some(ref config) = value.socks_proxy else {
+            return Self {
+                enabled: false,
+                ..Default::default()
+            };
+        };
+
+        Self {
+            enabled: true,
+            port: Some(config.port.to_string()),
+            host: Some(config.host.clone()),
+            outproxy: config.outproxy.clone(),
+            i2cp: match config.i2cp {
+                None => I2cpOptions::default(),
+                Some(ref config) => I2cpOptions {
+                    encryption: config.lease_set_enc_type.clone(),
+                },
+            },
+        }
+    }
+}
+
+impl TryInto<Option<crate::config::SocksProxyConfig>> for SocksProxyConfig {
+    type Error = String;
+
+    fn try_into(self) -> Result<Option<crate::config::SocksProxyConfig>, String> {
+        if !self.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(crate::config::SocksProxyConfig {
+            port: match self.port {
+                Some(port) =>
+                    port.parse::<u16>().map_err(|_| String::from("Invalid SOCKS proxy port"))?,
+                None => 0,
+            },
+            host: {
+                let host = self.host.ok_or_else(|| String::from("Invalid SOCKS proxy host"))?;
+
+                if host.is_empty() || host.parse::<Ipv4Addr>().is_err() {
+                    return Err(String::from("Invalid SOCKS proxy host"));
+                }
+
+                host
+            },
+            outproxy: {
+                if self.outproxy.as_ref().is_some_and(|value| !value.is_empty()) {
+                    self.outproxy
+                } else {
+                    None
+                }
+            },
+            i2cp: match self.i2cp.encryption {
+                None => None,
+                Some(encryption) if encryption.is_empty() => None,
+                Some(encryption) => Some(crate::config::I2cpOptions {
+                    lease_set_enc_type: Some(encryption),
+                }),
+            },
+        }))
     }
 }
