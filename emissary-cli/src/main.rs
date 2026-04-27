@@ -55,8 +55,6 @@ mod tools;
 mod tunnel;
 mod ui;
 
-
-
 /// Logging target for the file.
 const LOG_TARGET: &str = "emissary";
 
@@ -474,10 +472,10 @@ fn main() -> anyhow::Result<()> {
 }
 
 #[cfg(all(feature = "native-ui", feature = "web-ui"))]
-fn main() -> anyhow::Result<()> {
-    let runtime = tokio::runtime::Runtime::new()?;
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let (shutdown_tx, shutdown_rx) = channel(1);
-    let arguments = runtime.block_on(parse_arguments());
+    let arguments = parse_arguments().await;
     let RouterContext {
         router,
         port_mapper,
@@ -488,30 +486,30 @@ fn main() -> anyhow::Result<()> {
         address_book_handle,
         router_id,
         ..
-    } = runtime.block_on(setup_router::<TokioRuntime>(arguments))?;
+    } = setup_router::<TokioRuntime>(arguments).await?;
 
     let use_web_ui = router_ui_config.as_ref().and_then(|c| c.web_ui).unwrap_or(false);
 
     if use_web_ui {
         match router_ui_config {
             None => {
-                runtime.block_on(router_event_loop(router, port_mapper, shutdown_rx));
+                router_event_loop(router, port_mapper, shutdown_rx).await;
             }
             Some(RouterUiConfig {
                 refresh_interval,
                 port,
                 ..
             }) => {
-                runtime.spawn(async move {
+                tokio::spawn(async move {
                     ui::web::RouterUi::new(events, port, refresh_interval, shutdown_tx).run().await;
                 });
-                runtime.block_on(router_event_loop(router, port_mapper, shutdown_rx));
+                router_event_loop(router, port_mapper, shutdown_rx).await;
             }
         }
     } else {
         match router_ui_config {
             None => {
-                runtime.block_on(router_event_loop(router, port_mapper, shutdown_rx));
+                router_event_loop(router, port_mapper, shutdown_rx).await;
             }
             Some(RouterUiConfig { .. }) => {
                 tokio::spawn(async move {
