@@ -279,7 +279,15 @@ impl AppState {
                         self.settings.socks_proxy.clone(),
                     )?;
             }
-            SettingsTab::Tunnels => {}
+            SettingsTab::Tunnels => {
+                self.config.exploratory =
+                    TryInto::<Option<crate::config::ExploratoryConfig>>::try_into(
+                        self.settings.exploratory.clone(),
+                    )?;
+                self.config.transit = TryInto::<Option<crate::config::TransitConfig>>::try_into(
+                    self.settings.transit.clone(),
+                )?;
+            }
             SettingsTab::Advanced => {}
         }
 

@@ -27,6 +27,7 @@ use dioxus::prelude::*;
 mod client;
 mod proxies;
 mod transports;
+mod tunnels;
 
 #[component]
 pub fn SettingsView() -> Element {
@@ -124,7 +125,7 @@ pub fn SettingsView() -> Element {
                         SettingsTab::Transports => rsx! { transports::TransportsTab {} },
                         SettingsTab::Client => rsx! { client::ClientTab {} },
                         SettingsTab::Proxies => rsx! { proxies::ProxiesTab {} },
-                        SettingsTab::Tunnels => rsx! { },
+                        SettingsTab::Tunnels => rsx! { tunnels::TunnelsTab {} },
                         SettingsTab::Advanced => rsx! { },
                     }
                 }

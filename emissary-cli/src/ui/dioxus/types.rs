@@ -23,8 +23,8 @@ use crate::{
     ui::dioxus::{
         bandwidth_monitor::{BandwidthMonitor, TimeRange},
         config::{
-            HttpProxyConfig, I2cpConfig, Ntcp2Config, PortForwardingConfig, SamConfig,
-            SocksProxyConfig, Ssu2Config,
+            ExploratoryConfig, HttpProxyConfig, I2cpConfig, Ntcp2Config, PortForwardingConfig,
+            SamConfig, SocksProxyConfig, Ssu2Config, TransitConfig,
         },
     },
 };
@@ -212,6 +212,12 @@ pub struct Settings {
 
     /// SOCKS proxy.
     pub socks_proxy: SocksProxyConfig,
+
+    /// Transit.
+    pub transit: TransitConfig,
+
+    /// Exploratory.
+    pub exploratory: ExploratoryConfig,
 }
 
 impl Settings {
@@ -220,14 +226,16 @@ impl Settings {
         Self {
             active_tab: SettingsTab::Transports,
             dirty: false,
+            exploratory: ExploratoryConfig::from(config),
+            http_proxy: HttpProxyConfig::from(config),
             i2cp: I2cpConfig::from(config),
             ntcp2: Ntcp2Config::from(config),
             port_forwarding: PortForwardingConfig::from(config),
             sam: SamConfig::from(config),
+            socks_proxy: SocksProxyConfig::from(config),
             ssu2: Ssu2Config::from(config),
             status: SettingsStatus::Idle(SettingsTab::Transports),
-            http_proxy: HttpProxyConfig::from(config),
-            socks_proxy: SocksProxyConfig::from(config),
+            transit: TransitConfig::from(config),
         }
     }
 }

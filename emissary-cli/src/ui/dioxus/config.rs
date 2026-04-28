@@ -20,6 +20,7 @@ use crate::config::EmissaryConfig;
 
 use std::{
     net::{Ipv4Addr, Ipv6Addr},
+    num::NonZeroUsize,
     path::PathBuf,
 };
 
@@ -579,6 +580,109 @@ impl TryInto<Option<crate::config::SocksProxyConfig>> for SocksProxyConfig {
                     lease_set_enc_type: Some(encryption),
                 }),
             },
+        }))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ExploratoryConfig {
+    pub inbound_len: Option<String>,
+    pub inbound_count: Option<String>,
+    pub outbound_len: Option<String>,
+    pub outbound_count: Option<String>,
+}
+
+impl From<&EmissaryConfig> for ExploratoryConfig {
+    fn from(value: &EmissaryConfig) -> Self {
+        match &value.exploratory {
+            Some(config) => Self {
+                inbound_len: Some(config.inbound_len.to_string()),
+                inbound_count: Some(config.inbound_count.to_string()),
+                outbound_len: Some(config.outbound_len.to_string()),
+                outbound_count: Some(config.outbound_count.to_string()),
+            },
+            None => Self {
+                inbound_len: None,
+                inbound_count: None,
+                outbound_len: None,
+                outbound_count: None,
+            },
+        }
+    }
+}
+
+impl TryInto<Option<crate::config::ExploratoryConfig>> for ExploratoryConfig {
+    type Error = String;
+
+    fn try_into(self) -> Result<Option<crate::config::ExploratoryConfig>, String> {
+        if self.inbound_len.is_none()
+            && self.inbound_count.is_none()
+            && self.outbound_len.is_none()
+            && self.outbound_count.is_none()
+        {
+            return Ok(None);
+        }
+
+        Ok(Some(crate::config::ExploratoryConfig {
+            inbound_len: self
+                .inbound_len
+                .and_then(|x| x.parse::<NonZeroUsize>().ok())
+                .ok_or(String::from("Invalid inbound tunnel length"))?
+                .into(),
+            inbound_count: self
+                .inbound_count
+                .and_then(|x| x.parse::<NonZeroUsize>().ok())
+                .ok_or(String::from("Invalid inbound tunnel count"))?
+                .into(),
+            outbound_len: self
+                .outbound_len
+                .and_then(|x| x.parse::<NonZeroUsize>().ok())
+                .ok_or(String::from("Invalid inbound tunnel length"))?
+                .into(),
+            outbound_count: self
+                .outbound_count
+                .and_then(|x| x.parse::<NonZeroUsize>().ok())
+                .ok_or(String::from("Invalid inbound count length"))?
+                .into(),
+        }))
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TransitConfig {
+    pub max_tunnels: Option<String>,
+    pub enabled: bool,
+}
+
+impl From<&EmissaryConfig> for TransitConfig {
+    fn from(value: &EmissaryConfig) -> Self {
+        let Some(ref config) = value.transit else {
+            return TransitConfig {
+                enabled: false,
+                ..Default::default()
+            };
+        };
+
+        Self {
+            max_tunnels: config.max_tunnels.map(|v| v.to_string()),
+            enabled: true,
+        }
+    }
+}
+
+impl TryInto<Option<crate::config::TransitConfig>> for TransitConfig {
+    type Error = String;
+
+    fn try_into(self) -> Result<Option<crate::config::TransitConfig>, String> {
+        if !self.enabled {
+            return Ok(None);
+        }
+        Ok(Some(crate::config::TransitConfig {
+            max_tunnels: self
+                .max_tunnels
+                .map(|t| t.parse::<NonZeroUsize>().map(usize::from))
+                .transpose()
+                .map_err(|_| String::from("Invalid transit tunnel count"))?,
         }))
     }
 }
