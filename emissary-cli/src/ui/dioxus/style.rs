@@ -552,6 +552,12 @@ textarea:focus { border-color: var(--em-focus); }
   border-color: var(--em-danger) !important;
   background: rgba(227,66,52,0.06) !important;
 }
+.form-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-bottom: 4px;
+}
 "#;
 
 /// Script to remove right-click menu from desktop view.

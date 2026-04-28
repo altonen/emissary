@@ -686,3 +686,20 @@ impl TryInto<Option<crate::config::TransitConfig>> for TransitConfig {
         }))
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct AdvancedConfig {
+    pub floodfill: bool,
+    pub allow_local: bool,
+    pub insecure_tunnels: bool,
+}
+
+impl From<&EmissaryConfig> for AdvancedConfig {
+    fn from(value: &EmissaryConfig) -> Self {
+        Self {
+            floodfill: value.floodfill,
+            allow_local: value.allow_local,
+            insecure_tunnels: value.insecure_tunnels,
+        }
+    }
+}

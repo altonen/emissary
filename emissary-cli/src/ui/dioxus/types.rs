@@ -16,18 +16,18 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::time::Instant;
-
 use crate::{
     config::EmissaryConfig,
     ui::dioxus::{
         bandwidth_monitor::{BandwidthMonitor, TimeRange},
         config::{
-            ExploratoryConfig, HttpProxyConfig, I2cpConfig, Ntcp2Config, PortForwardingConfig,
-            SamConfig, SocksProxyConfig, Ssu2Config, TransitConfig,
+            AdvancedConfig, ExploratoryConfig, HttpProxyConfig, I2cpConfig, Ntcp2Config,
+            PortForwardingConfig, SamConfig, SocksProxyConfig, Ssu2Config, TransitConfig,
         },
     },
 };
+
+use std::time::Instant;
 
 /// Selected view in the sidebar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -218,6 +218,9 @@ pub struct Settings {
 
     /// Exploratory.
     pub exploratory: ExploratoryConfig,
+
+    /// Advanced.
+    pub advanced: AdvancedConfig,
 }
 
 impl Settings {
@@ -225,6 +228,7 @@ impl Settings {
     pub fn new(config: &EmissaryConfig) -> Self {
         Self {
             active_tab: SettingsTab::Transports,
+            advanced: AdvancedConfig::from(config),
             dirty: false,
             exploratory: ExploratoryConfig::from(config),
             http_proxy: HttpProxyConfig::from(config),

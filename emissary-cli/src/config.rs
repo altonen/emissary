@@ -199,7 +199,7 @@ impl From<PortForwardingConfig> for PortMapperConfig {
     }
 }
 
-#[derive(Default, Debug, Clone, Copy, clap::ValueEnum, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, clap::ValueEnum, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Theme {
     #[serde(alias = "light")]
     Light,

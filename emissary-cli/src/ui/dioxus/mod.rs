@@ -18,7 +18,7 @@
 
 use crate::{
     address_book::AddressBookHandle,
-    config::EmissaryConfig,
+    config::{EmissaryConfig, Theme},
     ui::dioxus::{
         config::save_router_config,
         style::global_css,
@@ -117,6 +117,9 @@ struct AppState {
     /// Router status.
     status: RouterStatus,
 
+    /// Router UI theme.
+    theme: Theme,
+
     /// Traffic info, shared across reconnections.
     traffic: Arc<Mutex<Traffic>>,
 
@@ -141,6 +144,10 @@ impl AppState {
             address_book_handle,
             base_path,
             events,
+            theme: match config.router_ui {
+                None => Theme::Dark,
+                Some(ref config) => config.theme,
+            },
             settings: Settings::new(&config),
             config,
             shutdown_tx,
@@ -288,7 +295,24 @@ impl AppState {
                     self.settings.transit.clone(),
                 )?;
             }
-            SettingsTab::Advanced => {}
+            SettingsTab::Advanced => {
+                self.config.floodfill = self.settings.advanced.floodfill;
+                self.config.allow_local = self.settings.advanced.allow_local;
+                self.config.insecure_tunnels = self.settings.advanced.insecure_tunnels;
+
+                match &mut self.config.router_ui {
+                    None => {
+                        self.config.router_ui = Some(crate::config::RouterUiConfig {
+                            theme: self.theme,
+                            refresh_interval: 5,
+                            port: None,
+                        });
+                    }
+                    Some(config) => {
+                        config.theme = self.theme;
+                    }
+                }
+            }
         }
 
         save_router_config(self.base_path.join("router.toml"), &self.config);
@@ -327,10 +351,16 @@ fn App() -> Element {
         });
     });
 
+    let app_class = if state.read().theme == Theme::Dark {
+        "app"
+    } else {
+        "app em-light"
+    };
+
     rsx! {
         style { { global_css() } }
         div {
-            class: "app",
+            class: app_class,
             sidebar::Sidebar { }
             div { class: "main-content",
                 match view {
