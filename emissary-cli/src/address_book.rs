@@ -430,7 +430,6 @@ impl AddressBookManager {
                     break;
                 }
                 Err(_) => {
-                    host_modified_times.remove(hosts_url);
                     tokio::time::sleep(RETRY_BACKOFF).await;
                 }
             }
@@ -464,7 +463,6 @@ impl AddressBookManager {
                         break;
                     }
                     Err(_) => {
-                        host_modified_times.remove(subscription);
                         tokio::time::sleep(RETRY_BACKOFF).await;
                     }
                 }
