@@ -374,14 +374,6 @@ impl AddressBookManager {
         http_host: String,
         http_proxy_ready_rx: oneshot::Receiver<()>,
     ) {
-        let Some(hosts_url) = &self.hosts_url else {
-            tracing::debug!(
-                target: LOG_TARGET,
-                "address book download disabled",
-            );
-            return;
-        };
-
         if let Err(error) = http_proxy_ready_rx.await {
             tracing::error!(
                 target: LOG_TARGET,
@@ -395,7 +387,6 @@ impl AddressBookManager {
             target: LOG_TARGET,
             ?http_port,
             ?http_host,
-            ?hosts_url,
             subscriptions = ?self.subscriptions,
             "create address book",
         );
@@ -409,35 +400,24 @@ impl AddressBookManager {
         let mut addresses = HashMap::<String, (String, String)>::new();
         let mut host_modified_times = self.load_host_modified_times().await;
 
-        loop {
-            match Self::download(&client, hosts_url, host_modified_times.get(hosts_url)).await {
-                Ok(Response::NotModified) => {
-                    tracing::info!(
-                        target: LOG_TARGET,
-                        url = %hosts_url,
-                        "hosts.txt not changed since last download",
-                    );
-                    break;
-                }
-                Ok(Response::Modified { modified, body }) => {
-                    tracing::info!(
-                        target: LOG_TARGET,
-                        url = %hosts_url,
-                        "hosts.txt downloaded",
-                    );
-                    self.parse_and_merge(&mut addresses, body).await;
-                    host_modified_times.insert(hosts_url.to_string(), modified);
-                    break;
-                }
-                Err(_) => {
-                    tokio::time::sleep(RETRY_BACKOFF).await;
-                }
-            }
-        }
+        if let Some(url) = &self.hosts_url {
+            self.download_default_addressbook(
+                url,
+                &client,
+                &mut addresses,
+                &mut host_modified_times,
+            )
+            .await;
 
-        // save hosts to disk at this point as subscriptions might contain .i2p addresses
-        // which the http proxy must be able to resolve to .b32.i2p addresses
-        self.save_to_disk(addresses.clone()).await;
+            // save hosts to disk at this point as subscriptions might contain .i2p addresses
+            // which the http proxy must be able to resolve to .b32.i2p addresses
+            self.save_to_disk(addresses.clone()).await;
+        } else {
+            tracing::debug!(
+                target: LOG_TARGET,
+                "default address book download skipped",
+            );
+        };
 
         for subscription in &self.subscriptions {
             for _ in 0..SUBSCRIPTION_NUM_RETRIES {
@@ -471,6 +451,41 @@ impl AddressBookManager {
 
         self.save_to_disk(addresses).await;
         self.save_host_modified_times(host_modified_times).await;
+    }
+
+    /// Forever tries to download the default addressbook.
+    async fn download_default_addressbook(
+        &self,
+        url: &String,
+        client: &Client,
+        addresses: &mut HashMap<String, (String, String)>,
+        host_modified_times: &mut HashMap<String, Modified>,
+    ) {
+        loop {
+            match Self::download(client, url, host_modified_times.get(url)).await {
+                Ok(Response::NotModified) => {
+                    tracing::info!(
+                        target: LOG_TARGET,
+                        %url,
+                        "hosts.txt not changed since last download",
+                    );
+                    break;
+                }
+                Ok(Response::Modified { modified, body }) => {
+                    tracing::info!(
+                        target: LOG_TARGET,
+                        %url,
+                        "hosts.txt downloaded",
+                    );
+                    self.parse_and_merge(addresses, body).await;
+                    host_modified_times.insert(url.to_string(), modified);
+                    break;
+                }
+                Err(_) => {
+                    tokio::time::sleep(RETRY_BACKOFF).await;
+                }
+            }
+        }
     }
 
     /// Save `addresses` to disk.
