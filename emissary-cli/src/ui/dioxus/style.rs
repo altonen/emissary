@@ -558,6 +558,78 @@ textarea:focus { border-color: var(--em-focus); }
   align-items: flex-start;
   margin-bottom: 4px;
 }
+
+.search-bar {
+  display: flex;
+  align-items: center;
+  background: var(--em-bg-raised);
+  border: 1px solid var(--em-border);
+  border-radius: 6px;
+  padding: 0 10px;
+  gap: 6px;
+}
+.search-bar svg   { width: 16px; height: 16px; fill: var(--em-text-3); flex-shrink: 0; }
+.search-bar input {
+  background: none; border: none; flex: 1;
+  color: var(--em-text-1); font-size: 13px; outline: none; padding: 8px 0;
+}
+.search-bar input::placeholder { color: var(--em-text-3); }
+
+.table-header {
+  display: flex;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--em-border-sub);
+  font-size: 13px;
+  color: var(--em-text-3);
+  font-weight: 600;
+}
+.table-row {
+  display: flex;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--em-bg-row);
+  align-items: center;
+  font-size: 13px;
+  color: var(--em-text-3);
+}
+.table-row:last-child { border-bottom: none; }
+.col-name     { flex: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.col-port     { flex: 1; }
+.col-addr     { flex: 3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.col-dest     { flex: 3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.col-action   { flex: 1; display: flex; gap: 4px; }
+.col-hostname { flex: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.col-value    { flex: 4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.table-scroll { max-height: 670px; overflow-y: auto; }
+
+.empty-state {
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  padding: 32px 16px; gap: 8px;
+  color: var(--em-text-4); text-align: center;
+}
+.empty-state-icon     { font-size: 28px; opacity: 0.5; }
+.empty-state-title    { font-size: 14px; color: var(--em-text-3); font-weight: 500; }
+.empty-state-subtitle { font-size: 12px; color: var(--em-text-4); }
+
+.confirm-delete-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--em-danger); }
+.btn-confirm-yes {
+  background: var(--em-danger);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn-confirm-no  {
+  background: var(--em-bg-raised);
+  color: var(--em-text-2);
+  border: none;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
 "#;
 
 /// Script to remove right-click menu from desktop view.

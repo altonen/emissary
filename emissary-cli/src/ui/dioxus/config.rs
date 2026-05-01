@@ -21,15 +21,7 @@ use crate::config::EmissaryConfig;
 use std::{
     net::{Ipv4Addr, Ipv6Addr},
     num::NonZeroUsize,
-    path::PathBuf,
 };
-
-/// Save router configuration to disk.
-pub fn save_router_config(path: PathBuf, config: &EmissaryConfig) {
-    if let Ok(serialized) = toml::to_string(config) {
-        let _ = std::fs::write(path, serialized);
-    }
-}
 
 /// NTCP2 config.
 #[derive(Default, Clone)]

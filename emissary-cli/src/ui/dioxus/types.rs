@@ -17,17 +17,18 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    config::EmissaryConfig,
+    config::{AddressBookConfig, EmissaryConfig},
     ui::dioxus::{
         bandwidth_monitor::{BandwidthMonitor, TimeRange},
         config::{
             AdvancedConfig, ExploratoryConfig, HttpProxyConfig, I2cpConfig, Ntcp2Config,
             PortForwardingConfig, SamConfig, SocksProxyConfig, Ssu2Config, TransitConfig,
         },
+        util::load_addresses,
     },
 };
 
-use std::time::Instant;
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Instant};
 
 /// Selected view in the sidebar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -240,6 +241,107 @@ impl Settings {
             ssu2: Ssu2Config::from(config),
             status: SettingsStatus::Idle(SettingsTab::Transports),
             transit: TransitConfig::from(config),
+        }
+    }
+}
+
+/// Address book tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddressBookTab {
+    Browse,
+    AddDestination,
+    Configure,
+}
+
+/// Status for "Add destination" view.
+#[derive(Debug, Clone)]
+pub enum AddDestinationStatus {
+    Idle,
+    Saved,
+    Error(String),
+}
+
+/// Fields for "Add destination" tab.
+pub struct AddDestination {
+    /// Destination.
+    pub destination: String,
+
+    /// Hostname.
+    pub hostname: String,
+
+    /// Status.
+    pub status: AddDestinationStatus,
+}
+
+/// Fields for "Browse" tab.
+pub struct Browse {
+    /// Search term.
+    pub search_term: String,
+
+    /// Addresses.
+    pub addresses: BTreeMap<Arc<str>, Arc<str>>,
+
+    /// Pending deletion.
+    pub pending_delete_server: Option<String>,
+}
+
+/// Subscription stauts.
+#[derive(Debug, Clone)]
+pub enum SubscriptionStatus {
+    Idle,
+    Saved,
+    Error(String),
+}
+
+/// Fields for "Subscriptions" tab.
+pub struct Subscriptions {
+    /// Subscriptions.
+    pub subscriptions: String,
+
+    /// Status.
+    pub status: SubscriptionStatus,
+}
+
+/// Address book-related fields.
+pub struct AddressBook {
+    /// Active tab.
+    pub tab: AddressBookTab,
+
+    /// "Add destination" context.
+    pub add_destination: AddDestination,
+
+    /// "Browse" context.
+    pub browse: Browse,
+
+    /// "Subscription" context.
+    pub subscriptions: Subscriptions,
+}
+
+impl AddressBook {
+    /// Create new `AddressBook`.
+    pub fn new(base_path: PathBuf, config: &EmissaryConfig) -> Self {
+        Self {
+            tab: AddressBookTab::Browse,
+            add_destination: AddDestination {
+                destination: String::from(""),
+                hostname: String::from(""),
+                status: AddDestinationStatus::Idle,
+            },
+            browse: Browse {
+                search_term: String::from(""),
+                addresses: load_addresses(base_path.join("addressbook/addresses")),
+                pending_delete_server: None,
+            },
+            subscriptions: Subscriptions {
+                subscriptions: match config.address_book {
+                    Some(AddressBookConfig {
+                        subscriptions: Some(ref subscriptions),
+                        ..
+                    }) => subscriptions.join(","),
+                    _ => String::from(""),
+                },
+                status: SubscriptionStatus::Idle,
+            },
         }
     }
 }

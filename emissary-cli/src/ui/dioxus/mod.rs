@@ -18,19 +18,23 @@
 
 use crate::{
     address_book::AddressBookHandle,
-    config::{EmissaryConfig, Theme},
+    config::{AddressBookConfig, EmissaryConfig, Theme},
     ui::dioxus::{
-        config::save_router_config,
         style::global_css,
-        types::{RouterState, RouterStatus, Settings, SettingsTab, SidebarSelection, Traffic},
+        types::{
+            AddressBook, RouterState, RouterStatus, Settings, SettingsTab, SidebarSelection,
+            Traffic,
+        },
+        util::save_router_config,
     },
 };
 
+use arboard::Clipboard;
 use dioxus::prelude::*;
 use emissary_core::{
-    crypto::base64_encode,
+    crypto::{base32_decode, base64_decode, base64_encode},
     events::{Event, EventSubscriber},
-    primitives::RouterId,
+    primitives::{Destination, RouterId},
 };
 use tokio::sync::mpsc::Sender;
 
@@ -40,6 +44,7 @@ use std::{
     time::Duration,
 };
 
+mod address_book;
 mod bandwidth;
 mod bandwidth_monitor;
 mod config;
@@ -49,6 +54,7 @@ mod sidebar;
 mod style;
 mod svg;
 mod types;
+mod util;
 
 #[cfg(feature = "dioxus")]
 mod native;
@@ -61,6 +67,23 @@ mod web;
 
 #[cfg(feature = "web-ui")]
 pub use web::start;
+
+/// Logging target for the file.
+const LOG_TARGET: &str = "emissary::ui";
+
+/// UI kind.
+enum UiKind {
+    /// Native UI.
+    Native {
+        /// Clipboard for UI
+        ///
+        /// `None` if clipboard could not be initialized.
+        clipboard: Option<Clipboard>,
+    },
+
+    /// Web UI.
+    Web,
+}
 
 /// `App` options.
 #[derive(Clone)]
@@ -90,6 +113,9 @@ struct AppOptions {
 /// Application state.
 #[allow(unused)]
 struct AppState {
+    /// Address book.
+    address_book: AddressBook,
+
     /// Address book handle, if enabled.
     address_book_handle: Option<Arc<AddressBookHandle>>,
 
@@ -101,6 +127,12 @@ struct AppState {
 
     /// Event subscriber for the router.
     events: Arc<Mutex<EventSubscriber>>,
+
+    /// UI kind.
+    ui: UiKind,
+
+    /// Is the router UI run in native mode.
+    native: bool,
 
     /// Settings info.
     settings: Settings,
@@ -140,8 +172,28 @@ impl AppState {
             traffic,
         } = options;
 
+        let ui = if true {
+            match Clipboard::new() {
+                Ok(clipboard) => UiKind::Native {
+                    clipboard: Some(clipboard),
+                },
+                Err(error) => {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?error,
+                        "failed to initialize clipboard",
+                    );
+
+                    UiKind::Native { clipboard: None }
+                }
+            }
+        } else {
+            UiKind::Web
+        };
+
         Self {
             address_book_handle,
+            address_book: AddressBook::new(base_path.clone(), &config),
             base_path,
             events,
             theme: match config.router_ui {
@@ -150,6 +202,8 @@ impl AppState {
             },
             settings: Settings::new(&config),
             config,
+            native: true,
+            ui,
             shutdown_tx,
             sidebar_collapsed: false,
             state: RouterState::new(base64_encode(router_id.to_vec()).leak()),
@@ -248,6 +302,7 @@ impl AppState {
         }
     }
 
+    /// Save settings.
     pub fn save_settings(&mut self) -> Result<(), String> {
         match self.settings.active_tab {
             SettingsTab::Transports => {
@@ -320,6 +375,123 @@ impl AppState {
 
         Ok(())
     }
+
+    /// Save destination to address book.
+    pub fn save_destination(&mut self) -> Result<(), String> {
+        if !self.address_book.add_destination.hostname.ends_with(".i2p") {
+            return Err(String::from("Hostname must end in .i2p"));
+        }
+
+        if self.address_book.add_destination.destination.is_empty() {
+            return Err(String::from("Destination/Base32 address not specified"));
+        }
+
+        let dest = &self.address_book.add_destination.destination;
+        let dest = dest.strip_prefix("http://").unwrap_or(dest);
+        let dest = dest.strip_prefix("https://").unwrap_or(dest);
+        let dest = dest.strip_prefix("www.").unwrap_or(dest);
+        let dest = dest.strip_suffix(".b32.i2p").unwrap_or(dest);
+
+        match base32_decode(dest) {
+            Some(_) =>
+                if let Some(handle) = &self.address_book_handle {
+                    handle.add_base32(
+                        self.address_book.add_destination.hostname.clone(),
+                        dest.to_string(),
+                    );
+                },
+            None => match base64_decode(dest) {
+                Some(decoded) => match Destination::parse(&decoded) {
+                    Ok(destination) =>
+                        if let Some(handle) = &self.address_book_handle {
+                            handle.add_base64(
+                                self.address_book.add_destination.hostname.clone(),
+                                destination,
+                            );
+                        },
+                    Err(_) => return Err(String::from("Not a valid base64 destination")),
+                },
+                None => return Err(String::from("Not a valid base32/base64 destination")),
+            },
+        }
+
+        self.address_book.add_destination.destination.clear();
+        self.address_book.add_destination.hostname.clear();
+
+        Ok(())
+    }
+
+    /// Remove host from address book.
+    pub fn remove_host(&mut self, data: Arc<str>) {
+        self.address_book.browse.addresses.remove(&data);
+
+        if let Some(handle) = &self.address_book_handle {
+            handle.remove(data.as_ref());
+        }
+    }
+
+    /// Copy value to clipboard.
+    pub fn copy_to_clipboard(&mut self, value: Arc<str>) {
+        match &mut self.ui {
+            UiKind::Native {
+                clipboard: Some(clipboard),
+            } =>
+                if let Err(error) = clipboard.set_text(value.to_string()) {
+                    tracing::error!(
+                        target: LOG_TARGET,
+                        ?error,
+                        "failed to copy address to clipboard",
+                    );
+                },
+            UiKind::Native { .. } => {}
+            UiKind::Web => {
+                let escaped = value.replace('\\', "\\\\").replace('\'', "\\'");
+                let _ =
+                    dioxus::document::eval(&format!("navigator.clipboard.writeText('{escaped}')"));
+            }
+        }
+    }
+
+    /// Save subscriptions to disk.
+    pub fn save_subscriptions(&mut self) -> Result<(), String> {
+        let is_empty = self.address_book.subscriptions.subscriptions.is_empty();
+        let mut subs = self
+            .address_book
+            .subscriptions
+            .subscriptions
+            .split(',')
+            .map(|s| s.trim().to_owned())
+            .collect::<Vec<String>>();
+        subs.dedup();
+
+        if !is_empty
+            && !subs.iter().all(|url| {
+                url::Url::parse(url).ok().is_some_and(|host| {
+                    host.host_str().is_some_and(|u| u.split('.').next_back() == Some("i2p"))
+                })
+            })
+        {
+            return Err(String::from(
+                "All URLs are not valid I2P subscription URLs\n\nExample: http://host1.i2p/hosts.txt,http://host2.i2p/hosts.txt",
+            ));
+        }
+
+        match self.config.address_book {
+            None => {
+                self.config.address_book = Some(AddressBookConfig {
+                    default: None,
+                    subscriptions: (!is_empty).then_some(subs),
+                });
+            }
+            Some(ref mut config) => {
+                config.subscriptions = (!is_empty).then_some(subs);
+            }
+        }
+
+        save_router_config(self.base_path.join("router.toml"), &self.config);
+
+        Ok(())
+    }
 }
 
 #[component]
@@ -366,7 +538,7 @@ fn App() -> Element {
                 match view {
                     SidebarSelection::Dashboard => rsx! { dashboard::Dashboard {} },
                     SidebarSelection::Bandwidth => rsx! { bandwidth::BandwidthView {} },
-                    SidebarSelection::AddressBook => rsx! {},
+                    SidebarSelection::AddressBook => rsx! { address_book::AddressBookView {} },
                     SidebarSelection::HiddenServices => rsx! {},
                     SidebarSelection::Settings => rsx! { settings::SettingsView {} },
                 }

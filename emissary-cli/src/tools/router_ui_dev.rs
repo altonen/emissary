@@ -170,7 +170,11 @@ pub async fn run(path: Option<String>) {
 
     #[cfg(any(feature = "dioxus", feature = "web-ui"))]
     {
-        use crate::{cli::Arguments, config::Config};
+        use crate::{
+            address_book::AddressBookManager,
+            cli::Arguments,
+            config::{AddressBookConfig, Config},
+        };
         use emissary_core::primitives::RouterId;
         use emissary_util::storage::Storage;
         use std::path::PathBuf;
@@ -193,6 +197,14 @@ pub async fn run(path: Option<String>) {
         let storage = Storage::new::<TokioRuntime>(Some(base_path.clone())).await.unwrap();
         let mut config =
             Config::parse::<TokioRuntime>(&Arguments::default(), &storage).await.unwrap();
+        let address_book = AddressBookManager::new(
+            base_path.clone(),
+            AddressBookConfig {
+                default: None,
+                subscriptions: None,
+            },
+        )
+        .await;
 
         println!("configuration path = {}", base_path.display());
 
@@ -200,7 +212,7 @@ pub async fn run(path: Option<String>) {
             subscriber,
             config.config.take().unwrap(),
             base_path,
-            None,
+            Some(address_book.handle()),
             RouterId::from(TokioRuntime::rng().random::<[u8; 32]>()),
             shutdown_tx,
         )
