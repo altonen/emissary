@@ -401,13 +401,8 @@ impl AddressBookManager {
         let mut host_modified_times = self.load_host_modified_times().await;
 
         if let Some(url) = &self.hosts_url {
-            self.download_default_addressbook(
-                url,
-                &client,
-                &mut addresses,
-                &mut host_modified_times,
-            )
-            .await;
+            self.download_with_retries(url, &client, &mut addresses, &mut host_modified_times)
+                .await;
 
             // save hosts to disk at this point as subscriptions might contain .i2p addresses
             // which the http proxy must be able to resolve to .b32.i2p addresses
@@ -420,48 +415,28 @@ impl AddressBookManager {
         };
 
         for subscription in &self.subscriptions {
-            for _ in 0..SUBSCRIPTION_NUM_RETRIES {
-                match Self::download(&client, subscription, host_modified_times.get(subscription))
-                    .await
-                {
-                    Ok(Response::NotModified) => {
-                        tracing::info!(
-                            target: LOG_TARGET,
-                            url = %subscription,
-                            "hosts.txt not changed since last download",
-                        );
-                        break;
-                    }
-                    Ok(Response::Modified { modified, body }) => {
-                        tracing::info!(
-                            target: LOG_TARGET,
-                            url = %subscription,
-                            "hosts.txt downloaded",
-                        );
-                        self.parse_and_merge(&mut addresses, body).await;
-                        host_modified_times.insert(subscription.to_string(), modified);
-                        break;
-                    }
-                    Err(_) => {
-                        tokio::time::sleep(RETRY_BACKOFF).await;
-                    }
-                }
-            }
+            self.download_with_retries(
+                subscription,
+                &client,
+                &mut addresses,
+                &mut host_modified_times,
+            )
+            .await;
         }
 
         self.save_to_disk(addresses).await;
         self.save_host_modified_times(host_modified_times).await;
     }
 
-    /// Forever tries to download the default addressbook.
-    async fn download_default_addressbook(
+    /// A wrapper around `Self::download` which deals with retries, logging, etc.
+    async fn download_with_retries(
         &self,
         url: &String,
         client: &Client,
         addresses: &mut HashMap<String, (String, String)>,
         host_modified_times: &mut HashMap<String, Modified>,
     ) {
-        loop {
+        for _ in 0..SUBSCRIPTION_NUM_RETRIES {
             match Self::download(client, url, host_modified_times.get(url)).await {
                 Ok(Response::NotModified) => {
                     tracing::info!(
@@ -481,6 +456,7 @@ impl AddressBookManager {
                     host_modified_times.insert(url.to_string(), modified);
                     break;
                 }
+                // These errors would have been logged by `Self::download` already.
                 Err(_) => {
                     tokio::time::sleep(RETRY_BACKOFF).await;
                 }
