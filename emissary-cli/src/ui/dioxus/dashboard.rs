@@ -168,7 +168,7 @@ pub fn Dashboard() -> Element {
                             let mut traffic = app.traffic.lock().unwrap();
                             traffic.options.show_outbound = !traffic.options.show_outbound;
                         },
-                        "Inbound"
+                        "● Inbound"
                     }
                     button {
                         class: "chart-legend-btn",
@@ -178,7 +178,7 @@ pub fn Dashboard() -> Element {
                             let mut traffic = app.traffic.lock().unwrap();
                             traffic.options.show_inbound = !traffic.options.show_inbound;
                         },
-                        "Outbound"
+                        "● Outbound"
                     }
                 }
             }

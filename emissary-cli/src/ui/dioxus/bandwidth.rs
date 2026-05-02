@@ -313,7 +313,7 @@ pub fn BandwidthView() -> Element {
                             onclick: move |_| {
                                 let app = state.write();
                                 let mut traffic = app.traffic.lock().expect("to succeed");
-                                traffic.options.show_inbound = !traffic.options.show_inbound;
+                                traffic.options.show_outbound = !traffic.options.show_outbound;
                             },
                             "● Inbound"
                         }
@@ -323,7 +323,7 @@ pub fn BandwidthView() -> Element {
                             onclick: move |_| {
                                 let app = state.write();
                                 let mut traffic = app.traffic.lock().expect("to succeed");
-                                traffic.options.show_outbound = !traffic.options.show_outbound;
+                                traffic.options.show_inbound = !traffic.options.show_inbound;
                             },
                             "● Outbound"
                         }
