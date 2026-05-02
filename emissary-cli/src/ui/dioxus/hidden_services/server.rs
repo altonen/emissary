@@ -104,6 +104,7 @@ pub fn CreateServerForm() -> Element {
                                 state.hidden_services.status = HiddenServicesStatus::Idle;
 
                                 state.save_servers();
+                                state.push_toast("Server tunnel saved");
                             }
                             Err(error) => {
                                 state.hidden_services.status = HiddenServicesStatus::CreateServer(Some(error));
@@ -208,6 +209,7 @@ pub fn EditServerForm() -> Element {
                                 state.hidden_services.status = HiddenServicesStatus::Idle;
 
                                 state.save_servers();
+                                state.push_toast("Server tunnel saved");
                             }
                             Err(error) => {
                                 state.hidden_services.status = HiddenServicesStatus::EditServer(Some(error));

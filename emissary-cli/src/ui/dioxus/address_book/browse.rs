@@ -140,7 +140,9 @@ pub fn BrowseTab() -> Element {
                                                 class: "btn-icon",
                                                 title: "Copy",
                                                 onclick: move |_| {
-                                                    state.write().copy_to_clipboard(&value_for_copy);
+                                                    let mut state = state.write();
+                                                    state.copy_to_clipboard(&value_for_copy);
+                                                    state.push_toast("Copied to clipboard");
                                                 },
                                                 span {
                                                     style: "display:inline-flex;width:18px;height:18px;",

@@ -118,7 +118,9 @@ pub fn HiddenServiceOverview() -> Element {
                                                     class: "btn-icon",
                                                     title: "Copy address",
                                                     onclick: move |_| {
-                                                        state.write().copy_to_clipboard(&addr_clone);
+                                                        let mut state = state.write();
+                                                        state.copy_to_clipboard(&addr_clone);
+                                                        state.push_toast("Copied to clipboard");
                                                     },
                                                     span {
                                                         style: "display:inline-flex;width:18px;height:18px;",

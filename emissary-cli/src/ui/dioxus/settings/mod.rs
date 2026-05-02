@@ -137,13 +137,14 @@ pub fn SettingsView() -> Element {
                     button {
                         class: "btn btn-primary",
                         onclick: move |_| {
-                            let mut w = state.write();
-                            let tab = w.settings.active_tab;
-                            match w.save_settings() {
+                            let mut state = state.write();
+                            let tab = state.settings.active_tab;
+                            match state.save_settings() {
                                 Ok(()) => {
-                                    w.settings.status = SettingsStatus::Saved(tab);
+                                    state.settings.status = SettingsStatus::Saved(tab);
+                                    state.push_toast("Settings saved");
                                 }
-                                Err(e) => w.settings.status = SettingsStatus::Error(tab, e),
+                                Err(e) => state.settings.status = SettingsStatus::Error(tab, e),
                             }
                         },
                         "Save"

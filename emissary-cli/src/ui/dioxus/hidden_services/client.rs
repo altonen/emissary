@@ -131,6 +131,7 @@ pub fn CreateClientForm() -> Element {
                                 state.hidden_services.status = HiddenServicesStatus::Idle;
 
                                 state.save_clients();
+                                state.push_toast("Client tunnel saved");
                             }
                             Err(error) => {
                                 state.hidden_services.status = HiddenServicesStatus::CreateClient(Some(error));
@@ -273,6 +274,7 @@ pub fn EditClientForm() -> Element {
                                 state.hidden_services.status = HiddenServicesStatus::Idle;
 
                                 state.save_clients();
+                                state.push_toast("Client tunnel saved");
                             }
                             Err(error) => {
                                 state.hidden_services.status = HiddenServicesStatus::EditClient(Some(error));

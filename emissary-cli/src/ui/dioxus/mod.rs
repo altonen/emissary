@@ -39,10 +39,11 @@ use emissary_core::{
 use tokio::sync::mpsc::Sender;
 
 use std::{
+    collections::VecDeque,
     net::Ipv4Addr,
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 mod address_book;
@@ -162,6 +163,9 @@ struct AppState {
 
     /// Currently active view.
     view: SidebarSelection,
+
+    /// Toast notifications.
+    toasts: VecDeque<(String, Instant)>,
 }
 
 impl AppState {
@@ -213,6 +217,7 @@ impl AppState {
             sidebar_collapsed: false,
             state: RouterState::new(base64_encode(router_id.to_vec()).leak()),
             status: RouterStatus::Active,
+            toasts: VecDeque::new(),
             traffic,
             ui,
             view: SidebarSelection::Dashboard,
@@ -259,6 +264,8 @@ impl AppState {
     ///
     /// Poll the event channel and update router state.
     fn tick(&mut self) {
+        self.toasts.retain(|(_, pushed)| pushed.elapsed() < Duration::from_secs(3));
+
         let mut traffic = self.traffic.lock().expect("to succeed");
         while let Some(event) = self.events.lock().expect("to succeed").router_status() {
             match event {
@@ -608,6 +615,15 @@ impl AppState {
 
         Ok(())
     }
+
+    /// Push toast notification.
+    pub fn push_toast(&mut self, msg: impl Into<String>) {
+        self.toasts.push_back((msg.into(), Instant::now()));
+
+        while self.toasts.len() > 5 {
+            self.toasts.pop_front();
+        }
+    }
 }
 
 #[component]
@@ -645,18 +661,29 @@ fn App() -> Element {
         "app em-light"
     };
 
+    let toasts = state.read().toasts.iter().map(|(m, _)| m.clone()).collect::<Vec<_>>();
+
     rsx! {
         style { { global_css() } }
         div {
             class: app_class,
             sidebar::Sidebar { }
-            div { class: "main-content",
+            div {
+                class: "main-content",
                 match view {
                     SidebarSelection::Dashboard => rsx! { dashboard::Dashboard {} },
                     SidebarSelection::Bandwidth => rsx! { bandwidth::BandwidthView {} },
                     SidebarSelection::AddressBook => rsx! { address_book::AddressBookView {} },
                     SidebarSelection::HiddenServices => rsx! { hidden_services::HiddenServicesView {} },
                     SidebarSelection::Settings => rsx! { settings::SettingsView {} },
+                }
+            }
+            div {
+                class: "toast-container",
+                role: "status",
+                aria_live: "polite",
+                for msg in toasts {
+                    div { class: "toast", "{msg}" }
                 }
             }
         }

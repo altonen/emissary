@@ -653,6 +653,23 @@ textarea:focus { border-color: var(--em-focus); }
 .service-dot-running {
   background: var(--em-green);
 }
+
+.toast-container {
+  position: fixed; bottom: 20px; right: 20px;
+  display: flex; flex-direction: column; gap: 8px;
+  z-index: 1000; pointer-events: none;
+}
+.toast {
+  background: var(--em-bg-surface);
+  border: 1px solid var(--em-border-sub);
+  border-left: 3px solid var(--em-accent);
+  border-radius: 6px;
+  padding: 10px 16px;
+  font-size: 13px;
+  color: var(--em-text-1);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  min-width: 200px; max-width: 320px;
+}
 "#;
 
 /// Script to remove right-click menu from desktop view.
