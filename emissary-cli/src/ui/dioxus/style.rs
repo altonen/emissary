@@ -558,6 +558,11 @@ textarea:focus { border-color: var(--em-focus); }
   align-items: flex-start;
   margin-bottom: 4px;
 }
+.button-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
 
 .search-bar {
   display: flex;
@@ -629,6 +634,24 @@ textarea:focus { border-color: var(--em-focus); }
   padding: 2px 8px;
   font-size: 12px;
   cursor: pointer;
+}
+
+.card {
+  background: var(--em-bg-surface);
+  border-radius: 12px;
+  border: 1px solid var(--em-border);
+  padding: 16px;
+}
+.service-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+  margin-right: 4px;
+}
+.service-dot-running {
+  background: var(--em-green);
 }
 "#;
 

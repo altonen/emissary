@@ -16,6 +16,11 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use emissary_core::{
+    crypto::{base32_encode, base64_decode},
+    primitives::Destination,
+};
+
 use crate::{config::EmissaryConfig, ui::dioxus::LOG_TARGET};
 
 use std::{
@@ -53,4 +58,31 @@ pub fn load_addresses(path: PathBuf) -> BTreeMap<Arc<str>, Arc<str>> {
             Some((Arc::from(key), Arc::from(format!("http://{value}.b32.i2p"))))
         })
         .collect()
+}
+
+/// Trim hidden service display name.
+///
+/// Strips unnecessary prefixes and truncates the base32 address.
+pub fn trim_display_name(s: &str) -> String {
+    let s = s.strip_prefix("http://").unwrap_or(s);
+    let s = s.strip_prefix("https://").unwrap_or(s);
+    let s = s.strip_prefix("www").unwrap_or(s);
+    let max_len = 50;
+    if s.len() <= max_len {
+        return s.to_string();
+    }
+    let keep = max_len - 3;
+    let front = keep / 2;
+    let back = keep - front;
+
+    format!("{}{}{}", &s[..front], "...", &s[s.len() - back..])
+}
+
+/// Convert key file into a base32 address.
+pub fn read_b32_address(path: &str) -> Option<String> {
+    let data = std::fs::read_to_string(path).ok()?;
+    let decoded = base64_decode(data.trim())?;
+    let destination = Destination::parse(&decoded).ok()?;
+
+    Some(base32_encode(destination.id().to_vec()))
 }

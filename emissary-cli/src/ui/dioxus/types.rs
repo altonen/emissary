@@ -24,7 +24,7 @@ use crate::{
             AdvancedConfig, ExploratoryConfig, HttpProxyConfig, I2cpConfig, Ntcp2Config,
             PortForwardingConfig, SamConfig, SocksProxyConfig, Ssu2Config, TransitConfig,
         },
-        util::load_addresses,
+        util::{load_addresses, read_b32_address},
     },
 };
 
@@ -342,6 +342,198 @@ impl AddressBook {
                 },
                 status: SubscriptionStatus::Idle,
             },
+        }
+    }
+}
+
+/// Server tunnel.
+#[derive(Debug, Clone)]
+pub struct ServerTunnel {
+    /// Server address.
+    pub address: String,
+
+    /// Server port.
+    pub port: String,
+
+    /// Path to key file.
+    pub path: String,
+}
+
+/// Client tunnel.
+#[derive(Debug, Clone)]
+pub struct ClientTunnel {
+    /// Local bind address.
+    pub address: String,
+
+    /// Local bind port.
+    pub port: String,
+
+    /// Destination address.
+    pub destination: String,
+
+    /// Destination port.
+    pub destination_port: String,
+}
+
+/// Active "Hidden services" status.
+#[derive(Debug, Clone)]
+pub enum HiddenServicesStatus {
+    Idle,
+    CreateServer(Option<String>),
+    EditServer(Option<String>),
+    CreateClient(Option<String>),
+    EditClient(Option<String>),
+}
+
+/// Server edit information.
+pub struct ServerEdit {
+    /// New name.
+    pub name: String,
+
+    /// Original name.
+    pub original_name: String,
+
+    /// Local bind port.
+    pub port: String,
+
+    /// Path to key file.
+    pub path: String,
+}
+
+/// Server tunnel information.
+pub struct ServerInfo {
+    /// Server tunnels.
+    pub servers: BTreeMap<String, ServerTunnel>,
+
+    /// Server edit fields.
+    pub edit: ServerEdit,
+
+    /// Pending deletion.
+    pub pending_delete: Option<String>,
+}
+
+impl From<&EmissaryConfig> for ServerInfo {
+    fn from(value: &EmissaryConfig) -> Self {
+        let servers = value.server_tunnels.as_ref().map_or_else(BTreeMap::default, |services| {
+            services
+                .iter()
+                .map(|server| {
+                    let address = read_b32_address(&server.destination_path)
+                        .map(|address| format!("{address}.b32.i2p"))
+                        .unwrap_or(String::from("Key file does not exist"));
+                    (
+                        server.name.clone(),
+                        ServerTunnel {
+                            port: server.port.to_string(),
+                            path: server.destination_path.clone(),
+                            address,
+                        },
+                    )
+                })
+                .collect()
+        });
+
+        Self {
+            servers,
+            pending_delete: None,
+            edit: ServerEdit {
+                name: String::from(""),
+                original_name: String::from(""),
+                port: String::from(""),
+                path: String::from(""),
+            },
+        }
+    }
+}
+
+/// Client edit information.
+pub struct ClientEdit {
+    /// New name.
+    pub name: String,
+
+    /// Original name.
+    pub original_name: String,
+
+    /// Local bind address.
+    pub address: String,
+
+    /// Local bind port.
+    pub port: String,
+
+    /// Destination address.
+    pub destination: String,
+
+    /// Destination .port
+    pub destination_port: String,
+}
+
+/// Client tunnel information.
+pub struct ClientInfo {
+    /// Client tunnels.
+    pub clients: BTreeMap<String, ClientTunnel>,
+
+    /// Client edit information.
+    pub edit: ClientEdit,
+
+    /// Pending deletion.
+    pub pending_delete: Option<String>,
+}
+
+impl From<&EmissaryConfig> for ClientInfo {
+    fn from(value: &EmissaryConfig) -> Self {
+        let clients = value.client_tunnels.as_ref().map_or_else(BTreeMap::default, |tunnels| {
+            tunnels
+                .iter()
+                .map(|client| {
+                    (
+                        client.name.clone(),
+                        ClientTunnel {
+                            address: client.address.clone().unwrap_or(String::from("127.0.0.1")),
+                            port: client.port.to_string(),
+                            destination: client.destination.clone(),
+                            destination_port: client
+                                .destination_port
+                                .map_or_else(|| String::from("80"), |port| port.to_string()),
+                        },
+                    )
+                })
+                .collect()
+        });
+
+        Self {
+            clients,
+            pending_delete: None,
+            edit: ClientEdit {
+                name: String::from(""),
+                original_name: String::from(""),
+                address: String::from(""),
+                port: String::from(""),
+                destination: String::from(""),
+                destination_port: String::from(""),
+            },
+        }
+    }
+}
+
+/// Hidden services-related fields.
+pub struct HiddenServices {
+    /// Current status.
+    pub status: HiddenServicesStatus,
+
+    /// Server infomation.
+    pub server: ServerInfo,
+
+    /// Client information.
+    pub client: ClientInfo,
+}
+
+impl HiddenServices {
+    /// Create new `HiddenServices`.
+    pub fn new(config: &EmissaryConfig) -> Self {
+        HiddenServices {
+            status: HiddenServicesStatus::Idle,
+            server: ServerInfo::from(config),
+            client: ClientInfo::from(config),
         }
     }
 }

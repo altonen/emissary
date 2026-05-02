@@ -22,10 +22,10 @@ use crate::{
     ui::dioxus::{
         style::global_css,
         types::{
-            AddressBook, RouterState, RouterStatus, Settings, SettingsTab, SidebarSelection,
-            Traffic,
+            AddressBook, HiddenServices, RouterState, RouterStatus, Settings, SettingsTab,
+            SidebarSelection, Traffic,
         },
-        util::save_router_config,
+        util::{read_b32_address, save_router_config},
     },
 };
 
@@ -39,6 +39,7 @@ use emissary_core::{
 use tokio::sync::mpsc::Sender;
 
 use std::{
+    net::Ipv4Addr,
     path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
@@ -49,6 +50,7 @@ mod bandwidth;
 mod bandwidth_monitor;
 mod config;
 mod dashboard;
+mod hidden_services;
 mod settings;
 mod sidebar;
 mod style;
@@ -128,8 +130,8 @@ struct AppState {
     /// Event subscriber for the router.
     events: Arc<Mutex<EventSubscriber>>,
 
-    /// UI kind.
-    ui: UiKind,
+    /// Hidden services.
+    hidden_services: HiddenServices,
 
     /// Is the router UI run in native mode.
     native: bool,
@@ -154,6 +156,9 @@ struct AppState {
 
     /// Traffic info, shared across reconnections.
     traffic: Arc<Mutex<Traffic>>,
+
+    /// UI kind.
+    ui: UiKind,
 
     /// Currently active view.
     view: SidebarSelection,
@@ -196,6 +201,7 @@ impl AppState {
             address_book: AddressBook::new(base_path.clone(), &config),
             base_path,
             events,
+            hidden_services: HiddenServices::new(&config),
             theme: match config.router_ui {
                 None => Theme::Dark,
                 Some(ref config) => config.theme,
@@ -203,12 +209,12 @@ impl AppState {
             settings: Settings::new(&config),
             config,
             native: true,
-            ui,
             shutdown_tx,
             sidebar_collapsed: false,
             state: RouterState::new(base64_encode(router_id.to_vec()).leak()),
             status: RouterStatus::Active,
             traffic,
+            ui,
             view: SidebarSelection::Dashboard,
         }
     }
@@ -431,7 +437,7 @@ impl AppState {
     }
 
     /// Copy value to clipboard.
-    pub fn copy_to_clipboard(&mut self, value: Arc<str>) {
+    pub fn copy_to_clipboard(&mut self, value: &str) {
         match &mut self.ui {
             UiKind::Native {
                 clipboard: Some(clipboard),
@@ -492,6 +498,116 @@ impl AppState {
 
         Ok(())
     }
+
+    /// Save server tunnels.
+    pub fn save_servers(&mut self) {
+        self.config.server_tunnels = (!self.hidden_services.server.servers.is_empty()).then(|| {
+            self.hidden_services
+                .server
+                .servers
+                .iter()
+                .map(|(name, s)| crate::config::ServerTunnelConfig {
+                    name: name.clone(),
+                    port: s.port.parse::<u16>().expect("valid port"),
+                    destination_path: s.path.clone(),
+                    i2cp: None,
+                })
+                .collect()
+        });
+
+        save_router_config(self.base_path.join("router.toml"), &self.config);
+    }
+
+    /// Remove server tunnel.
+    pub fn remove_server(&mut self, name: &str) {
+        if self.hidden_services.server.servers.remove(name).is_some() {
+            self.save_servers();
+        }
+
+        self.hidden_services.server.pending_delete = None;
+    }
+
+    /// Validate new server tunnel config.
+    pub fn validate_server(&mut self) -> Result<String, String> {
+        if self.hidden_services.server.edit.name.is_empty() {
+            return Err(String::from("Name cannot be empty"));
+        }
+
+        if self.hidden_services.server.edit.port.parse::<u16>().is_err() {
+            return Err(String::from("Invalid port"));
+        }
+
+        if self.hidden_services.server.edit.path.is_empty() {
+            return Err(String::from("Key path cannot be empty"));
+        }
+
+        match read_b32_address(&self.hidden_services.server.edit.path) {
+            Some(address) => Ok(format!("{address}.b32.i2p")),
+            None => Ok(String::from("Key file does not exist")),
+        }
+    }
+
+    /// Save client tunnels.
+    pub fn save_clients(&mut self) {
+        self.config.client_tunnels = (!self.hidden_services.client.clients.is_empty()).then(|| {
+            self.hidden_services
+                .client
+                .clients
+                .iter()
+                .map(|(name, tunnel)| crate::config::ClientTunnelConfig {
+                    name: name.clone(),
+                    address: Some(tunnel.address.clone()),
+                    port: tunnel.port.parse::<u16>().expect("valid port"),
+                    destination: tunnel.destination.clone(),
+                    destination_port: Some(
+                        tunnel.destination_port.parse::<u16>().expect("valid port"),
+                    ),
+                })
+                .collect()
+        });
+
+        save_router_config(self.base_path.join("router.toml"), &self.config);
+    }
+
+    /// Remove client tunnel.
+    pub fn remove_client(&mut self, name: &str) {
+        if self.hidden_services.client.clients.remove(name).is_some() {
+            self.save_clients();
+        }
+
+        self.hidden_services.client.pending_delete = None;
+    }
+
+    /// Validate client tunnel config.
+    pub fn validate_client(&mut self) -> Result<(), String> {
+        if self.hidden_services.client.edit.name.is_empty() {
+            return Err(String::from("Name cannot be empty"));
+        }
+
+        if self.hidden_services.client.edit.address.is_empty() {
+            return Err(String::from("Address cannot be empty"));
+        }
+
+        if self.hidden_services.client.edit.address.parse::<Ipv4Addr>().is_err() {
+            return Err(String::from("Invalid local address"));
+        }
+
+        if self.hidden_services.client.edit.port.parse::<u16>().is_err() {
+            return Err(String::from("Invalid local port"));
+        }
+
+        if !self.hidden_services.client.edit.destination.ends_with(".i2p") {
+            return Err(String::from(
+                "Destination must be a .i2p or .b32.i2p address",
+            ));
+        }
+
+        if self.hidden_services.client.edit.destination_port.parse::<u16>().is_err() {
+            return Err(String::from("Invalid destination port"));
+        }
+
+        Ok(())
+    }
 }
 
 #[component]
@@ -539,7 +655,7 @@ fn App() -> Element {
                     SidebarSelection::Dashboard => rsx! { dashboard::Dashboard {} },
                     SidebarSelection::Bandwidth => rsx! { bandwidth::BandwidthView {} },
                     SidebarSelection::AddressBook => rsx! { address_book::AddressBookView {} },
-                    SidebarSelection::HiddenServices => rsx! {},
+                    SidebarSelection::HiddenServices => rsx! { hidden_services::HiddenServicesView {} },
                     SidebarSelection::Settings => rsx! { settings::SettingsView {} },
                 }
             }
