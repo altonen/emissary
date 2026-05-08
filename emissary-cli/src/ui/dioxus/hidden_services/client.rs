@@ -30,7 +30,7 @@ pub fn CreateClientForm() -> Element {
     let (name, addr, port, dest, dest_port, error) = {
         let state = state.read();
         let error = match &state.hidden_services.status {
-            HiddenServicesStatus::CreateClient(Some(error)) => Some(error.clone()),
+            Some(HiddenServicesStatus::CreateClient(Some(error))) => Some(error.clone()),
             _ => None,
         };
         (
@@ -45,113 +45,118 @@ pub fn CreateClientForm() -> Element {
 
     rsx! {
         div {
-            class: "card",
-            style: "max-width: 500px;",
-            h3 { style: "font-size:18px;color:#fff;margin-bottom:12px;", "Create a client tunnel" }
+            class: "modal-overlay",
             div {
-                class: "settings-section",
-                label { class: "field-label", "Name" }
-                input {
-                    r#type: "text",
-                    value: "{name}",
-                    placeholder: "Name",
-                    oninput: move |e: Event<FormData>| {
-                        state.write().hidden_services.client.edit.name = e.value();
-                    }
-                }
-                label { class: "field-label", "Local address" }
-                input {
-                    r#type: "text",
-                    value: "{addr}",
-                    placeholder: "127.0.0.1",
-                    oninput: move |e: Event<FormData>| {
-                        state.write().hidden_services.client.edit.address = e.value();
-                    }
-                }
-                label { class: "field-label", "Local port" }
-                input {
-                    r#type: "text",
-                    value: "{port}",
-                    placeholder: "8888",
-                    oninput: move |e: Event<FormData>| {
-                        state.write().hidden_services.client.edit.port = e.value();
-                    }
-                }
-                label { class: "field-label", "Destination" }
-                input {
-                    r#type: "text",
-                    value: "{dest}",
-                    placeholder: ".i2p or .b32.i2p address",
-                    oninput: move |e: Event<FormData>| {
-                        state.write().hidden_services.client.edit.destination = e.value();
-                    }
-                }
-                label { class: "field-label", "Destination port" }
-                input {
-                    r#type: "text",
-                    value: "{dest_port}",
-                    placeholder: "80",
-                    oninput: move |e: Event<FormData>| {
-                        state.write().hidden_services.client.edit.destination_port = e.value();
-                    }
-                }
-            }
-
-            if let Some(error) = error {
+                class: "modal",
+                div { class: "modal-title", "Create a client tunnel" }
                 div {
-                    class: "status-error", "{error}"
+                    class: "settings-section",
+                    label { class: "field-label", "Name" }
+                    input {
+                        r#type: "text",
+                        value: "{name}",
+                        placeholder: "Name",
+                        oninput: move |e: Event<FormData>| {
+                            state.write().hidden_services.client.edit.name = e.value();
+                        }
+                    }
+                    label { class: "field-label", "Local address" }
+                    input {
+                        r#type: "text",
+                        value: "{addr}",
+                        placeholder: "127.0.0.1",
+                        oninput: move |e: Event<FormData>| {
+                            state.write().hidden_services.client.edit.address = e.value();
+                        }
+                    }
+                    label { class: "field-label", "Local port" }
+                    input {
+                        r#type: "text",
+                        value: "{port}",
+                        placeholder: "8888",
+                        oninput: move |e: Event<FormData>| {
+                            state.write().hidden_services.client.edit.port = e.value();
+                        }
+                    }
+                    label { class: "field-label", "Destination" }
+                    input {
+                        r#type: "text",
+                        value: "{dest}",
+                        placeholder: ".i2p or .b32.i2p address",
+                        oninput: move |e: Event<FormData>| {
+                            state.write().hidden_services.client.edit.destination = e.value();
+                        }
+                    }
+                    label { class: "field-label", "Destination port" }
+                    input {
+                        r#type: "text",
+                        value: "{dest_port}",
+                        placeholder: "80",
+                        oninput: move |e: Event<FormData>| {
+                            state.write().hidden_services.client.edit.destination_port = e.value();
+                        }
+                    }
                 }
-            }
 
-            div {
-                class: "button-row",
-                button {
-                    class: "btn btn-primary",
-                    onclick: move |_| {
-                        let mut state = state.write();
-                        match state.validate_client() {
-                            Ok(()) => {
-                                let name = state.hidden_services.client.edit.name.clone();
-                                let address = state.hidden_services.client.edit.address.clone();
-                                let port = state.hidden_services.client.edit.port.clone();
-                                let dest = state.hidden_services.client.edit.destination.clone();
-                                let dest_port = state.hidden_services.client.edit.destination_port.clone();
-                                state.hidden_services.client.clients.insert(name, ClientTunnel {
-                                    address,
-                                    port,
-                                    destination: dest,
-                                    destination_port: dest_port,
-                                });
+                if let Some(error) = error {
+                    div {
+                        class: "status-error", "{error}"
+                    }
+                }
 
+                div {
+                    class: "modal-footer",
+                    div {
+                        class: "button-row",
+                        button {
+                            class: "btn btn-primary",
+                            onclick: move |_| {
+                                let mut state = state.write();
+                                match state.validate_client() {
+                                    Ok(()) => {
+                                        let name = state.hidden_services.client.edit.name.clone();
+                                        let address = state.hidden_services.client.edit.address.clone();
+                                        let port = state.hidden_services.client.edit.port.clone();
+                                        let dest = state.hidden_services.client.edit.destination.clone();
+                                        let dest_port = state.hidden_services.client.edit.destination_port.clone();
+                                        state.hidden_services.client.clients.insert(name, ClientTunnel {
+                                            address,
+                                            port,
+                                            destination: dest,
+                                            destination_port: dest_port,
+                                        });
+
+                                        state.hidden_services.client.edit.name.clear();
+                                        state.hidden_services.client.edit.address.clear();
+                                        state.hidden_services.client.edit.port.clear();
+                                        state.hidden_services.client.edit.destination.clear();
+                                        state.hidden_services.client.edit.destination_port.clear();
+                                        state.hidden_services.status = None;
+
+                                        state.save_clients();
+                                        state.push_toast("Client tunnel saved");
+                                    }
+                                    Err(error) => {
+                                        state.hidden_services.status = Some(HiddenServicesStatus::CreateClient(Some(error)));
+                                    }
+                                }
+                            },
+                            "Save"
+                        }
+                        button {
+                            class: "btn btn-secondary",
+                            onclick: move |_| {
+                                let mut state = state.write();
+                                state.hidden_services.status = None;
                                 state.hidden_services.client.edit.name.clear();
                                 state.hidden_services.client.edit.address.clear();
                                 state.hidden_services.client.edit.port.clear();
                                 state.hidden_services.client.edit.destination.clear();
                                 state.hidden_services.client.edit.destination_port.clear();
-                                state.hidden_services.status = HiddenServicesStatus::Idle;
-
-                                state.save_clients();
-                                state.push_toast("Client tunnel saved");
-                            }
-                            Err(error) => {
-                                state.hidden_services.status = HiddenServicesStatus::CreateClient(Some(error));
-                            }
+                            },
+                            "Cancel"
                         }
-                    },
-                    "Save"
-                }
-                button {
-                    class: "btn btn-secondary",
-                    onclick: move |_| {
-                        let mut state = state.write();
-                        state.hidden_services.status = HiddenServicesStatus::Idle;
-                        state.hidden_services.client.edit.name.clear();
-                        state.hidden_services.client.edit.address.clear();
-                        state.hidden_services.client.edit.port.clear();
-                        state.hidden_services.client.edit.destination.clear();
-                        state.hidden_services.client.edit.destination_port.clear();
-                    },
-                    "Cancel"
+                    }
                 }
             }
         }
@@ -165,7 +170,7 @@ pub fn EditClientForm() -> Element {
     let (name, addr, port, dest, dest_port, error) = {
         let state = state.read();
         let error = match &state.hidden_services.status {
-            HiddenServicesStatus::EditClient(Some(error)) => Some(error.clone()),
+            Some(HiddenServicesStatus::EditClient(Some(error))) => Some(error.clone()),
             _ => None,
         };
 
@@ -181,121 +186,123 @@ pub fn EditClientForm() -> Element {
 
     rsx! {
         div {
-            class: "card",
-            style: "max-width: 500px;",
-            h3 {
-                style: "font-size:18px;color:#fff;margin-bottom:12px;",
-                "Edit a client tunnel"
-            }
+            class: "modal-overlay",
             div {
-                class: "settings-section",
-                label { class: "field-label", "Name" }
-                input {
-                    r#type: "text",
-                    value: "{name}",
-                    placeholder: "Name",
-                    oninput: move |e: Event<FormData>| {
-                        state.write().hidden_services.client.edit.name = e.value();
-                    }
-                }
-                label { class: "field-label", "Local address" }
-                input {
-                    r#type: "text",
-                    value: "{addr}",
-                    placeholder: "127.0.0.1",
-                    oninput: move |e: Event<FormData>| {
-                        state.write().hidden_services.client.edit.address = e.value();
-                    }
-                }
-                label { class: "field-label", "Local port" }
-                input {
-                    r#type: "text",
-                    value: "{port}",
-                    placeholder: "8888",
-                    oninput: move |e: Event<FormData>| {
-                        state.write().hidden_services.client.edit.port = e.value();
-                    }
-                }
-                label { class: "field-label", "Destination" }
-                input {
-                    r#type: "text",
-                    value: "{dest}",
-                    placeholder: ".i2p or .b32.i2p address",
-                    oninput: move |e: Event<FormData>| {
-                        state.write().hidden_services.client.edit.destination = e.value();
-                    }
-                }
-                label { class: "field-label", "Destination port" }
-                input {
-                    r#type: "text",
-                    value: "{dest_port}",
-                    placeholder: "80",
-                    oninput: move |e: Event<FormData>| {
-                        state.write().hidden_services.client.edit.destination_port = e.value();
-                    }
-                }
-            }
-
-            if let Some(error) = error {
+                class: "modal",
+                div { class: "modal-title", "Edit a client tunnel" }
                 div {
-                    class: "status-error", "{error}" }
-            }
+                    class: "settings-section",
+                    label { class: "field-label", "Name" }
+                    input {
+                        r#type: "text",
+                        value: "{name}",
+                        placeholder: "Name",
+                        oninput: move |e: Event<FormData>| {
+                            state.write().hidden_services.client.edit.name = e.value();
+                        }
+                    }
+                    label { class: "field-label", "Local address" }
+                    input {
+                        r#type: "text",
+                        value: "{addr}",
+                        placeholder: "127.0.0.1",
+                        oninput: move |e: Event<FormData>| {
+                            state.write().hidden_services.client.edit.address = e.value();
+                        }
+                    }
+                    label { class: "field-label", "Local port" }
+                    input {
+                        r#type: "text",
+                        value: "{port}",
+                        placeholder: "8888",
+                        oninput: move |e: Event<FormData>| {
+                            state.write().hidden_services.client.edit.port = e.value();
+                        }
+                    }
+                    label { class: "field-label", "Destination" }
+                    input {
+                        r#type: "text",
+                        value: "{dest}",
+                        placeholder: ".i2p or .b32.i2p address",
+                        oninput: move |e: Event<FormData>| {
+                            state.write().hidden_services.client.edit.destination = e.value();
+                        }
+                    }
+                    label { class: "field-label", "Destination port" }
+                    input {
+                        r#type: "text",
+                        value: "{dest_port}",
+                        placeholder: "80",
+                        oninput: move |e: Event<FormData>| {
+                            state.write().hidden_services.client.edit.destination_port = e.value();
+                        }
+                    }
+                }
 
-            div {
-                class: "button-row",
-                button {
-                    class: "btn btn-primary",
-                    onclick: move |_| {
-                        let mut state = state.write();
-                        match state.validate_client() {
-                            Ok(()) => {
-                                let old_name = state.hidden_services.client.edit.original_name.clone();
-                                let new_name = state.hidden_services.client.edit.name.clone();
-                                let address = state.hidden_services.client.edit.address.clone();
-                                let port = state.hidden_services.client.edit.port.clone();
-                                let dest = state.hidden_services.client.edit.destination.clone();
-                                let dest_port = state.hidden_services.client.edit.destination_port.clone();
-                                state.hidden_services.client.clients.remove(&old_name);
-                                state.hidden_services.client.clients.insert(
-                                    new_name,
-                                    ClientTunnel {
-                                    address,
-                                    port,
-                                    destination: dest,
-                                    destination_port: dest_port,
-                                });
+                if let Some(error) = error {
+                    div {
+                        class: "status-error", "{error}" }
+                }
 
+                div {
+                    class: "modal-footer",
+                    div {
+                        class: "button-row",
+                        button {
+                            class: "btn btn-primary",
+                            onclick: move |_| {
+                                let mut state = state.write();
+                                match state.validate_client() {
+                                    Ok(()) => {
+                                        let old_name = state.hidden_services.client.edit.original_name.clone();
+                                        let new_name = state.hidden_services.client.edit.name.clone();
+                                        let address = state.hidden_services.client.edit.address.clone();
+                                        let port = state.hidden_services.client.edit.port.clone();
+                                        let dest = state.hidden_services.client.edit.destination.clone();
+                                        let dest_port = state.hidden_services.client.edit.destination_port.clone();
+                                        state.hidden_services.client.clients.remove(&old_name);
+                                        state.hidden_services.client.clients.insert(
+                                            new_name,
+                                            ClientTunnel {
+                                            address,
+                                            port,
+                                            destination: dest,
+                                            destination_port: dest_port,
+                                        });
+
+                                        state.hidden_services.client.edit.name.clear();
+                                        state.hidden_services.client.edit.address.clear();
+                                        state.hidden_services.client.edit.port.clear();
+                                        state.hidden_services.client.edit.destination.clear();
+                                        state.hidden_services.client.edit.destination_port.clear();
+                                        state.hidden_services.client.edit.original_name.clear();
+                                        state.hidden_services.status = None;
+
+                                        state.save_clients();
+                                        state.push_toast("Client tunnel saved");
+                                    }
+                                    Err(error) => {
+                                        state.hidden_services.status = Some(HiddenServicesStatus::EditClient(Some(error)));
+                                    }
+                                }
+                            },
+                            "Save"
+                        }
+                        button {
+                            class: "btn btn-secondary",
+                            onclick: move |_| {
+                                let mut state = state.write();
+                                state.hidden_services.status = None;
                                 state.hidden_services.client.edit.name.clear();
                                 state.hidden_services.client.edit.address.clear();
                                 state.hidden_services.client.edit.port.clear();
                                 state.hidden_services.client.edit.destination.clear();
                                 state.hidden_services.client.edit.destination_port.clear();
                                 state.hidden_services.client.edit.original_name.clear();
-                                state.hidden_services.status = HiddenServicesStatus::Idle;
-
-                                state.save_clients();
-                                state.push_toast("Client tunnel saved");
-                            }
-                            Err(error) => {
-                                state.hidden_services.status = HiddenServicesStatus::EditClient(Some(error));
-                            }
+                            },
+                            "Cancel"
                         }
-                    },
-                    "Save"
-                }
-                button {
-                    class: "btn btn-secondary",
-                    onclick: move |_| {
-                        let mut state = state.write();
-                        state.hidden_services.status = HiddenServicesStatus::Idle;
-                        state.hidden_services.client.edit.name.clear();
-                        state.hidden_services.client.edit.address.clear();
-                        state.hidden_services.client.edit.port.clear();
-                        state.hidden_services.client.edit.destination.clear();
-                        state.hidden_services.client.edit.destination_port.clear();
-                        state.hidden_services.client.edit.original_name.clear();
-                    },
-                    "Cancel"
+                    }
                 }
             }
         }

@@ -378,7 +378,6 @@ pub struct ClientTunnel {
 /// Active "Hidden services" status.
 #[derive(Debug, Clone)]
 pub enum HiddenServicesStatus {
-    Idle,
     CreateServer(Option<String>),
     EditServer(Option<String>),
     CreateClient(Option<String>),
@@ -518,7 +517,7 @@ impl From<&EmissaryConfig> for ClientInfo {
 /// Hidden services-related fields.
 pub struct HiddenServices {
     /// Current status.
-    pub status: HiddenServicesStatus,
+    pub status: Option<HiddenServicesStatus>,
 
     /// Server infomation.
     pub server: ServerInfo,
@@ -531,7 +530,7 @@ impl HiddenServices {
     /// Create new `HiddenServices`.
     pub fn new(config: &EmissaryConfig) -> Self {
         HiddenServices {
-            status: HiddenServicesStatus::Idle,
+            status: None,
             server: ServerInfo::from(config),
             client: ClientInfo::from(config),
         }

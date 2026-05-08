@@ -16,8 +16,6 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::ui::dioxus::{types::HiddenServicesStatus, AppState};
-
 use dioxus::prelude::*;
 
 pub mod client;
@@ -26,9 +24,6 @@ pub mod server;
 
 #[component]
 pub fn HiddenServicesView() -> Element {
-    let state = use_context::<SyncSignal<AppState>>();
-    let service_status = state.read().hidden_services.status.clone();
-
     rsx! {
         div {
             class: "page",
@@ -38,13 +33,7 @@ pub fn HiddenServicesView() -> Element {
                 p { "Configure hidden services and client tunnels" }
             }
 
-            match service_status {
-                HiddenServicesStatus::Idle => rsx! { overview::HiddenServiceOverview {} },
-                HiddenServicesStatus::CreateServer(_) => rsx! { server::CreateServerForm {} },
-                HiddenServicesStatus::EditServer(_) => rsx! { server::EditServerForm {} },
-                HiddenServicesStatus::CreateClient(_) => rsx! { client::CreateClientForm {} },
-                HiddenServicesStatus::EditClient(_) => rsx! { client::EditClientForm {} },
-            }
+            overview::HiddenServiceOverview {}
         }
     }
 }

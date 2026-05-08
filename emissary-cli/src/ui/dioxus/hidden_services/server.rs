@@ -30,7 +30,7 @@ pub fn CreateServerForm() -> Element {
     let (server_name, server_port, server_path, error) = {
         let state = state.read();
         let error = match &state.hidden_services.status {
-            HiddenServicesStatus::CreateServer(Some(error)) => Some(error.clone()),
+            Some(HiddenServicesStatus::CreateServer(Some(error))) => Some(error.clone()),
             _ => None,
         };
 
@@ -44,85 +44,87 @@ pub fn CreateServerForm() -> Element {
 
     rsx! {
         div {
-            class: "card",
-            style: "max-width: 500px;",
-            h3 {
-                style: "font-size:18px;color:#fff;margin-bottom:12px;",
-                "Create a hidden service"
-            }
+            class: "modal-overlay",
             div {
-                class: "settings-section",
-                label { class: "field-label", "Name" }
-                input {
-                    r#type: "text",
-                    value: "{server_name}",
-                    placeholder: "Name",
-                    oninput: move |e: Event<FormData>| {
-                        state.write().hidden_services.server.edit.name = e.value();
+                class: "modal",
+                div { class: "modal-title", "Create a hidden service" }
+                div {
+                    class: "settings-section",
+                    label { class: "field-label", "Name" }
+                    input {
+                        r#type: "text",
+                        value: "{server_name}",
+                        placeholder: "Name",
+                        oninput: move |e: Event<FormData>| {
+                            state.write().hidden_services.server.edit.name = e.value();
+                        }
+                    }
+                    label { class: "field-label", "Port" }
+                    input {
+                        r#type: "text",
+                        value: "{server_port}",
+                        placeholder: "Port",
+                        oninput: move |e: Event<FormData>| {
+                            state.write().hidden_services.server.edit.port = e.value();
+                        }
+                    }
+                    label { class: "field-label", "Destination path" }
+                    input {
+                        r#type: "text",
+                        value: "{server_path}",
+                        placeholder: "Path",
+                        oninput: move |e: Event<FormData>| {
+                            state.write().hidden_services.server.edit.path = e.value();
+                        }
                     }
                 }
-                label { class: "field-label", "Port" }
-                input {
-                    r#type: "text",
-                    value: "{server_port}",
-                    placeholder: "Port",
-                    oninput: move |e: Event<FormData>| {
-                        state.write().hidden_services.server.edit.port = e.value();
-                    }
+
+                if let Some(error) = error {
+                    div { class: "status-error", "{error}" }
                 }
-                label { class: "field-label", "Destination path" }
-                input {
-                    r#type: "text",
-                    value: "{server_path}",
-                    placeholder: "Path",
-                    oninput: move |e: Event<FormData>| {
-                        state.write().hidden_services.server.edit.path = e.value();
-                    }
-                }
-            }
 
-            if let Some(error) = error {
-                div { class: "status-error", "{error}" }
-            }
+                div {
+                    class: "modal-footer",
+                    div {
+                        class: "button-row",
+                        button {
+                            class: "btn btn-primary",
+                            onclick: move |_| {
+                                let mut state = state.write();
+                                match state.validate_server() {
+                                    Ok(address) => {
+                                        let name = state.hidden_services.server.edit.name.clone();
+                                        let port = state.hidden_services.server.edit.port.clone();
+                                        let path = state.hidden_services.server.edit.path.clone();
 
-            div {
-                class: "button-row",
-                button {
-                    class: "btn btn-primary",
-                    onclick: move |_| {
-                        let mut state = state.write();
-                        match state.validate_server() {
-                            Ok(address) => {
-                                let name = state.hidden_services.server.edit.name.clone();
-                                let port = state.hidden_services.server.edit.port.clone();
-                                let path = state.hidden_services.server.edit.path.clone();
+                                        state.hidden_services.server.servers.insert(name, ServerTunnel { port, path, address });
+                                        state.hidden_services.server.edit.name.clear();
+                                        state.hidden_services.server.edit.port.clear();
+                                        state.hidden_services.server.edit.path.clear();
+                                        state.hidden_services.status = None;
 
-                                state.hidden_services.server.servers.insert(name, ServerTunnel { port, path, address });
+                                        state.save_servers();
+                                        state.push_toast("Server tunnel saved");
+                                    }
+                                    Err(error) => {
+                                        state.hidden_services.status = Some(HiddenServicesStatus::CreateServer(Some(error)));
+                                    }
+                                }
+                            },
+                            "Save"
+                        }
+                        button {
+                            class: "btn btn-secondary",
+                            onclick: move |_| {
+                                let mut state = state.write();
+                                state.hidden_services.status = None;
                                 state.hidden_services.server.edit.name.clear();
                                 state.hidden_services.server.edit.port.clear();
                                 state.hidden_services.server.edit.path.clear();
-                                state.hidden_services.status = HiddenServicesStatus::Idle;
-
-                                state.save_servers();
-                                state.push_toast("Server tunnel saved");
-                            }
-                            Err(error) => {
-                                state.hidden_services.status = HiddenServicesStatus::CreateServer(Some(error));
-                            }
+                            },
+                            "Cancel"
                         }
-                    },
-                    "Save"
-                }
-                button {
-                    class: "btn btn-secondary",
-                    onclick: move |_| {
-                        let mut state = state.write();
-                        state.hidden_services.status = HiddenServicesStatus::Idle;
-                        state.hidden_services.server.edit.name.clear();
-                        state.hidden_services.server.edit.port.clear();
-                        state.hidden_services.server.edit.path.clear();
-                    },
-                    "Cancel"
+                    }
                 }
             }
         }
@@ -136,7 +138,7 @@ pub fn EditServerForm() -> Element {
     let (name, port, path, error) = {
         let state = state.read();
         let error = match &state.hidden_services.status {
-            HiddenServicesStatus::EditServer(Some(error)) => Some(error.clone()),
+            Some(HiddenServicesStatus::EditServer(Some(error))) => Some(error.clone()),
             _ => None,
         };
         (
@@ -149,86 +151,91 @@ pub fn EditServerForm() -> Element {
 
     rsx! {
         div {
-            class: "card",
-            style: "max-width: 500px;",
-            h3 { style: "font-size:18px;color:#fff;margin-bottom:12px;", "Edit a hidden service" }
+            class: "modal-overlay",
             div {
-                class: "settings-section",
-                label { class: "field-label", "Name" }
-                input {
-                    r#type: "text",
-                    value: "{name}",
-                    placeholder: "Name",
-                    oninput: move |e: Event<FormData>| {
-                        state.write().hidden_services.server.edit.name = e.value();
+                class: "modal",
+                div { class: "modal-title", "Edit a hidden service" }
+                div {
+                    class: "settings-section",
+                    label { class: "field-label", "Name" }
+                    input {
+                        r#type: "text",
+                        value: "{name}",
+                        placeholder: "Name",
+                        oninput: move |e: Event<FormData>| {
+                            state.write().hidden_services.server.edit.name = e.value();
+                        }
+                    }
+                    label { class: "field-label", "Port" }
+                    input {
+                        r#type: "text",
+                        value: "{port}",
+                        placeholder: "Port",
+                        oninput: move |e: Event<FormData>| {
+                            state.write().hidden_services.server.edit.port = e.value();
+                        }
+                    }
+                    label { class: "field-label", "Destination path" }
+                    input {
+                        r#type: "text",
+                        value: "{path}",
+                        placeholder: "Path",
+                        oninput: move |e: Event<FormData>| {
+                            state.write().hidden_services.server.edit.path = e.value();
+                        }
                     }
                 }
-                label { class: "field-label", "Port" }
-                input {
-                    r#type: "text",
-                    value: "{port}",
-                    placeholder: "Port",
-                    oninput: move |e: Event<FormData>| {
-                        state.write().hidden_services.server.edit.port = e.value();
-                    }
+
+                if let Some(error) = error {
+                    div { class: "status-error", "{error}" }
                 }
-                label { class: "field-label", "Destination path" }
-                input {
-                    r#type: "text",
-                    value: "{path}",
-                    placeholder: "Path",
-                    oninput: move |e: Event<FormData>| {
-                        state.write().hidden_services.server.edit.path = e.value();
-                    }
-                }
-            }
 
-            if let Some(error) = error {
-                div { class: "status-error", "{error}" }
-            }
+                div {
+                    class: "modal-footer",
+                    div {
+                        class: "button-row",
+                        button {
+                            class: "btn btn-primary",
+                            onclick: move |_| {
+                                let mut state = state.write();
+                                match state.validate_server() {
+                                    Ok(address) => {
+                                        let old_name = state.hidden_services.server.edit.original_name.clone();
+                                        let new_name = state.hidden_services.server.edit.name.clone();
+                                        let port = state.hidden_services.server.edit.port.clone();
+                                        let path = state.hidden_services.server.edit.path.clone();
 
-            div {
-                class: "button-row",
-                button {
-                    class: "btn btn-primary",
-                    onclick: move |_| {
-                        let mut state = state.write();
-                        match state.validate_server() {
-                            Ok(address) => {
-                                let old_name = state.hidden_services.server.edit.original_name.clone();
-                                let new_name = state.hidden_services.server.edit.name.clone();
-                                let port = state.hidden_services.server.edit.port.clone();
-                                let path = state.hidden_services.server.edit.path.clone();
+                                        state.hidden_services.server.servers.remove(&old_name);
+                                        state.hidden_services.server.servers.insert(new_name, ServerTunnel { port, path, address });
+                                        state.hidden_services.server.edit.name.clear();
+                                        state.hidden_services.server.edit.port.clear();
+                                        state.hidden_services.server.edit.path.clear();
+                                        state.hidden_services.server.edit.original_name.clear();
+                                        state.hidden_services.status = None;
 
-                                state.hidden_services.server.servers.remove(&old_name);
-                                state.hidden_services.server.servers.insert(new_name, ServerTunnel { port, path, address });
+                                        state.save_servers();
+                                        state.push_toast("Server tunnel saved");
+                                    }
+                                    Err(error) => {
+                                        state.hidden_services.status = Some(HiddenServicesStatus::EditServer(Some(error)));
+                                    }
+                                }
+                            },
+                            "Save"
+                        }
+                        button {
+                            class: "btn btn-secondary",
+                            onclick: move |_| {
+                                let mut state = state.write();
+                                state.hidden_services.status = None;
                                 state.hidden_services.server.edit.name.clear();
                                 state.hidden_services.server.edit.port.clear();
                                 state.hidden_services.server.edit.path.clear();
                                 state.hidden_services.server.edit.original_name.clear();
-                                state.hidden_services.status = HiddenServicesStatus::Idle;
-
-                                state.save_servers();
-                                state.push_toast("Server tunnel saved");
-                            }
-                            Err(error) => {
-                                state.hidden_services.status = HiddenServicesStatus::EditServer(Some(error));
-                            }
+                            },
+                            "Cancel"
                         }
-                    },
-                    "Save"
-                }
-                button {
-                    class: "btn btn-secondary",
-                    onclick: move |_| {
-                        let mut state = state.write();
-                        state.hidden_services.status = HiddenServicesStatus::Idle;
-                        state.hidden_services.server.edit.name.clear();
-                        state.hidden_services.server.edit.port.clear();
-                        state.hidden_services.server.edit.path.clear();
-                        state.hidden_services.server.edit.original_name.clear();
-                    },
-                    "Cancel"
+                    }
                 }
             }
         }

@@ -670,6 +670,23 @@ textarea:focus { border-color: var(--em-focus); }
   box-shadow: 0 4px 12px rgba(0,0,0,0.4);
   min-width: 200px; max-width: 320px;
 }
+
+.modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 500;
+}
+.modal {
+  background: var(--em-bg-surface);
+  border: 1px solid var(--em-border-sub);
+  border-radius: 12px;
+  padding: 24px;
+  min-width: 500px; max-width: 600px;
+  display: flex; flex-direction: column; gap: 16px;
+}
+.modal-title { font-size: 18px; color: var(--em-text-inv); font-weight: 600; }
+.modal-footer { display: flex; gap: 8px; justify-content: flex-end; }
 "#;
 
 /// Script to remove right-click menu from desktop view.

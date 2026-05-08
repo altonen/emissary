@@ -16,7 +16,13 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::ui::dioxus::{svg::*, types::HiddenServicesStatus, util::trim_display_name, AppState};
+use crate::ui::dioxus::{
+    hidden_services::{client, server},
+    svg::*,
+    types::HiddenServicesStatus,
+    util::trim_display_name,
+    AppState,
+};
 
 use dioxus::prelude::*;
 
@@ -33,6 +39,7 @@ pub fn HiddenServiceOverview() -> Element {
             state.hidden_services.client.pending_delete.clone(),
         )
     };
+    let service_status = state.read().hidden_services.status.clone();
 
     rsx! {
         div {
@@ -147,7 +154,7 @@ pub fn HiddenServiceOverview() -> Element {
                                                             state.hidden_services.server.edit.original_name = name.clone();
                                                             state.hidden_services.server.edit.port = port;
                                                             state.hidden_services.server.edit.path = path;
-                                                            state.hidden_services.status = HiddenServicesStatus::EditServer(None);
+                                                            state.hidden_services.status = Some(HiddenServicesStatus::EditServer(None));
                                                         }
                                                     },
                                                     span {
@@ -182,7 +189,7 @@ pub fn HiddenServiceOverview() -> Element {
                     button {
                         class: "btn btn-primary",
                         onclick: move |_| {
-                            state.write().hidden_services.status = HiddenServicesStatus::CreateServer(None);
+                            state.write().hidden_services.status = Some(HiddenServicesStatus::CreateServer(None));
                         },
                         "Create"
                     }
@@ -297,7 +304,7 @@ pub fn HiddenServiceOverview() -> Element {
                                                             state.hidden_services.client.edit.port = port;
                                                             state.hidden_services.client.edit.destination = dest;
                                                             state.hidden_services.client.edit.destination_port = dest_port;
-                                                            state.hidden_services.status = HiddenServicesStatus::EditClient(None);
+                                                            state.hidden_services.status = Some(HiddenServicesStatus::EditClient(None));
                                                         }
                                                     },
                                                     span {
@@ -332,10 +339,19 @@ pub fn HiddenServiceOverview() -> Element {
                     button {
                         class: "btn btn-primary",
                         onclick: move |_| {
-                            state.write().hidden_services.status = HiddenServicesStatus::CreateClient(None);
+                            state.write().hidden_services.status = Some(HiddenServicesStatus::CreateClient(None));
                         },
                         "Create"
                     }
+                }
+            }
+
+            if let Some(status) = service_status {
+                match status {
+                    HiddenServicesStatus::CreateServer(_) => rsx! { server::CreateServerForm {} },
+                    HiddenServicesStatus::EditServer(_) => rsx! { server::EditServerForm {} },
+                    HiddenServicesStatus::CreateClient(_) => rsx! { client::CreateClientForm {} },
+                    HiddenServicesStatus::EditClient(_) => rsx! { client::EditClientForm {} },
                 }
             }
         }
