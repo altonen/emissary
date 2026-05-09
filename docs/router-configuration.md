@@ -29,7 +29,8 @@ name = "emissary"
 # upnp is used to resolve external address
 [ntcp2]
 port = 25515
-publish = true
+publish_ipv4 = true
+publish_ipv6 = true
 
 # i2cp disabled
 # [i2cp]
@@ -104,7 +105,8 @@ Run `emissary-cli --help` to show the built-in help message with all available o
 | `ipv6` | - | Enable IPv6 (default: true) |
 | `ipv6_host` | - | Public IPv6 address for incoming connections. Can be auto-discovered via SSU2 if left empty. |
 | `port` | - | Port to listen for incoming NTCP2 connections. (default: random port between 9151-30777) |
-| `publish` | - | Publish the address(es) in router info for incoming connections. (default: true) |
+| `publish_ipv4` | - | Publish the IPv4 address in router info for incoming connections. (default: true) |
+| `publish_ipv6` | - | Publish the IPv6 address in router info for incoming connections. (default: true) |
 | `disable_pq` | - | Disable PQ connections (default: false) |
 | `ml_kem` | - | ML-KEM preference for inbound connections (default: 4) |
 
@@ -124,9 +126,10 @@ Example:
 [ntcp2]
 port = 25515
 ipv4_host = "203.0.113.50"
-publish = true
+publish_ipv4 = true
+publish_ipv6 = false
 ipv4 = true
-ipv6 = false
+ipv6 = true
 
 # use ml-kem-512 for inbound connections
 ml_kem = 3
@@ -145,7 +148,8 @@ ml_kem = 3
 | `ipv6_host` | - | Public IPv6 address for incoming connections. Can be auto-discovered via SSU2 if left empty. |
 | `ipv6_mtu` | - | IPv6 MTU (default: 1500) |
 | `port` | - | Port to listen for incoming SSU2 connections. (default: random port between 9151-30777) |
-| `publish` | - | Publish the address(es) in router info for incoming connections. (default: true) |
+| `publish_ipv4` | - | Publish the IPv4 address in router info for incoming connections. (default: true) |
+| `publish_ipv6` | - | Publish the IPv6 address in router info for incoming connections. (default: true) |
 | `disable_pq` | - | Disable PQ connections (default: false) |
 | `ml_kem` | - | ML-KEM preferences for inbound connections (default: `4,3`) |
 
@@ -168,7 +172,7 @@ Example:
 port = 25515
 ipv4 = false
 ipv6_mtu = 1300
-publish = true
+publish_ipv6 = true
 
 # use ml-kem-512, ml-kem-768
 ml_kem = "3,4"
@@ -691,30 +695,57 @@ destination_path = "/path/to/base64-destination.keys"
 Server tunnels require SAM to be enabled. Each tunnel must have a unique name, port, and destination path.
 :::
 
-### Router UI (Web)
+### Router UI
 
 **Config file section:** `[router-ui]`
 
-Starts a local webserver on the specified `port`.
-
-| Config file | Description |
-|-------------|-------------|
-| `theme` | Options: `light`, `dark`. (default: dark). |
-| `refresh_interval` | How often the web UI should update. (default: 5). |
-| `port` | The port to start the webserver on. (default: 7657) |
+<table>
+  <thead>
+    <tr>
+      <th>Config file</th>
+      <th style="width: 26%">CLI</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>-</td>
+      <td><code>--disable-ui</code></td>
+      <td>Disable router UI</td>
+    </tr>
+    <tr>
+      <td><code>native</code></td>
+      <td><code>--native</code></td>
+      <td>Use native UI (default: false)</td>
+    </tr>
+    <tr>
+      <td><code>theme</code></td>
+      <td><code>--theme</code></td>
+      <td>Options: <code>light</code>, <code>dark</code> (Default: <code>dark</code>)</td>
+    </tr>
+    <tr>
+      <td><code>refresh_interval</code></td>
+      <td><code>--refresh-interval</code></td>
+      <td>How often the UI should update. (default: 5)</td>
+    </tr>
+    <tr>
+      <td><code>port</code></td>
+      <td><code>--web-ui-port</code></td>
+      <td>The port to start the webserver on. (default: 7657)</td>
+    </tr>
+  </tbody>
+</table>
 
 Example:
 
 ```toml
 [router-ui]
 theme = "dark"
-refresh_interval = 5
 port = 7657
-```
 
-::: info
-Requires the `web-ui` feature.
-:::
+# update UI once a second
+refresh_interval = 1
+```
 
 ## Enabling and disabling subsystems
 

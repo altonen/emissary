@@ -6,12 +6,24 @@ outline: deep
 
 ## Modifying router UIs
 
-The router can be started in "router UI only" mode which starts the UI (native or web) without connecting to the network:
+The router can be started in "router UI only" mode with the `router-ui-dev` command which starts the UI (native or web) without connecting to the network.
+
+### Examples
+
+Use web UI:
 
 ```bash
-# native ui
 cargo run -- router-ui-dev
+```
 
-# web ui
-cargo run --no-default-features --features web-ui -- router-ui-dev
+Use native UI:
+
+```bash
+cargo run -- router-ui-dev --native
+```
+
+Use custom path for storing files (useful for testing settings/address book):
+
+```bash
+cargo run -- router-ui-dev --path /tmp/emissary
 ```
