@@ -50,7 +50,10 @@ jobs:
           libfontconfig1-dev \
           libglib2.0-dev \
           libgtk-3-dev \
-          libwebkit2gtk-4.1-dev
+          libwebkit2gtk-4.1-dev \
+          libssl-dev \
+          libxdo-dev \
+          libayatana-appindicator3-dev
 
     - name: cargo-clippy emissary-core
       working-directory: emissary-core
@@ -134,7 +137,10 @@ jobs:
           libfontconfig1-dev \
           libglib2.0-dev \
           libgtk-3-dev \
-          libwebkit2gtk-4.1-dev
+          libwebkit2gtk-4.1-dev \
+          libssl-dev \
+          libxdo-dev \
+          libayatana-appindicator3-dev
 
     - name: cargo-nextest emissary-cli
       run:
