@@ -16,8 +16,6 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#![allow(unused)] // TODO: remove
-
 pub const DASHBOARD_SVG: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/assets/icons/dashboard.svg"

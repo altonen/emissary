@@ -16,7 +16,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#![cfg(any(feature = "ui"))]
+#![cfg(feature = "ui")]
 
 use crate::ui;
 

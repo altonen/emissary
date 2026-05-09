@@ -81,7 +81,8 @@ impl Client {
                 ipv6_host: None,
                 ipv4: true,
                 ipv6: true,
-                publish: false,
+                publish_ipv4: false,
+                publish_ipv6: false,
                 iv: {
                     let mut iv = [0u8; 16];
                     rng.fill_bytes(&mut iv);
@@ -113,7 +114,8 @@ impl Client {
                 ipv6: true,
                 ipv6_host: None,
                 port: 0,
-                publish: true,
+                publish_ipv4: false,
+                publish_ipv6: false,
                 static_key: {
                     let mut key = [0u8; 32];
                     rng.fill_bytes(&mut key);

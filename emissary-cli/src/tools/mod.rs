@@ -99,7 +99,7 @@ pub enum RouterCommand {
     /// Start the router UI (either native or web) in development mode.
     ///
     /// The actual router is not started and the router UI is fed mock data.
-    #[cfg(any(feature = "ui"))]
+    #[cfg(feature = "ui")]
     RouterUiDev {
         /// Path where router files are stored.
         ///
@@ -148,7 +148,7 @@ impl RouterCommand {
                 num_routers,
                 path,
             } => devnet::spawn_network(num_floodfills, num_routers, path).await,
-            #[cfg(any(feature = "ui"))]
+            #[cfg(feature = "ui")]
             RouterCommand::RouterUiDev { path, native } =>
                 router_ui_dev::run(path, native.unwrap_or(false)).await,
         }

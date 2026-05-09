@@ -216,8 +216,6 @@ pub struct RouterUiConfig {
     pub native: Option<bool>,
     pub refresh_interval: usize,
     pub port: Option<u16>,
-    #[serde(rename = "web-ui")]
-    pub web_ui: Option<bool>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -346,7 +344,6 @@ impl EmissaryConfig {
                 refresh_interval: 5usize,
                 native: None,
                 port: None,
-                web_ui: None,
             }),
             sam: Some(SamConfig {
                 tcp_port: 7656,

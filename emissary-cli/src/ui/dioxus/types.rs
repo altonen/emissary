@@ -165,21 +165,10 @@ pub enum SettingsTab {
 
 /// Settings status.
 #[derive(Debug, Clone)]
-#[allow(unused)]
 pub enum SettingsStatus {
-    Idle(SettingsTab),
-    Saved(SettingsTab),
-    Error(SettingsTab, String),
-}
-
-impl SettingsStatus {
-    #[allow(unused)]
-    /// Return current tab.
-    pub fn tab(&self) -> SettingsTab {
-        match self {
-            Self::Idle(t) | Self::Saved(t) | Self::Error(t, _) => *t,
-        }
-    }
+    Idle,
+    Saved,
+    Error(String),
 }
 
 /// Settings info.
@@ -239,7 +228,7 @@ impl Settings {
             sam: SamConfig::from(config),
             socks_proxy: SocksProxyConfig::from(config),
             ssu2: Ssu2Config::from(config),
-            status: SettingsStatus::Idle(SettingsTab::Transports),
+            status: SettingsStatus::Idle,
             transit: TransitConfig::from(config),
         }
     }

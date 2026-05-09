@@ -196,18 +196,25 @@ impl AppState {
             UiKind::Web
         };
 
-        let ipv4_status = config
+        let ipv4_status = if config
             .ssu2
             .as_ref()
             .is_some_and(|config| config.ipv4.is_none_or(|enabled| enabled))
-            .then_some(String::from("Testing"))
-            .unwrap_or(String::from("Disabled"));
-        let ipv6_status = config
+        {
+            String::from("Testing")
+        } else {
+            String::from("Disabled")
+        };
+
+        let ipv6_status = if config
             .ssu2
             .as_ref()
             .is_some_and(|config| config.ipv6.is_none_or(|enabled| enabled))
-            .then_some(String::from("Testing"))
-            .unwrap_or(String::from("Disabled"));
+        {
+            String::from("Testing")
+        } else {
+            String::from("Disabled")
+        };
 
         Self {
             address_book_handle,

@@ -396,7 +396,7 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(any(feature = "ui"))]
+#[cfg(feature = "ui")]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let (shutdown_tx, shutdown_rx) = channel(1);

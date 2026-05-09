@@ -103,7 +103,7 @@ impl TryInto<Option<crate::config::Ntcp2Config>> for Ntcp2Config {
                 Some(value) => {
                     let value = value.parse::<usize>().expect("valid value");
 
-                    if value < 3 || value > 5 {
+                    if !(3..5).contains(&value) {
                         return Err(String::from("ML-KEM only accepts 3, 4 or 5"));
                     }
 

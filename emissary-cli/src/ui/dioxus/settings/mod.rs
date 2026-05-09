@@ -64,7 +64,7 @@ pub fn SettingsView() -> Element {
                             onclick: move |_| {
                                 let mut w = state.write();
                                 if w.settings.active_tab != SettingsTab::Transports {
-                                    w.settings.status = SettingsStatus::Idle(SettingsTab::Transports);
+                                    w.settings.status = SettingsStatus::Idle;
                                 }
                                 w.settings.active_tab = SettingsTab::Transports;
                             },
@@ -76,7 +76,7 @@ pub fn SettingsView() -> Element {
                             onclick: move |_| {
                                 let mut w = state.write();
                                 if w.settings.active_tab != SettingsTab::Client {
-                                    w.settings.status = SettingsStatus::Idle(SettingsTab::Client);
+                                    w.settings.status = SettingsStatus::Idle;
                                 }
                                 w.settings.active_tab = SettingsTab::Client;
                             },
@@ -88,7 +88,7 @@ pub fn SettingsView() -> Element {
                             onclick: move |_| {
                                 let mut w = state.write();
                                 if w.settings.active_tab != SettingsTab::Proxies {
-                                    w.settings.status = SettingsStatus::Idle(SettingsTab::Proxies);
+                                    w.settings.status = SettingsStatus::Idle;
                                 }
                                 w.settings.active_tab = SettingsTab::Proxies;
                             },
@@ -100,7 +100,7 @@ pub fn SettingsView() -> Element {
                             onclick: move |_| {
                                 let mut w = state.write();
                                 if w.settings.active_tab != SettingsTab::Tunnels {
-                                    w.settings.status = SettingsStatus::Idle(SettingsTab::Tunnels);
+                                    w.settings.status = SettingsStatus::Idle;
                                 }
                                 w.settings.active_tab = SettingsTab::Tunnels;
                             },
@@ -112,7 +112,7 @@ pub fn SettingsView() -> Element {
                             onclick: move |_| {
                                 let mut w = state.write();
                                 if w.settings.active_tab != SettingsTab::Advanced {
-                                    w.settings.status = SettingsStatus::Idle(SettingsTab::Advanced);
+                                    w.settings.status = SettingsStatus::Idle;
                                 }
                                 w.settings.active_tab = SettingsTab::Advanced;
                             },
@@ -138,13 +138,12 @@ pub fn SettingsView() -> Element {
                         class: "btn btn-primary",
                         onclick: move |_| {
                             let mut state = state.write();
-                            let tab = state.settings.active_tab;
                             match state.save_settings() {
                                 Ok(()) => {
-                                    state.settings.status = SettingsStatus::Saved(tab);
+                                    state.settings.status = SettingsStatus::Saved;
                                     state.push_toast("Settings saved");
                                 }
-                                Err(e) => state.settings.status = SettingsStatus::Error(tab, e),
+                                Err(e) => state.settings.status = SettingsStatus::Error(e),
                             }
                         },
                         "Save"
@@ -158,11 +157,11 @@ pub fn SettingsView() -> Element {
                     }
 
                     match &settings_status {
-                        SettingsStatus::Idle(_) => rsx! { },
-                        SettingsStatus::Saved(_) => rsx! {
+                        SettingsStatus::Idle => rsx! { },
+                        SettingsStatus::Saved => rsx! {
                             span { class: "status-ok", style: "padding:0;", "Configuration saved" }
                         },
-                        SettingsStatus::Error(_, err) => {
+                        SettingsStatus::Error(err) => {
                             let err = err.clone();
                             rsx! {
                                 span { class: "status-error", style: "padding:0;", "{err}" }

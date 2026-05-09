@@ -107,10 +107,11 @@ async fn main() -> anyhow::Result<()> {
             key: ntcp2_key,
             iv: ntcp2_iv,
 
-            // publish NTCP2 address of the router in the router info that's published to NetDb
+            // publish NTCP2 addresses of the router in the router info that's published to NetDb
             //
             // this allows the embedded router to accept incoming NTCP2 connections
-            publish: true,
+            publish_ipv4: true,
+            publish_ipv6: true,
 
             // set host to `None` and use NAT-PMP/UPnP/SSU2 to resolve external address
             ipv4_host: None,
@@ -140,8 +141,9 @@ async fn main() -> anyhow::Result<()> {
             // bind SSU2 to same port as NTCP2
             port: 25515,
 
-            // publish the SSU2 address to NetDb
-            publish: true,
+            // publish the SSU2 addresses to NetDb
+            publish_ipv4: true,
+            publish_ipv6: true,
 
             // use default MTU for both IPv4 and IPv6
             ipv4_mtu: None,
