@@ -26,8 +26,10 @@ use emissary_core::{
 use futures::channel::oneshot;
 use parking_lot::RwLock;
 use reqwest::{
-    header::{HeaderMap, HeaderValue, CONNECTION},
-    Client, Proxy,
+    header::{
+        HeaderMap, HeaderValue, CONNECTION, ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED,
+    },
+    Client, Proxy, StatusCode,
 };
 
 use std::{
@@ -42,6 +44,54 @@ const RETRY_BACKOFF: Duration = Duration::from_secs(30);
 
 /// How many times each subscription is tried before giving up.
 const SUBSCRIPTION_NUM_RETRIES: usize = 5usize;
+
+/// Used when requesting address books from servers. This should reduce load to servers whose
+/// address books haven't changed since our last lookup.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+struct Modified {
+    etag: String,
+    last_modified: String,
+}
+
+/// The on-disk representation of our hosts modified times.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct HostModified {
+    host_modified_times: Vec<(String, Modified)>,
+}
+
+impl From<HashMap<String, Modified>> for HostModified {
+    fn from(value: HashMap<String, Modified>) -> Self {
+        Self {
+            host_modified_times: value.into_iter().collect::<Vec<(String, Modified)>>(),
+        }
+    }
+}
+
+impl From<HostModified> for HashMap<String, Modified> {
+    fn from(value: HostModified) -> HashMap<String, Modified> {
+        HashMap::from_iter(value.host_modified_times)
+    }
+}
+
+/// Only modified responses are passed on.
+enum Response {
+    /// etags/last-modified saved the server from doing work.
+    NotModified,
+    /// The response body and the etag/last-modified info to save for subsequent requests.
+    Modified { modified: Modified, body: String },
+}
+
+/// When a request fails, we remove the cache entry and sleep for `RETRY_BACKOFF`.
+enum Error {
+    /// There's an error _sending_ an HTTP request.
+    Client,
+    /// The HTTP request was a failure (4xx, 5xx).
+    Server,
+    /// We couldn't decode the response.
+    Encoding,
+    /// We couldn't get a response.
+    Response,
+}
 
 /// Address book.
 pub struct AddressBookManager {
@@ -109,59 +159,88 @@ impl AddressBookManager {
     }
 
     /// Attempt to download `hosts.txt` from `url`.
-    async fn download(client: &Client, url: &str) -> Option<String> {
-        let response = match client
-            .get(url.to_string())
-            .headers(HeaderMap::from_iter([(
-                CONNECTION,
-                HeaderValue::from_static("close"),
-            )]))
-            .send()
-            .await
-        {
+    async fn download(
+        client: &Client,
+        url: &str,
+        modified: Option<&Modified>,
+    ) -> Result<Response, Error> {
+        let mut headers = HeaderMap::from_iter([(CONNECTION, HeaderValue::from_static("close"))]);
+        // Consider refactoring some of this. if-let chaings may make this nicer.
+        if let Some(modified) = modified {
+            if !modified.etag.is_empty() {
+                if let Ok(etag) = HeaderValue::from_str(&modified.etag) {
+                    headers.insert(IF_NONE_MATCH, etag);
+                }
+            }
+
+            if !modified.last_modified.is_empty() {
+                if let Ok(last_modified) = HeaderValue::from_str(&modified.last_modified) {
+                    headers.insert(IF_MODIFIED_SINCE, last_modified);
+                }
+            }
+        }
+        let response = match client.get(url.to_string()).headers(headers).send().await {
             Err(error) => {
-                tracing::debug!(
+                tracing::warn!(
                     target: LOG_TARGET,
                     ?url,
                     ?error,
                     "failed to fetch hosts.txt"
                 );
-                return None;
+                return Err(Error::Client);
             }
             Ok(response) => response,
         };
-
+        if response.status() == StatusCode::NOT_MODIFIED {
+            return Ok(Response::NotModified);
+        }
         if !response.status().is_success() {
-            tracing::debug!(
+            tracing::warn!(
                 target: LOG_TARGET,
                 ?url,
                 status = ?response.status(),
                 "request to address book server failed",
             );
-            return None;
+            return Err(Error::Server);
         }
-
+        let modified = Modified {
+            etag: response
+                .headers()
+                .get(ETAG)
+                .and_then(|e| e.to_str().ok())
+                .map(String::from)
+                .unwrap_or_default(),
+            last_modified: response
+                .headers()
+                .get(LAST_MODIFIED)
+                .and_then(|l| l.to_str().ok())
+                .map(String::from)
+                .unwrap_or_default(),
+        };
         match response.bytes().await {
             Ok(response) => match std::str::from_utf8(&response) {
-                Ok(response) => Some(response.to_owned()),
+                Ok(response) => Ok(Response::Modified {
+                    modified,
+                    body: response.to_owned(),
+                }),
                 Err(error) => {
-                    tracing::debug!(
+                    tracing::warn!(
                         target: LOG_TARGET,
                         ?url,
                         ?error,
                         "failed to convert `hosts.txt` to utf-8",
                     );
-                    None
+                    Err(Error::Encoding)
                 }
             },
             Err(error) => {
-                tracing::debug!(
+                tracing::warn!(
                     target: LOG_TARGET,
                     ?url,
                     ?error,
                     "failed to get response from address book server"
                 );
-                None
+                Err(Error::Response)
             }
         }
     }
@@ -227,6 +306,64 @@ impl AddressBookManager {
         }
     }
 
+    /// Loads the modified info for each endpoint we request. In case we can't load it, we return an
+    /// empty `HashMap` so the whole process doesn't fail.
+    ///
+    /// If we can't load it for `std::io::Error` reasons, then we probably won't be able to save
+    /// either.
+    async fn load_host_modified_times(&self) -> HashMap<String, Modified> {
+        let path = self.address_book_path.join("host_modified_times");
+        let raw = match tokio::fs::read_to_string(path).await {
+            Ok(r) => r,
+            Err(error) => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?error,
+                    "could not read host_modified_times",
+                );
+                return HashMap::new();
+            }
+        };
+
+        match toml::from_str::<HostModified>(&raw) {
+            Ok(h) => h.into(),
+            Err(error) => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?error,
+                    "could not deserialize host_modified_times",
+                );
+                HashMap::new()
+            }
+        }
+    }
+
+    /// Serializes the host modified times as a `Vec<(String, Modified)>`. Warns on error instead of
+    /// failing.
+    async fn save_host_modified_times(&self, host_modified_times: HashMap<String, Modified>) {
+        let path = self.address_book_path.join("host_modified_times");
+        let modified = HostModified::from(host_modified_times);
+        let raw = match toml::to_string(&modified) {
+            Ok(r) => r,
+            Err(error) => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?error,
+                    "could not serialize host_modified_times",
+                );
+                return;
+            }
+        };
+
+        if let Err(error) = tokio::fs::write(path, raw).await {
+            tracing::warn!(
+                target: LOG_TARGET,
+                ?error,
+                "could not write host_modified_times",
+            );
+        }
+    }
+
     /// Start event loop for [`AddressBookManager`].
     ///
     /// Before the address book subscription download starts, [`AddressBook`] waits on
@@ -237,27 +374,19 @@ impl AddressBookManager {
         http_host: String,
         http_proxy_ready_rx: oneshot::Receiver<()>,
     ) {
-        let Some(hosts_url) = &self.hosts_url else {
-            tracing::debug!(
-                target: LOG_TARGET,
-                "address book download disabled",
-            );
-            return;
-        };
-
         if let Err(error) = http_proxy_ready_rx.await {
             tracing::error!(
                 target: LOG_TARGET,
                 ?error,
                 "http proxy failed to start, cannot start address book",
             );
+            return;
         }
 
         tracing::info!(
             target: LOG_TARGET,
             ?http_port,
             ?http_host,
-            ?hosts_url,
             subscriptions = ?self.subscriptions,
             "create address book",
         );
@@ -269,46 +398,70 @@ impl AddressBookManager {
             .expect("to succeed");
 
         let mut addresses = HashMap::<String, (String, String)>::new();
+        let mut host_modified_times = self.load_host_modified_times().await;
 
-        loop {
-            match Self::download(&client, hosts_url).await {
-                Some(hosts) => {
-                    tracing::info!(
-                        target: LOG_TARGET,
-                        url = %hosts_url,
-                        "hosts.txt downloaded",
-                    );
+        if let Some(url) = &self.hosts_url {
+            self.download_with_retries(url, &client, &mut addresses, &mut host_modified_times)
+                .await;
 
-                    self.parse_and_merge(&mut addresses, hosts).await;
-                    break;
-                }
-                None => tokio::time::sleep(RETRY_BACKOFF).await,
-            }
-        }
-
-        // save hosts to disk at this point as subscriptions might contain .i2p addresses
-        // which the http proxy must be able to resolve to .b32.i2p addresses
-        self.save_to_disk(addresses.clone()).await;
+            // save hosts to disk at this point as subscriptions might contain .i2p addresses
+            // which the http proxy must be able to resolve to .b32.i2p addresses
+            self.save_to_disk(addresses.clone()).await;
+        } else {
+            tracing::debug!(
+                target: LOG_TARGET,
+                "default address book download skipped",
+            );
+        };
 
         for subscription in &self.subscriptions {
-            for _ in 0..SUBSCRIPTION_NUM_RETRIES {
-                match Self::download(&client, subscription).await {
-                    Some(hosts) => {
-                        tracing::info!(
-                            target: LOG_TARGET,
-                            url = subscription,
-                            "hosts.txt downloaded",
-                        );
-
-                        self.parse_and_merge(&mut addresses, hosts).await;
-                        break;
-                    }
-                    None => tokio::time::sleep(RETRY_BACKOFF).await,
-                }
-            }
+            self.download_with_retries(
+                subscription,
+                &client,
+                &mut addresses,
+                &mut host_modified_times,
+            )
+            .await;
         }
 
         self.save_to_disk(addresses).await;
+        self.save_host_modified_times(host_modified_times).await;
+    }
+
+    /// A wrapper around `Self::download` which deals with retries, logging, etc.
+    async fn download_with_retries(
+        &self,
+        url: &String,
+        client: &Client,
+        addresses: &mut HashMap<String, (String, String)>,
+        host_modified_times: &mut HashMap<String, Modified>,
+    ) {
+        for _ in 0..SUBSCRIPTION_NUM_RETRIES {
+            match Self::download(client, url, host_modified_times.get(url)).await {
+                Ok(Response::NotModified) => {
+                    tracing::info!(
+                        target: LOG_TARGET,
+                        %url,
+                        "hosts.txt not changed since last download",
+                    );
+                    break;
+                }
+                Ok(Response::Modified { modified, body }) => {
+                    tracing::info!(
+                        target: LOG_TARGET,
+                        %url,
+                        "hosts.txt downloaded",
+                    );
+                    self.parse_and_merge(addresses, body).await;
+                    host_modified_times.insert(url.to_string(), modified);
+                    break;
+                }
+                // These errors would have been logged by `Self::download` already.
+                Err(_) => {
+                    tokio::time::sleep(RETRY_BACKOFF).await;
+                }
+            }
+        }
     }
 
     /// Save `addresses` to disk.
@@ -1303,5 +1456,30 @@ mod tests {
         assert!(address_book_new.addresses.read().get("psi.i2p").is_some());
         assert!(address_book_new.addresses.read().get("zerobin.i2p").is_some());
         assert!(address_book_new.addresses.read().get("zzz.i2p").is_some());
+    }
+
+    #[tokio::test]
+    async fn simple_save_load_host_modified() {
+        let dir = tempdir().unwrap().path().to_owned();
+        let addressbook_dir = dir.join("addressbook");
+        tokio::fs::create_dir_all(addressbook_dir).await.unwrap();
+        let address_book = AddressBookManager::new(
+            dir.clone(),
+            AddressBookConfig {
+                default: Some(String::from("url")),
+                subscriptions: None,
+            },
+        )
+        .await;
+        let loaded = HashMap::from_iter([(
+            "foo".to_string(),
+            Modified {
+                etag: "bar".to_string(),
+                last_modified: "baz".to_string(),
+            },
+        )]);
+        address_book.save_host_modified_times(loaded.clone()).await;
+        let saved = address_book.load_host_modified_times().await;
+        assert_eq!(loaded, saved);
     }
 }

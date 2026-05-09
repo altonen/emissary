@@ -17,7 +17,6 @@
 // DEALINGS IN THE SOFTWARE.
 
 #![cfg(any(feature = "ui"))]
-// #![allow(unused)]
 
 use crate::ui;
 

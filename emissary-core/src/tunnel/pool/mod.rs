@@ -447,7 +447,6 @@ impl<R: Runtime, S: TunnelSelector + HopSelector> TunnelPool<R, S> {
                                     ?error,
                                     "failed to send outbound tunnel build message (0-hop)",
                                 );
-                                debug_assert!(false);
                             }
                         }
                         Err(error) => {
@@ -548,7 +547,6 @@ impl<R: Runtime, S: TunnelSelector + HopSelector> TunnelPool<R, S> {
                                     ?error,
                                     "failed to send outbound tunnel build message",
                                 );
-                                debug_assert!(false);
                             }
                         }
                         Err(error) => {
@@ -649,7 +647,6 @@ impl<R: Runtime, S: TunnelSelector + HopSelector> TunnelPool<R, S> {
                                     ?error,
                                     "failed to send inbond tunnel build message",
                                 );
-                                debug_assert!(false);
                             }
                         }
                         Some((send_tunnel_id, handle)) => {
