@@ -369,14 +369,15 @@ impl<R: Runtime> TransportManager<R> {
                 ipv4_host,
                 ipv6,
                 ipv6_host,
-                publish: true,
+                publish_ipv4,
+                publish_ipv6,
                 iv,
                 ..
             }) => match address {
                 // discovered address was ipv4, check if ntcp2 can be modified
-                IpAddr::V4(host) => match (ipv4, ipv4_host) {
+                IpAddr::V4(host) => match (ipv4, ipv4_host, publish_ipv4) {
                     // ipv4 enabled and user didn't specify an external address for the router
-                    (true, None) =>
+                    (true, None, true) =>
                         if let Some(ntcp2) = self.local_router_info.ntcp2_ipv4_mut() {
                             tracing::trace!(
                                 target: LOG_TARGET,
@@ -387,30 +388,36 @@ impl<R: Runtime> TransportManager<R> {
                         },
 
                     // ipv4 disabled for ntcp2, might be enabled for ssu2
-                    (false, _) => tracing::trace!(
+                    (false, _, _) => tracing::trace!(
                         target: LOG_TARGET,
                         ?address,
                         "not updating external address for ntcp2, ipv4 disabled",
                     ),
 
                     // discovered address matches the address specified by the user
-                    (true, Some(specified)) if *specified == IpAddr::V4(host) => {}
+                    (true, Some(specified), _) if *specified == IpAddr::V4(host) => {}
 
                     // discovered address doesn't match the address specified by the user
                     //
                     // log a warning so the user may fix the address but don't update the address
-                    (true, Some(specified)) => tracing::warn!(
+                    (true, Some(specified), _) => tracing::warn!(
                         target: LOG_TARGET,
                         ?specified,
                         ?host,
                         "specified external address doesn't match discovered external address",
                     ),
+
+                    // ntcp2 ipv4 is not published
+                    (true, None, false) => tracing::trace!(
+                        target: LOG_TARGET,
+                        "ntcp2 ipv4 not published, router address not updated",
+                    ),
                 },
-                IpAddr::V6(host) => match (ipv6, ipv6_host) {
+                IpAddr::V6(host) => match (ipv6, ipv6_host, publish_ipv6) {
                     // ipv6 enabled and user didn't specify an external address for the router
                     //
                     // update the host in `RouterAddress`
-                    (true, None) =>
+                    (true, None, true) =>
                         if let Some(ntcp2) = self.local_router_info.ntcp2_ipv6_mut() {
                             tracing::trace!(
                                 target: LOG_TARGET,
@@ -421,30 +428,33 @@ impl<R: Runtime> TransportManager<R> {
                         },
 
                     // ipv6 disabled for ntcp2, might be enabled for ssu2
-                    (false, _) => tracing::trace!(
+                    (false, _, _) => tracing::trace!(
                         target: LOG_TARGET,
                         ?address,
                         "not updating external address for ntcp2, ipv6 disabled",
                     ),
 
                     // discovered address matches the address specified by the user
-                    (true, Some(specified)) if *specified == IpAddr::V6(host) => {}
+                    (true, Some(specified), _) if *specified == IpAddr::V6(host) => {}
 
                     // discovered address doesn't match the address specified by the user
                     //
                     // log a warning so the user may fix the address but don't update the address
-                    (true, Some(specified)) => tracing::warn!(
+                    (true, Some(specified), _) => tracing::warn!(
                         target: LOG_TARGET,
                         ?specified,
                         ?host,
                         "specified external address doesn't match discovered external address",
                     ),
+
+                    // ntcp2 ipv6 is not published
+                    (true, None, false) => tracing::trace!(
+                        target: LOG_TARGET,
+                        "ntcp2 ipv6 not published, router address not updated",
+                    ),
                 },
             },
-            _ => tracing::trace!(
-                target: LOG_TARGET,
-                "ntcp2 not active or unpublished, router address not updated",
-            ),
+            _ => {}
         }
 
         match &self.ssu2_config {
@@ -454,13 +464,14 @@ impl<R: Runtime> TransportManager<R> {
                 ipv4_host,
                 ipv6,
                 ipv6_host,
-                publish: true,
+                publish_ipv4,
+                publish_ipv6,
                 ..
             }) => match address {
                 // discovered address was ipv4, check if ssu2 can be modified
-                IpAddr::V4(host) => match (ipv4, ipv4_host) {
+                IpAddr::V4(host) => match (ipv4, ipv4_host, publish_ipv4) {
                     // ipv4 enabled and user didn't specify an external address for the router
-                    (true, None) =>
+                    (true, None, true) =>
                         if let Some(ssu2) = self.local_router_info.ssu2_ipv4_mut() {
                             tracing::trace!(
                                 target: LOG_TARGET,
@@ -471,30 +482,36 @@ impl<R: Runtime> TransportManager<R> {
                         },
 
                     // ipv4 disabled for ssu2, might be enabled for ssu2
-                    (false, _) => tracing::trace!(
+                    (false, _, _) => tracing::trace!(
                         target: LOG_TARGET,
                         ?address,
                         "not updating external address for ssu2, ipv4 disabled",
                     ),
 
                     // discovered address matches the address specified by the user
-                    (true, Some(specified)) if *specified == IpAddr::V4(host) => {}
+                    (true, Some(specified), _) if *specified == IpAddr::V4(host) => {}
 
                     // discovered address doesn't match the address specified by the user
                     //
                     // log a warning so the user may fix the address but don't update the address
-                    (true, Some(specified)) => tracing::warn!(
+                    (true, Some(specified), _) => tracing::warn!(
                         target: LOG_TARGET,
                         ?specified,
                         ?host,
                         "specified external address doesn't match discovered external address",
                     ),
+
+                    // ssu2 ipv4 is not published
+                    (true, None, false) => tracing::trace!(
+                        target: LOG_TARGET,
+                        "ssu2 ipv4 not published, router address not updated",
+                    ),
                 },
-                IpAddr::V6(host) => match (ipv6, ipv6_host) {
+                IpAddr::V6(host) => match (ipv6, ipv6_host, publish_ipv6) {
                     // ipv6 enabled and user didn't specify an external address for the router
                     //
                     // update the host in `RouterAddress`
-                    (true, None) =>
+                    (true, None, true) =>
                         if let Some(ssu2) = self.local_router_info.ssu2_ipv6_mut() {
                             tracing::trace!(
                                 target: LOG_TARGET,
@@ -505,23 +522,29 @@ impl<R: Runtime> TransportManager<R> {
                         },
 
                     // ipv6 disabled for ssu2, might be enabled for ssu2
-                    (false, _) => tracing::trace!(
+                    (false, _, _) => tracing::trace!(
                         target: LOG_TARGET,
                         ?address,
                         "not updating external address for ssu2, ipv6 disabled",
                     ),
 
                     // discovered address matches the address specified by the user
-                    (true, Some(specified)) if *specified == IpAddr::V6(host) => {}
+                    (true, Some(specified), _) if *specified == IpAddr::V6(host) => {}
 
                     // discovered address doesn't match the address specified by the user
                     //
                     // log a warning so the user may fix the address but don't update the address
-                    (true, Some(specified)) => tracing::warn!(
+                    (true, Some(specified), _) => tracing::warn!(
                         target: LOG_TARGET,
                         ?specified,
                         ?host,
                         "specified external address doesn't match discovered external address",
+                    ),
+
+                    // ssu2 ipv6 is not published
+                    (true, None, false) => tracing::trace!(
+                        target: LOG_TARGET,
+                        "ssu2 ipv6 not published, router address not updated",
                     ),
                 },
             },
@@ -951,8 +974,10 @@ impl<R: Runtime> TransportManager<R> {
 
         if ipv4 {
             self.ipv4_info.firewall_status = status;
+            self.event_handle.set_ipv4_status(status);
         } else {
             self.ipv6_info.firewall_status = status;
+            self.event_handle.set_ipv6_status(status);
         }
     }
 
@@ -1648,7 +1673,8 @@ mod tests {
             ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
             ipv4,
             ipv6: !ipv4,
-            publish: true,
+            publish_ipv4: true,
+            publish_ipv6: true,
             ml_kem: None,
             disable_pq: false,
             key: [0u8; 32],
@@ -1724,7 +1750,8 @@ mod tests {
             ipv6: !ipv4,
             ml_kem: None,
             disable_pq: false,
-            publish: false,
+            publish_ipv4: false,
+            publish_ipv6: false,
             key: [0u8; 32],
             iv: [0u8; 16],
         }))
@@ -1789,7 +1816,8 @@ mod tests {
             ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
             ipv4,
             ipv6: !ipv4,
-            publish: true,
+            publish_ipv4: true,
+            publish_ipv6: true,
             static_key: [0u8; 32],
             intro_key: [1u8; 32],
             ipv4_mtu: None,
@@ -1859,7 +1887,8 @@ mod tests {
             ipv6_host: None,
             ipv4,
             ipv6: !ipv4,
-            publish: false,
+            publish_ipv4: false,
+            publish_ipv6: false,
             static_key: [0u8; 32],
             intro_key: [1u8; 32],
             ipv4_mtu: None,
@@ -1924,7 +1953,8 @@ mod tests {
             ipv6_host: None,
             ipv4,
             ipv6: !ipv4,
-            publish: true,
+            publish_ipv4: true,
+            publish_ipv6: true,
             static_key: [0u8; 32],
             intro_key: [1u8; 32],
             ipv4_mtu: None,
@@ -1940,7 +1970,8 @@ mod tests {
             ipv6_host: None,
             ml_kem: None,
             disable_pq: false,
-            publish: true,
+            publish_ipv4: true,
+            publish_ipv6: true,
             key: [0u8; 32],
             iv: [0u8; 16],
             ipv4,
@@ -2034,7 +2065,8 @@ mod tests {
             ipv6: !ipv4,
             ml_kem: None,
             disable_pq: false,
-            publish: true,
+            publish_ipv4: true,
+            publish_ipv6: true,
             key: [0u8; 32],
             iv: [0u8; 16],
         }))
@@ -2109,7 +2141,8 @@ mod tests {
             ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
             ipv4,
             ipv6: !ipv4,
-            publish: true,
+            publish_ipv4: true,
+            publish_ipv6: true,
             static_key: [0u8; 32],
             intro_key: [1u8; 32],
             ipv4_mtu: None,
@@ -2599,7 +2632,8 @@ mod tests {
             ipv6_host: None,
             ml_kem: None,
             disable_pq: false,
-            publish: true,
+            publish_ipv4: true,
+            publish_ipv6: true,
             key: [0u8; 32],
             iv: [0u8; 16],
             ipv4: true,
@@ -2762,7 +2796,8 @@ mod tests {
                 ipv6_host: None,
                 ipv4: true,
                 ipv6: false,
-                publish: true,
+                publish_ipv4: true,
+                publish_ipv6: true,
                 static_key: [1u8; 32],
                 intro_key: [2u8; 32],
                 ipv4_mtu: None,
@@ -2803,7 +2838,8 @@ mod tests {
             ipv6_host: None,
             ml_kem: None,
             disable_pq: false,
-            publish: true,
+            publish_ipv4: true,
+            publish_ipv6: true,
             key: [0u8; 32],
             iv: [0u8; 16],
             ipv4: true,
@@ -2894,7 +2930,8 @@ mod tests {
             ipv6_host: None,
             ipv4: true,
             ipv6: false,
-            publish: true,
+            publish_ipv4: true,
+            publish_ipv6: true,
             static_key: [0xaa; 32],
             intro_key: [0xbb; 32],
             ipv4_mtu: None,
@@ -2911,7 +2948,8 @@ mod tests {
                 ipv6_host: None,
                 ipv4: true,
                 ipv6: false,
-                publish: true,
+                publish_ipv4: true,
+                publish_ipv6: true,
                 static_key: [0xaa; 32],
                 intro_key: [0xbb; 32],
                 ipv4_mtu: None,
@@ -2930,7 +2968,8 @@ mod tests {
             ipv6_host: None,
             ipv4: true,
             ipv6: false,
-            publish: true,
+            publish_ipv4: true,
+            publish_ipv6: true,
             static_key: [0xcc; 32],
             intro_key: [0xdd; 32],
             ipv4_mtu: None,
@@ -2948,7 +2987,8 @@ mod tests {
                 ipv6_host: None,
                 ipv4: true,
                 ipv6: false,
-                publish: true,
+                publish_ipv4: true,
+                publish_ipv6: true,
                 static_key: [0xcc; 32],
                 intro_key: [0xdd; 32],
                 ipv4_mtu: None,
@@ -3263,7 +3303,8 @@ mod tests {
                 ipv6_host: None,
                 ipv4: true,
                 ipv6: false,
-                publish: false,
+                publish_ipv4: false,
+                publish_ipv6: false,
                 static_key: [0x33; 32],
                 intro_key: [0x34; 32],
                 ipv4_mtu: None,
@@ -3516,7 +3557,8 @@ mod tests {
                 ipv6_host: None,
                 ipv6: self.both || self.ipv6,
                 ipv4: self.both || !self.ipv6,
-                publish: self.publish,
+                publish_ipv4: self.publish,
+                publish_ipv6: self.publish,
                 static_key: [0x33; 32],
                 intro_key: [0x34; 32],
                 ipv4_mtu: None,
@@ -3530,7 +3572,8 @@ mod tests {
                 ipv4: self.both || !self.ipv6,
                 ml_kem: None,
                 disable_pq: false,
-                publish: self.publish,
+                publish_ipv4: self.publish,
+                publish_ipv6: self.publish,
                 key: [0xaa; 32],
                 iv: [0xbb; 16],
             });
@@ -3657,7 +3700,8 @@ mod tests {
                 ipv6: !ipv4,
                 ml_kem: None,
                 disable_pq: false,
-                publish: true,
+                publish_ipv4: true,
+                publish_ipv6: true,
                 key: [0x11; 32],
                 iv: [0x22; 16],
             })
@@ -3717,7 +3761,8 @@ mod tests {
                 ipv6: !remote_ipv4,
                 ml_kem: None,
                 disable_pq: false,
-                publish: true,
+                publish_ipv4: true,
+                publish_ipv6: true,
                 key: [0x11; 32],
                 iv: [0x22; 16],
             })
@@ -3783,7 +3828,8 @@ mod tests {
                 ipv6_host: (!remote_ipv4).then_some("::1".parse().unwrap()),
                 ipv4: remote_ipv4,
                 ipv6: !remote_ipv4,
-                publish: true,
+                publish_ipv4: true,
+                publish_ipv6: true,
                 intro_key: [0x11; 32],
                 static_key: [0x22; 32],
                 ipv4_mtu: None,
@@ -3839,7 +3885,8 @@ mod tests {
                 port: 9999,
                 ipv4_host: Some("127.0.0.1".parse().unwrap()),
                 ipv6_host: None,
-                publish: true,
+                publish_ipv4: true,
+                publish_ipv6: true,
                 ml_kem: None,
                 disable_pq: false,
                 key: [0x11; 32],
@@ -3908,7 +3955,8 @@ mod tests {
                 ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
                 ipv4,
                 ipv6: !ipv4,
-                publish: true,
+                publish_ipv4: true,
+                publish_ipv6: true,
                 static_key: [0x11; 32],
                 intro_key: [0x22; 32],
                 ipv4_mtu: None,
@@ -3962,7 +4010,8 @@ mod tests {
                 ipv6_host: None,
                 ipv4: true,
                 ipv6: false,
-                publish: true,
+                publish_ipv4: true,
+                publish_ipv6: true,
                 static_key: [0x11; 32],
                 intro_key: [0x22; 32],
                 ipv4_mtu: None,
@@ -4025,7 +4074,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: true,
+                    publish_ipv4: true,
+                    publish_ipv6: true,
                     static_key: [0x11; 32],
                     intro_key: [0x22; 32],
                     ipv4_mtu: None,
@@ -4049,7 +4099,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: false,
+                    publish_ipv4: false,
+                    publish_ipv6: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
                     ipv4_mtu: None,
@@ -4128,7 +4179,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: true,
+                    publish_ipv4: true,
+                    publish_ipv6: true,
                     static_key: [0x11; 32],
                     intro_key: [0x22; 32],
                     ipv4_mtu: None,
@@ -4152,7 +4204,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: false,
+                    publish_ipv4: false,
+                    publish_ipv6: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
                     ipv4_mtu: None,
@@ -4277,7 +4330,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: true,
+                    publish_ipv4: true,
+                    publish_ipv6: true,
                     static_key: [0x11; 32],
                     intro_key: [0x22; 32],
                     ipv4_mtu: None,
@@ -4301,7 +4355,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: false,
+                    publish_ipv4: false,
+                    publish_ipv6: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
                     ipv4_mtu: None,
@@ -4421,7 +4476,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: true,
+                    publish_ipv4: true,
+                    publish_ipv6: true,
                     static_key: [0x11; 32],
                     intro_key: [0x22; 32],
                     ipv4_mtu: None,
@@ -4445,7 +4501,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: false,
+                    publish_ipv4: false,
+                    publish_ipv6: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
                     ipv4_mtu: None,
@@ -4575,7 +4632,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: true,
+                    publish_ipv4: true,
+                    publish_ipv6: true,
                     static_key: [0x11; 32],
                     intro_key: [0x22; 32],
                     ipv4_mtu: None,
@@ -4599,7 +4657,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: false,
+                    publish_ipv4: false,
+                    publish_ipv6: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
                     ipv4_mtu: None,
@@ -4724,7 +4783,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: true,
+                    publish_ipv4: true,
+                    publish_ipv6: true,
                     static_key: [0x11; 32],
                     intro_key: [0x22; 32],
                     ipv4_mtu: None,
@@ -4748,7 +4808,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: false,
+                    publish_ipv4: false,
+                    publish_ipv6: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
                     ipv4_mtu: None,
@@ -4898,7 +4959,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: true,
+                    publish_ipv4: true,
+                    publish_ipv6: true,
                     static_key: [0x11; 32],
                     intro_key: [0x22; 32],
                     ipv4_mtu: None,
@@ -4922,7 +4984,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: false,
+                    publish_ipv4: false,
+                    publish_ipv6: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
                     ipv4_mtu: None,
@@ -5081,7 +5144,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: true,
+                    publish_ipv4: true,
+                    publish_ipv6: true,
                     static_key: [0x11; 32],
                     intro_key: [0x22; 32],
                     ipv4_mtu: None,
@@ -5105,7 +5169,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: false,
+                    publish_ipv4: false,
+                    publish_ipv6: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
                     ipv4_mtu: None,
@@ -5260,7 +5325,8 @@ mod tests {
                         ipv6_host: None,
                         ipv4: true,
                         ipv6: false,
-                        publish: true,
+                        publish_ipv4: true,
+                        publish_ipv6: true,
                         static_key: [0x11 + i; 32],
                         intro_key: [0x22 + i; 32],
                         ipv4_mtu: None,
@@ -5285,7 +5351,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: false,
+                    publish_ipv4: false,
+                    publish_ipv6: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
                     ipv4_mtu: None,
@@ -5454,7 +5521,8 @@ mod tests {
                         ipv6_host: None,
                         ipv4: true,
                         ipv6: false,
-                        publish: true,
+                        publish_ipv4: true,
+                        publish_ipv6: true,
                         static_key: [0x11 + i; 32],
                         intro_key: [0x22 + i; 32],
                         ipv4_mtu: None,
@@ -5479,7 +5547,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: false,
+                    publish_ipv4: false,
+                    publish_ipv6: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
                     ipv4_mtu: None,
@@ -5649,7 +5718,8 @@ mod tests {
                         ipv6_host: None,
                         ipv4: true,
                         ipv6: false,
-                        publish: true,
+                        publish_ipv4: true,
+                        publish_ipv6: true,
                         static_key: [0x11 + i; 32],
                         intro_key: [0x22 + i; 32],
                         ipv4_mtu: None,
@@ -5674,7 +5744,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: false,
+                    publish_ipv4: false,
+                    publish_ipv6: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
                     ipv4_mtu: None,
@@ -5828,7 +5899,8 @@ mod tests {
                         ipv6_host: None,
                         ipv4: true,
                         ipv6: false,
-                        publish: true,
+                        publish_ipv4: true,
+                        publish_ipv6: true,
                         static_key: [0x11 + i; 32],
                         intro_key: [0x22 + i; 32],
                         ipv4_mtu: None,
@@ -5853,7 +5925,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: false,
+                    publish_ipv4: false,
+                    publish_ipv6: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
                     ipv4_mtu: None,
@@ -6068,7 +6141,8 @@ mod tests {
                         ipv6_host: None,
                         ipv4: true,
                         ipv6: false,
-                        publish: true,
+                        publish_ipv4: true,
+                        publish_ipv6: true,
                         static_key: [0x11 + i; 32],
                         intro_key: [0x22 + i; 32],
                         ipv4_mtu: None,
@@ -6093,7 +6167,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: false,
+                    publish_ipv4: false,
+                    publish_ipv6: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
                     ipv4_mtu: None,
@@ -6276,7 +6351,8 @@ mod tests {
                         ipv6_host: None,
                         ipv4: true,
                         ipv6: false,
-                        publish: true,
+                        publish_ipv4: true,
+                        publish_ipv6: true,
                         static_key: [0x11 + i; 32],
                         intro_key: [0x22 + i; 32],
                         ipv4_mtu: None,
@@ -6301,7 +6377,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: false,
+                    publish_ipv4: false,
+                    publish_ipv6: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
                     ipv4_mtu: None,
@@ -6939,7 +7016,8 @@ mod tests {
                         ipv6_host: ipv4.then_some("::1".parse().unwrap()),
                         ipv4: !ipv4,
                         ipv6: ipv4,
-                        publish: true,
+                        publish_ipv4: true,
+                        publish_ipv6: true,
                         static_key: [0x11 + i as u8; 32],
                         intro_key: [0x22 + i as u8; 32],
                         ipv4_mtu: None,
@@ -6965,7 +7043,8 @@ mod tests {
                     ipv6_host: Some("::1".parse().unwrap()),
                     ipv4: true,
                     ipv6: true,
-                    publish: false,
+                    publish_ipv4: false,
+                    publish_ipv6: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
                     ipv4_mtu: None,
@@ -7061,7 +7140,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: true,
+                    publish_ipv4: true,
+                    publish_ipv6: true,
                     static_key: [0x11; 32],
                     intro_key: [0x22; 32],
                     ipv4_mtu: None,
@@ -7084,7 +7164,8 @@ mod tests {
                     ipv6_host: Some("::1".parse().unwrap()),
                     ipv4: false,
                     ipv6: true,
-                    publish: true,
+                    publish_ipv4: true,
+                    publish_ipv6: true,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
                     ipv4_mtu: None,
@@ -7109,7 +7190,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: true,
-                    publish: false,
+                    publish_ipv4: false,
+                    publish_ipv6: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
                     ipv4_mtu: None,
@@ -7379,7 +7461,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: true,
+                    publish_ipv4: true,
+                    publish_ipv6: true,
                     static_key: [0x11; 32],
                     intro_key: [0x22; 32],
                     ipv4_mtu: None,
@@ -7403,7 +7486,8 @@ mod tests {
                     ipv6_host: None,
                     ipv4: true,
                     ipv6: false,
-                    publish: false,
+                    publish_ipv4: false,
+                    publish_ipv6: false,
                     static_key: [0x33; 32],
                     intro_key: [0x44; 32],
                     ipv4_mtu: None,

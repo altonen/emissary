@@ -154,6 +154,10 @@ pub struct RouterUiOptions {
     #[arg(long, action = clap::ArgAction::SetTrue)]
     pub disable_ui: Option<bool>,
 
+    /// Use native UI.
+    #[arg(long, action = clap::ArgAction::SetTrue)]
+    pub native: Option<bool>,
+
     /// Router UI refresh interval
     ///
     /// How often are events gathered from different subsystem and redrawn in the UI

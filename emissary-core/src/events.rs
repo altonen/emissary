@@ -16,7 +16,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::runtime::Runtime;
+use crate::{runtime::Runtime, transport::FirewallStatus};
 
 #[cfg(feature = "events")]
 use crate::runtime::{Counter, MetricType, MetricsHandle};
@@ -72,6 +72,15 @@ enum SubsystemEvent {
 
         /// Address of the destination.
         address: String,
+    },
+
+    /// Firewall status.
+    FirewallStatus {
+        /// Firewall status.
+        status: FirewallStatus,
+
+        /// Is this the status for IPv4.
+        ipv4: bool,
     },
 }
 
@@ -238,6 +247,26 @@ impl<R: Runtime> EventHandle<R> {
         let _ = self.event_tx.try_send(SubsystemEvent::ClientDestinationStarted { name: _name });
     }
 
+    /// Set IPv4 status.
+    #[inline(always)]
+    pub fn set_ipv4_status(&self, _status: FirewallStatus) {
+        #[cfg(feature = "events")]
+        let _ = self.event_tx.try_send(SubsystemEvent::FirewallStatus {
+            status: _status,
+            ipv4: true,
+        });
+    }
+
+    /// Set IPv6 status.
+    #[inline(always)]
+    pub fn set_ipv6_status(&self, _status: FirewallStatus) {
+        #[cfg(feature = "events")]
+        let _ = self.event_tx.try_send(SubsystemEvent::FirewallStatus {
+            status: _status,
+            ipv4: false,
+        });
+    }
+
     /// Create new `EventHandle` for tests.
     #[cfg(test)]
     pub fn new_for_tests() -> Self {
@@ -356,6 +385,9 @@ pub enum Event {
 
         /// Tunnel subsystem status.
         tunnel: TunnelStatus,
+
+        /// Firewal statuses.
+        firewall_statuses: Vec<(String, bool)>,
     },
 
     /// Router is shutting down.
@@ -396,6 +428,9 @@ pub struct EventManager<R: Runtime> {
 
     /// Pending server destination updates.
     pending_server_updates: Vec<(String, String)>,
+
+    /// Firewall statuses.
+    firewall_statuses: Vec<(String, bool)>,
 
     /// Event manager and router state.
     state: State,
@@ -469,6 +504,7 @@ impl<R: Runtime> EventManager<R> {
                 metrics_handle,
                 pending_client_updates: Vec::new(),
                 pending_server_updates: Vec::new(),
+                firewall_statuses: Vec::new(),
                 status_tx,
                 timer: R::timer(update_interval),
                 transit_inbound: 0usize,
@@ -554,12 +590,23 @@ impl<R: Runtime> Future for EventManager<R> {
                 Poll::Ready(Some(SubsystemEvent::ServerDestinationStarted { name, address })) => {
                     self.pending_server_updates.push((name, address));
                 }
+                Poll::Ready(Some(SubsystemEvent::FirewallStatus { status, ipv4 })) =>
+                    self.firewall_statuses.push((
+                        match status {
+                            FirewallStatus::Unknown => "Testing".to_string(),
+                            FirewallStatus::Firewalled => "Firewalled".to_string(),
+                            FirewallStatus::Ok => "OK".to_string(),
+                            FirewallStatus::SymmetricNat => "Symmetric NAT".to_string(),
+                        },
+                        ipv4,
+                    )),
             }
         }
 
         if self.timer.poll_unpin(cx).is_ready() {
             let server_destinations = mem::take(&mut self.pending_server_updates);
             let client_destinations = mem::take(&mut self.pending_client_updates);
+            let firewall_statuses = mem::take(&mut self.firewall_statuses);
 
             let transit_outbound = self.handle.transit_outbound_bandwidth.load(Ordering::Acquire);
             let transit_inbound = self.handle.transit_inbound_bandwidth.load(Ordering::Acquire);
@@ -614,6 +661,7 @@ impl<R: Runtime> Future for EventManager<R> {
                 },
                 server_destinations,
                 client_destinations,
+                firewall_statuses,
             });
 
             self.timer = R::timer(self.handle.update_interval);

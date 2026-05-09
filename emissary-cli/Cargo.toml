@@ -13,15 +13,11 @@ readme.workspace = true
 [dependencies]
 arboard = "3"
 axum = { version = "0.8.4", default-features = false, features = ["ws", "macros", "tokio", "http1"], optional = true }
-chrono = { version = "0.4.42", optional = true }
 clap = { workspace = true, features = ["derive"] }
 emissary-core = { path = "../emissary-core", version = "0.4.0" }
 emissary-util = { path = "../emissary-util", version = "0.4.0", features = ["tokio"] }
 futures = "0.3.31"
 httparse = "1.10.1"
-iced = { version = "0.14.0", features = ["advanced", "tokio", "svg", "canvas"], optional = true }
-plotters-iced2 = { version = "0.14.0", optional = true }
-plotters = { version = "0.3.7", optional = true }
 serde_json = { version = "1.0.140", optional = true }
 thiserror = "2.0.12"
 tokio-tungstenite = { version = "0.27.0", default-features = false, features = ["native-tls"], optional = true }
@@ -42,17 +38,14 @@ toml = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing = { workspace = true, features = ["log"] }
 yosemite = { workspace = true }
-dioxus = { version = "=0.7.3" }
-dioxus-core = { version = "=0.7.3" }
+dioxus = { version = "=0.7.3", optional = true }
+dioxus-core = { version = "=0.7.3", optional = true }
 dioxus-liveview = { version = "=0.7.3", features = ["axum"], optional = true }
 
 [dev-dependencies]
 fast-socks5 = { version = "1.0.0", features = ["socks4"] }
 
 [features]
-# default = ["web-ui"]
-default = ["dioxus"]
-dioxus = ["dioxus/desktop"]
-native-ui = ["chrono", "iced", "plotters", "plotters-iced2"]
-web-ui = ["dioxus/liveview", "dioxus-liveview", "axum", "chrono", "scraper", "ego-tree"]
+default = ["ui"]
+ui = ["dioxus/desktop", "dioxus/liveview", "dioxus-liveview","axum"]
 metrics = ["emissary-util/metrics"]

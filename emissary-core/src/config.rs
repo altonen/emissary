@@ -57,6 +57,11 @@ impl From<Option<ExploratoryConfig>> for TunnelPoolConfig {
 /// NTCP2 configuration.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Ntcp2Config {
+    /// Disable both inbound and outbound PQ connections.
+    ///
+    /// This option will be removed in the future.
+    pub disable_pq: bool,
+
     /// Is IPV4 enabled.
     pub ipv4: bool,
 
@@ -75,21 +80,19 @@ pub struct Ntcp2Config {
     /// NTCP2 key.
     pub key: [u8; 32],
 
-    /// NTCP2 port.
-    pub port: u16,
-
-    /// Should NTCP2 be published in router info.
-    pub publish: bool,
-
     /// ML-KEM variant used for inbound PQ.
     ///
     /// If `None`, only x25519 is used.
     pub ml_kem: Option<usize>,
 
-    /// Disable both inbound and outbound PQ connections.
-    ///
-    /// This option will be removed in the future.
-    pub disable_pq: bool,
+    /// NTCP2 port.
+    pub port: u16,
+
+    /// Should NTCP2 IPv4 address be published in router info.
+    pub publish_ipv4: bool,
+
+    /// Should NTCP2 IPv6 address be published in router info.
+    pub publish_ipv6: bool,
 }
 
 /// SSU2 configuration.
@@ -121,19 +124,22 @@ pub struct Ssu2Config {
     /// IPv6 MTU.
     pub ipv6_mtu: Option<usize>,
 
-    /// SSU2 port.
-    pub port: u16,
-
-    /// Should SSU2 be published in router info.
-    pub publish: bool,
-
-    /// SSU2 static key.
-    pub static_key: [u8; 32],
-
     /// ML-KEM preference used for inbound PQ.
     ///
     /// If `None`, only x25519 is used.
     pub ml_kem: Option<String>,
+
+    /// SSU2 port.
+    pub port: u16,
+
+    /// Should SSU2 IPv4 address be published in router info.
+    pub publish_ipv4: bool,
+
+    /// Should SSU2 IPv6 address be published in router info.
+    pub publish_ipv6: bool,
+
+    /// SSU2 static key.
+    pub static_key: [u8; 32],
 }
 
 /// I2CP configuration.

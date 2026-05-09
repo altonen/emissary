@@ -246,7 +246,7 @@ impl<R: Runtime> Ntcp2Transport<R> {
                 Error::Connection(ConnectionError::BindFailure)
             })?;
 
-            let address = match (config.publish, config.ipv4_host) {
+            let address = match (config.publish_ipv4, config.ipv4_host) {
                 (true, Some(host)) => RouterAddress::new_published_ntcp2(
                     config.key,
                     config.iv,
@@ -299,7 +299,7 @@ impl<R: Runtime> Ntcp2Transport<R> {
                 Error::Connection(ConnectionError::BindFailure)
             })?;
 
-            let address = match (config.publish, config.ipv6_host) {
+            let address = match (config.publish_ipv6, config.ipv6_host) {
                 (true, Some(host)) => RouterAddress::new_published_ntcp2(
                     config.key,
                     config.iv,
@@ -601,7 +601,8 @@ mod tests {
             port: 0u16,
             ipv4_host: Some("8.8.8.8".parse().unwrap()),
             ipv6_host: None,
-            publish: true,
+            publish_ipv4: true,
+            publish_ipv6: true,
             ml_kem: None,
             disable_pq: false,
             key: [0xaa; 32],
@@ -642,7 +643,8 @@ mod tests {
             ipv6_host: Some("::1".parse().unwrap()),
             ipv4: false,
             ipv6: true,
-            publish: false,
+            publish_ipv4: false,
+            publish_ipv6: false,
             ml_kem: None,
             disable_pq: false,
             key: [0xaa; 32],
@@ -678,7 +680,8 @@ mod tests {
             ipv6: false,
             ml_kem: None,
             disable_pq: false,
-            publish: false,
+            publish_ipv4: false,
+            publish_ipv6: false,
             key: [0xaa; 32],
             iv: [0xbb; 16],
         });
@@ -710,7 +713,8 @@ mod tests {
             ipv6_host: Some("::1".parse().unwrap()),
             ml_kem: None,
             disable_pq: false,
-            publish: true,
+            publish_ipv4: true,
+            publish_ipv6: true,
             key: [0xaa; 32],
             iv: [0xbb; 16],
             ipv4: false,
@@ -749,7 +753,8 @@ mod tests {
             port: 0u16,
             ipv4_host: Some("8.8.8.8".parse().unwrap()),
             ipv6_host: Some("::1".parse().unwrap()),
-            publish: true,
+            publish_ipv4: true,
+            publish_ipv6: true,
             key: [0xaa; 32],
             iv: [0xbb; 16],
             ipv4: true,
@@ -810,7 +815,8 @@ mod tests {
             port: 0u16,
             ipv4_host: None,
             ipv6_host: None,
-            publish: false,
+            publish_ipv4: false,
+            publish_ipv6: false,
             key: [0xaa; 32],
             iv: [0xbb; 16],
             ipv4: true,
@@ -844,7 +850,8 @@ mod tests {
             port: 0u16,
             ipv4_host: Some("8.8.8.8".parse().unwrap()),
             ipv6_host: None,
-            publish: false,
+            publish_ipv4: false,
+            publish_ipv6: false,
             key: [0xaa; 32],
             iv: [0xbb; 16],
             ipv4: true,
@@ -878,7 +885,8 @@ mod tests {
             port: 0u16,
             ipv4_host: None,
             ipv6_host: None,
-            publish: true,
+            publish_ipv4: true,
+            publish_ipv6: true,
             key: [0xaa; 32],
             iv: [0xbb; 16],
             ipv4: true,
@@ -914,7 +922,8 @@ mod tests {
             ipv6_host: None,
             ml_kem: None,
             disable_pq: false,
-            publish: true,
+            publish_ipv4: true,
+            publish_ipv6: true,
             key: [0xaa; 32],
             iv: [0xbb; 16],
             ipv4: true,
@@ -949,7 +958,8 @@ mod tests {
             ipv6_host: None,
             ml_kem: None,
             disable_pq: false,
-            publish: true,
+            publish_ipv4: true,
+            publish_ipv6: true,
             key: [0xaa; 32],
             iv: [0xbb; 16],
             ipv4: true,

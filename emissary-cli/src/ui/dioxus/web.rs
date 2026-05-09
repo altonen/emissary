@@ -52,6 +52,7 @@ pub async fn start(
     address_book_handle: Option<Arc<AddressBookHandle>>,
     router_id: RouterId,
     shutdown_tx: Sender<()>,
+    web_ui: bool,
 ) {
     let port = config.router_ui.as_ref().and_then(|config| config.port).unwrap_or(7657);
     let router = Router::new()
@@ -67,6 +68,7 @@ pub async fn start(
                 router_id,
                 shutdown_tx,
                 traffic: Arc::new(Mutex::new(Traffic::new())),
+                web_ui,
             },
         }));
 

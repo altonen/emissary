@@ -117,6 +117,7 @@ pub fn Sidebar() -> Element {
 
                         match w.status {
                             RouterStatus::Active => {
+                                let _ = w.shutdown_tx.try_send(());
                                 w.status = RouterStatus::ShuttingDown;
                             }
                             RouterStatus::ShuttingDown => {

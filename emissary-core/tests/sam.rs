@@ -68,7 +68,8 @@ async fn make_router(
                 },
                 ipv4_host: Some("127.0.0.1".parse().unwrap()),
                 ipv6_host: None,
-                publish: true,
+                publish_ipv4: true,
+                publish_ipv6: true,
                 ipv4: true,
                 ipv6: false,
             }),
@@ -84,7 +85,8 @@ async fn make_router(
                 ipv6_host: None,
                 ipv4: true,
                 ipv6: false,
-                publish: true,
+                publish_ipv4: true,
+                publish_ipv6: true,
                 static_key: {
                     let mut iv = [0u8; 32];
                     TokioRuntime::rng().fill_bytes(&mut iv);
@@ -1640,7 +1642,8 @@ async fn host_lookup(kind: TransportKind) {
                 },
                 ipv4_host: Some("127.0.0.1".parse().unwrap()),
                 ipv6_host: None,
-                publish: true,
+                publish_ipv4: true,
+                publish_ipv6: true,
                 ipv4: true,
                 ipv6: false,
             }),
@@ -1656,7 +1659,8 @@ async fn host_lookup(kind: TransportKind) {
                 disable_pq: false,
                 ipv4: true,
                 ipv6: false,
-                publish: true,
+                publish_ipv4: true,
+                publish_ipv6: true,
                 static_key: {
                     let mut iv = [0u8; 32];
                     TokioRuntime::rng().fill_bytes(&mut iv);

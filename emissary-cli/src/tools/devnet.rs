@@ -54,7 +54,8 @@ async fn make_router(
             ipv6: false,
             ml_kem: Some(4),
             disable_pq: false,
-            publish: true,
+            publish_ipv4: true,
+            publish_ipv6: true,
         }),
         routers,
         transit: Some(TransitConfig {

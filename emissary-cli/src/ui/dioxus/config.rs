@@ -96,6 +96,7 @@ impl TryInto<Option<crate::config::Ntcp2Config>> for Ntcp2Config {
             ipv6: self.ipv6,
             publish_ipv4: self.publish_ipv4,
             publish_ipv6: self.publish_ipv6,
+            publish: None,
             disable_pq: self.disable_pq,
             ml_kem: match self.ml_kem {
                 None => None,
@@ -178,6 +179,7 @@ impl TryInto<Option<crate::config::Ssu2Config>> for Ssu2Config {
             ipv6: self.ipv6,
             publish_ipv4: self.publish_ipv4,
             publish_ipv6: self.publish_ipv6,
+            publish: None,
             disable_pq: self.disable_pq,
             ml_kem: match self.ml_kem {
                 None => None,

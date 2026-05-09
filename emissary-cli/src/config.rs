@@ -88,6 +88,7 @@ pub struct Ntcp2Config {
     pub ipv6: Option<bool>,
     pub ml_kem: Option<usize>,
     pub disable_pq: Option<bool>,
+    pub publish: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +104,7 @@ pub struct Ssu2Config {
     pub publish_ipv4: Option<bool>,
     pub publish_ipv6: Option<bool>,
     pub disable_pq: Option<bool>,
+    pub publish: Option<bool>,
     pub ml_kem: Option<String>,
 }
 
@@ -211,6 +213,7 @@ pub enum Theme {
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct RouterUiConfig {
     pub theme: Theme,
+    pub native: Option<bool>,
     pub refresh_interval: usize,
     pub port: Option<u16>,
 }
@@ -309,6 +312,7 @@ impl EmissaryConfig {
                 ipv6: Some(true),
                 publish_ipv4: Some(true),
                 publish_ipv6: Some(true),
+                publish: None,
                 disable_pq: None,
                 ml_kem: Some(4),
             }),
@@ -322,6 +326,7 @@ impl EmissaryConfig {
                 ipv6_mtu: None,
                 publish_ipv4: Some(true),
                 publish_ipv6: Some(true),
+                publish: None,
                 ml_kem: Some("4,3".to_string()),
                 disable_pq: None,
             }),
@@ -337,6 +342,7 @@ impl EmissaryConfig {
             router_ui: Some(RouterUiConfig {
                 theme: Theme::Dark,
                 refresh_interval: 5usize,
+                native: None,
                 port: None,
             }),
             sam: Some(SamConfig {
@@ -682,7 +688,12 @@ impl Config {
                 ipv6_host: config.ipv6_host,
                 ipv4: config.ipv4.unwrap_or(true),
                 ipv6: config.ipv6.unwrap_or(true),
-                publish: config.publish_ipv4.unwrap_or(false),
+                publish_ipv4: config
+                    .publish_ipv4
+                    .unwrap_or_else(|| config.publish.unwrap_or(false)),
+                publish_ipv6: config
+                    .publish_ipv6
+                    .unwrap_or_else(|| config.publish.unwrap_or(false)),
                 key: ntcp2_key,
                 iv: ntcp2_iv,
                 ml_kem: config.ml_kem,
@@ -712,7 +723,12 @@ impl Config {
                 ipv6_host: config.ipv6_host,
                 ipv6_mtu: config.ipv6_mtu,
                 port: config.port,
-                publish: config.publish_ipv4.unwrap_or(false),
+                publish_ipv4: config
+                    .publish_ipv4
+                    .unwrap_or_else(|| config.publish.unwrap_or(false)),
+                publish_ipv6: config
+                    .publish_ipv6
+                    .unwrap_or_else(|| config.publish.unwrap_or(false)),
                 static_key: ssu2_static_key,
                 ml_kem: config.ml_kem,
             }),
@@ -929,6 +945,7 @@ impl Config {
             theme,
             refresh_interval,
             port,
+            native,
         }) = &mut self.router_ui
         {
             if let Some(selected) = arguments.router_ui.theme {
@@ -941,6 +958,10 @@ impl Config {
 
             if let Some(selected) = arguments.router_ui.web_ui_port {
                 *port = Some(selected);
+            }
+
+            if let Some(selected) = arguments.router_ui.native {
+                *native = Some(selected);
             }
 
             if let Some(true) = arguments.router_ui.disable_ui {
@@ -988,6 +1009,7 @@ mod tests {
                 refresh_interval: None,
                 theme: None,
                 web_ui_port: None,
+                native: None,
             },
             floodfill: None,
             allow_local: None,
@@ -1139,6 +1161,7 @@ mod tests {
                 ipv6: Some(false),
                 publish_ipv4: None,
                 publish_ipv6: None,
+                publish: None,
                 ml_kem: None,
                 disable_pq: None,
             }),
@@ -1473,6 +1496,107 @@ mod tests {
                     .lease_set_enc_type,
                 Some("6,4".to_string())
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn new_and_old_publish() {
+        let dir = tempdir().unwrap();
+        let storage = Storage::new::<TokioRuntime>(Some(dir.path().to_owned())).await.unwrap();
+
+        // `publish` publishes both ipv4 and ipv6 (enabled)
+        {
+            let config_with_publish = "\
+                allow_local=false\n\
+                insecure_tunnels=false\n\
+                floodfill=false\n\n\
+                [ntcp2]\n\
+                    port=8888\n\
+                    ipv4_host=\"127.0.0.1\"\n\
+                    ipv6_host=\"::1\"\n\
+                    publish=true
+                [ssu2]\n\
+                    port=8888\n\
+                    ipv4_host=\"127.0.0.1\"\n\
+                    ipv6_host=\"::1\"\n\
+                    publish=true";
+
+            let mut file = tokio::fs::File::create(dir.path().to_owned().join("router.toml"))
+                .await
+                .unwrap();
+            file.write_all(config_with_publish.as_bytes()).await.unwrap();
+            file.flush().await.unwrap();
+
+            let config = Config::parse::<TokioRuntime>(&make_arguments(), &storage).await.unwrap();
+
+            assert!(config.ntcp2_config.as_ref().unwrap().publish_ipv4);
+            assert!(config.ntcp2_config.as_ref().unwrap().publish_ipv6);
+            assert!(config.ssu2_config.as_ref().unwrap().publish_ipv4);
+            assert!(config.ssu2_config.as_ref().unwrap().publish_ipv6);
+        }
+
+        // `publish` publishes both ipv4 and ipv6 (disabled)
+        {
+            let config_with_publish = "\
+                allow_local=false\n\
+                insecure_tunnels=false\n\
+                floodfill=false\n\n\
+                [ntcp2]\n\
+                    port=8888\n\
+                    ipv4_host=\"127.0.0.1\"\n\
+                    ipv6_host=\"::1\"\n\
+                    publish=false
+                [ssu2]\n\
+                    port=8888\n\
+                    ipv4_host=\"127.0.0.1\"\n\
+                    ipv6_host=\"::1\"\n\
+                    publish=false";
+
+            let mut file = tokio::fs::File::create(dir.path().to_owned().join("router.toml"))
+                .await
+                .unwrap();
+            file.write_all(config_with_publish.as_bytes()).await.unwrap();
+            file.flush().await.unwrap();
+
+            let config = Config::parse::<TokioRuntime>(&make_arguments(), &storage).await.unwrap();
+
+            assert!(!config.ntcp2_config.as_ref().unwrap().publish_ipv4);
+            assert!(!config.ntcp2_config.as_ref().unwrap().publish_ipv6);
+            assert!(!config.ssu2_config.as_ref().unwrap().publish_ipv4);
+            assert!(!config.ssu2_config.as_ref().unwrap().publish_ipv6);
+        }
+
+        // `publish_ipv4` and `publish_ipv6` work independently
+        {
+            let config_with_publish = "\
+                allow_local=false\n\
+                insecure_tunnels=false\n\
+                floodfill=false\n\n\
+                [ntcp2]\n\
+                    port=8888\n\
+                    ipv4_host=\"127.0.0.1\"\n\
+                    ipv6_host=\"::1\"\n\
+                    publish_ipv4=true
+                    publish_ipv6=false
+                [ssu2]\n\
+                    port=8888\n\
+                    ipv4_host=\"127.0.0.1\"\n\
+                    ipv6_host=\"::1\"\n\
+                    publish_ipv4=false
+                    publish_ipv6=true";
+
+            let mut file = tokio::fs::File::create(dir.path().to_owned().join("router.toml"))
+                .await
+                .unwrap();
+            file.write_all(config_with_publish.as_bytes()).await.unwrap();
+            file.flush().await.unwrap();
+
+            let config = Config::parse::<TokioRuntime>(&make_arguments(), &storage).await.unwrap();
+
+            assert!(config.ntcp2_config.as_ref().unwrap().publish_ipv4);
+            assert!(!config.ntcp2_config.as_ref().unwrap().publish_ipv6);
+            assert!(!config.ssu2_config.as_ref().unwrap().publish_ipv4);
+            assert!(config.ssu2_config.as_ref().unwrap().publish_ipv6);
         }
     }
 }

@@ -21,13 +21,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-// #[cfg(feature = "native-ui")]
-// pub mod native;
-
-// #[cfg(feature = "web-ui")]
-// pub mod web;
-
-#[cfg(any(feature = "dioxus", feature = "web-ui"))]
+#[cfg(feature = "ui")]
 pub mod dioxus;
 
 /// Router status.

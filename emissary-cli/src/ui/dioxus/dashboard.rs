@@ -116,6 +116,8 @@ pub fn Dashboard() -> Element {
             (String::from("UPnP"), "panel-value enabled"),
         _ => (String::from("Off"), "panel-value disabled"),
     };
+    let ipv4_status = state.read().ipv4_status.clone();
+    let ipv6_status = state.read().ipv6_status.clone();
 
     rsx! {
         div {
@@ -248,12 +250,12 @@ pub fn Dashboard() -> Element {
                     div {
                         class: "panel-row",
                         span { class: "panel-label", "IPv4 status" }
-                        span { class: "panel-value", "OK" }
+                        span { class: "panel-value", "{ipv4_status}" }
                     }
                     div {
                         class: "panel-row",
                         span { class: "panel-label", "IPv6 status" }
-                        span { class: "panel-value", "Disabled" }
+                        span { class: "panel-value", "{ipv6_status}" }
                     }
                     div {
                         class: "panel-row",

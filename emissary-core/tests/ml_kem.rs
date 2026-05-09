@@ -56,7 +56,8 @@ async fn make_router(
             ipv6: true,
             ml_kem: None,
             disable_pq: false,
-            publish: true,
+            publish_ipv4: true,
+            publish_ipv6: true,
         }),
         routers,
         samv3_config: Some(SamConfig {

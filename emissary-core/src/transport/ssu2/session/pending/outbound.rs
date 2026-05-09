@@ -1225,7 +1225,8 @@ mod tests {
                 ipv6_host: None,
                 ipv4: true,
                 ipv6: false,
-                publish: true,
+                publish_ipv4: true,
+                publish_ipv6: true,
                 static_key: TryInto::<[u8; 32]>::try_into(outbound_static_key.as_ref().to_vec())
                     .unwrap(),
                 intro_key: outbound_intro_key,

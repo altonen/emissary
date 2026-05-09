@@ -516,13 +516,14 @@ pub(crate) mod builder {
                 iv,
                 key,
                 port,
-                publish,
+                publish_ipv4,
+                publish_ipv6,
                 ml_kem,
                 disable_pq,
             }) = self.ntcp2.take()
             {
                 if ipv4 {
-                    match (publish, ipv4_host) {
+                    match (publish_ipv4, ipv4_host) {
                         (true, Some(host)) => addresses.push(RouterAddress::new_published_ntcp2(
                             key,
                             iv,
@@ -539,7 +540,7 @@ pub(crate) mod builder {
                 }
 
                 if ipv6 {
-                    match (publish, ipv6_host) {
+                    match (publish_ipv6, ipv6_host) {
                         (true, Some(host)) => addresses.push(RouterAddress::new_published_ntcp2(
                             key,
                             iv,
@@ -562,7 +563,8 @@ pub(crate) mod builder {
                 ipv6_host,
                 ipv4,
                 ipv6,
-                publish,
+                publish_ipv4,
+                publish_ipv6,
                 static_key,
                 intro_key,
                 disable_pq,
@@ -571,7 +573,7 @@ pub(crate) mod builder {
             }) = self.ssu2.take()
             {
                 if ipv4 {
-                    match (publish, ipv4_host) {
+                    match (publish_ipv4, ipv4_host) {
                         (true, Some(host)) => addresses.push(RouterAddress::new_published_ssu2(
                             static_key,
                             intro_key,
@@ -593,7 +595,7 @@ pub(crate) mod builder {
                 }
 
                 if ipv6 {
-                    match (publish, ipv6_host) {
+                    match (publish_ipv6, ipv6_host) {
                         (true, Some(host)) => addresses.push(RouterAddress::new_published_ssu2(
                             static_key,
                             intro_key,

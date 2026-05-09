@@ -16,8 +16,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-#![cfg(any(feature = "native-ui", feature = "web-ui", feature = "dioxus"))]
-#![allow(unused)]
+#![cfg(any(feature = "ui"))]
+// #![allow(unused)]
 
 use crate::ui;
 
@@ -117,7 +117,7 @@ impl RouterState {
 /// Start the router UI (either native or web) in development mode.
 ///
 /// The actual router is not started and the router UI is fed mock data.
-pub async fn run(path: Option<String>) {
+pub async fn run(path: Option<String>, native: bool) {
     let (shutdown_tx, _shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
     let metrics_handle = TokioRuntime::register_metrics(vec![], None);
     let (manager, subscriber, handle) = EventManager::<TokioRuntime>::new(None, metrics_handle);
@@ -125,97 +125,51 @@ pub async fn run(path: Option<String>) {
     tokio::spawn(manager);
     tokio::spawn(RouterState::new(handle).run());
 
-    #[cfg(feature = "native-ui")]
-    {
-        use crate::{cli::Arguments, config::Config};
-        use emissary_core::primitives::RouterId;
-        use emissary_util::storage::Storage;
-        use std::path::PathBuf;
-        use tempfile::tempdir;
+    use crate::{
+        address_book::AddressBookManager,
+        cli::Arguments,
+        config::{AddressBookConfig, Config},
+    };
+    use emissary_core::primitives::RouterId;
+    use emissary_util::storage::Storage;
+    use std::path::PathBuf;
+    use tempfile::tempdir;
 
-        let (base_path, _dir) = match path {
-            Some(path) => {
-                if let Err(error) = tokio::fs::create_dir_all(&path).await {
-                    eprintln!("failed to create directory ({path}): {error:?}");
-                    std::process::exit(1)
-                }
-
-                (PathBuf::from(path), None)
+    let (base_path, _dir) = match path {
+        Some(path) => {
+            if let Err(error) = tokio::fs::create_dir_all(&path).await {
+                eprintln!("failed to create directory ({path}): {error:?}");
+                std::process::exit(1)
             }
-            None => {
-                let dir = tempdir().expect("to succeed");
-                (dir.path().to_owned(), Some(dir))
-            }
-        };
-        let storage = Storage::new::<TokioRuntime>(Some(base_path.clone())).await.unwrap();
-        let mut config =
-            Config::parse::<TokioRuntime>(&Arguments::default(), &storage).await.unwrap();
 
-        println!("configuration path = {}", base_path.display());
+            (PathBuf::from(path), None)
+        }
+        None => {
+            let dir = tempdir().expect("to succeed");
+            (dir.path().to_owned(), Some(dir))
+        }
+    };
+    let storage = Storage::new::<TokioRuntime>(Some(base_path.clone())).await.unwrap();
+    let mut config = Config::parse::<TokioRuntime>(&Arguments::default(), &storage).await.unwrap();
+    let address_book = AddressBookManager::new(
+        base_path.clone(),
+        AddressBookConfig {
+            default: None,
+            subscriptions: None,
+        },
+    )
+    .await;
 
-        let _ = ui::native::RouterUi::start(
-            subscriber,
-            config.config.take().unwrap(),
-            base_path,
-            None,
-            RouterId::from(TokioRuntime::rng().random::<[u8; 32]>()),
-            shutdown_tx,
-        );
-    }
+    println!("configuration path = {}", base_path.display());
 
-    // #[cfg(feature = "web-ui")]
-    // {
-    //     ui::web::RouterUi::new(subscriber, None, 1, shutdown_tx).run().await;
-    // }
-
-    #[cfg(any(feature = "dioxus", feature = "web-ui"))]
-    {
-        use crate::{
-            address_book::AddressBookManager,
-            cli::Arguments,
-            config::{AddressBookConfig, Config},
-        };
-        use emissary_core::primitives::RouterId;
-        use emissary_util::storage::Storage;
-        use std::path::PathBuf;
-        use tempfile::tempdir;
-
-        let (base_path, _dir) = match path {
-            Some(path) => {
-                if let Err(error) = tokio::fs::create_dir_all(&path).await {
-                    eprintln!("failed to create directory ({path}): {error:?}");
-                    std::process::exit(1)
-                }
-
-                (PathBuf::from(path), None)
-            }
-            None => {
-                let dir = tempdir().expect("to succeed");
-                (dir.path().to_owned(), Some(dir))
-            }
-        };
-        let storage = Storage::new::<TokioRuntime>(Some(base_path.clone())).await.unwrap();
-        let mut config =
-            Config::parse::<TokioRuntime>(&Arguments::default(), &storage).await.unwrap();
-        let address_book = AddressBookManager::new(
-            base_path.clone(),
-            AddressBookConfig {
-                default: None,
-                subscriptions: None,
-            },
-        )
-        .await;
-
-        println!("configuration path = {}", base_path.display());
-
-        ui::dioxus::start(
-            subscriber,
-            config.config.take().unwrap(),
-            base_path,
-            Some(address_book.handle()),
-            RouterId::from(TokioRuntime::rng().random::<[u8; 32]>()),
-            shutdown_tx,
-        )
-        .await;
-    }
+    ui::dioxus::start(
+        subscriber,
+        config.config.take().unwrap(),
+        base_path,
+        Some(address_book.handle()),
+        RouterId::from(TokioRuntime::rng().random::<[u8; 32]>()),
+        shutdown_tx,
+        !native,
+    )
+    .await;
 }

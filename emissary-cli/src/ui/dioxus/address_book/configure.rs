@@ -36,7 +36,7 @@ pub fn ConfigureTab() -> Element {
     rsx! {
         div {
             h3 {
-                style: "font-size:16px;color:#fff;margin-bottom:10px;",
+                style: "font-size:16px;color: var(--em-text-inv); margin-bottom: 10px",
                 "Modify subscriptions"
             }
             div {

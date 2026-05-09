@@ -55,9 +55,6 @@ mod tools;
 mod tunnel;
 mod ui;
 
-#[cfg(all(feature = "native-ui", feature = "web-ui"))]
-compile_error!("native and web ui cannot be enabled at the same time");
-
 /// Logging target for the file.
 const LOG_TARGET: &str = "emissary";
 
@@ -383,7 +380,7 @@ async fn router_event_loop(
     }
 }
 
-#[cfg(not(any(feature = "native-ui", feature = "web-ui", feature = "dioxus")))]
+#[cfg(not(feature = "ui"))]
 fn main() -> anyhow::Result<()> {
     let runtime = tokio::runtime::Runtime::new()?;
     let (_tx, shutdown_rx) = channel(1);
@@ -399,11 +396,11 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(any(feature = "web-ui", feature = "dioxus"))]
-fn main() -> anyhow::Result<()> {
-    let runtime = tokio::runtime::Runtime::new()?;
+#[cfg(any(feature = "ui"))]
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let (shutdown_tx, shutdown_rx) = channel(1);
-    let arguments = runtime.block_on(parse_arguments());
+    let arguments = parse_arguments().await;
     let RouterContext {
         router,
         port_mapper,
@@ -414,25 +411,27 @@ fn main() -> anyhow::Result<()> {
         address_book_handle,
         router_id,
         ..
-    } = runtime.block_on(setup_router::<TokioRuntime>(arguments))?;
+    } = setup_router::<TokioRuntime>(arguments).await?;
 
     match router_ui_config {
         None => {
-            runtime.block_on(router_event_loop(router, port_mapper, shutdown_rx));
+            router_event_loop(router, port_mapper, shutdown_rx).await;
         }
-        Some(_) => {
-            runtime.spawn(async move {
-                ui::dioxus::start(
-                    events,
-                    config,
-                    base_path,
-                    address_book_handle,
-                    router_id,
-                    shutdown_tx,
-                )
-                .await;
+        Some(RouterUiConfig { native, .. }) => {
+            tokio::spawn(async move {
+                router_event_loop(router, port_mapper, shutdown_rx).await;
+                std::process::exit(0);
             });
-            runtime.block_on(router_event_loop(router, port_mapper, shutdown_rx));
+            ui::dioxus::start(
+                events,
+                config,
+                base_path,
+                address_book_handle,
+                router_id,
+                shutdown_tx,
+                !native.unwrap_or(false),
+            )
+            .await;
         }
     }
 

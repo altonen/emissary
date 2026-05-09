@@ -56,7 +56,8 @@ async fn make_router(
                 },
                 ipv4_host: mixed.then_some("127.0.0.1".parse().unwrap()),
                 ipv6_host: Some("::1".parse().unwrap()),
-                publish: true,
+                publish_ipv4: true,
+                publish_ipv6: true,
                 ml_kem: None,
                 disable_pq: false,
                 ipv4: mixed,
@@ -74,7 +75,8 @@ async fn make_router(
                 disable_pq: false,
                 ml_kem: None,
                 port: 0u16,
-                publish: true,
+                publish_ipv4: true,
+                publish_ipv6: true,
                 static_key: {
                     let mut iv = [0u8; 32];
                     TokioRuntime::rng().fill_bytes(&mut iv);

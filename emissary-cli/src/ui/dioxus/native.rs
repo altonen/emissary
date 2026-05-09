@@ -31,7 +31,6 @@ use std::{
 };
 
 /// Start the native router UI.
-#[cfg(feature = "dioxus")]
 pub async fn start(
     events: EventSubscriber,
     config: EmissaryConfig,
@@ -39,6 +38,7 @@ pub async fn start(
     address_book_handle: Option<Arc<AddressBookHandle>>,
     router_id: RouterId,
     shutdown_tx: Sender<()>,
+    web_ui: bool,
 ) {
     let cfg = dioxus::desktop::Config::default()
         .with_menu(None)
@@ -59,6 +59,7 @@ pub async fn start(
             router_id,
             shutdown_tx,
             traffic: Arc::new(Mutex::new(Traffic::new())),
+            web_ui,
         }))))
         .launch(App)
 }

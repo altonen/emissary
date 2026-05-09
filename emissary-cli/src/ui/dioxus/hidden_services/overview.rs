@@ -48,7 +48,7 @@ pub fn HiddenServiceOverview() -> Element {
                 class: "card",
                 style: "margin-bottom:16px;",
                 h3 {
-                    style: "font-size:18px;color:#fff;margin-bottom:10px;",
+                    style: "font-size:18px;color: var(--em-text-inv); margin-bottom: 10px",
                     "Hidden services"
                 }
                 div {
@@ -63,7 +63,7 @@ pub fn HiddenServiceOverview() -> Element {
                     if servers.is_empty() {
                         div {
                             class: "empty-state",
-                            span { class: "empty-state-icon", "🛡" }
+                            span { class: "empty-state-icon", "" }
                             div {
                                 class:
                                 "empty-state-title",
@@ -200,7 +200,7 @@ pub fn HiddenServiceOverview() -> Element {
             div {
                 class: "card",
                 h3 {
-                    style: "font-size:18px;color:#fff;margin-bottom:10px;",
+                    style: "font-size:18px;color: var(--em-text-inv); margin-bottom: 10px",
                     "Client tunnels"
                 }
                 div {
@@ -217,7 +217,7 @@ pub fn HiddenServiceOverview() -> Element {
                     if clients.is_empty() {
                         div {
                             class: "empty-state",
-                            span { class: "empty-state-icon", " " }
+                            span { class: "empty-state-icon", "" }
                             div {
                                 class: "empty-state-title",
                                 "No client tunnels configured"

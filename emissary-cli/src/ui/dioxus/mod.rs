@@ -52,24 +52,14 @@ mod bandwidth_monitor;
 mod config;
 mod dashboard;
 mod hidden_services;
+mod native;
 mod settings;
 mod sidebar;
 mod style;
 mod svg;
 mod types;
 mod util;
-
-#[cfg(feature = "dioxus")]
-mod native;
-
-#[cfg(feature = "dioxus")]
-pub use native::start;
-
-#[cfg(feature = "web-ui")]
 mod web;
-
-#[cfg(feature = "web-ui")]
-pub use web::start;
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "emissary::ui";
@@ -111,10 +101,12 @@ struct AppOptions {
 
     /// Shared traffic state, persisted across reconnections.
     traffic: Arc<Mutex<Traffic>>,
+
+    /// Use the web UI.
+    web_ui: bool,
 }
 
 /// Application state.
-#[allow(unused)]
 struct AppState {
     /// Address book.
     address_book: AddressBook,
@@ -134,8 +126,11 @@ struct AppState {
     /// Hidden services.
     hidden_services: HiddenServices,
 
-    /// Is the router UI run in native mode.
-    native: bool,
+    /// IPv4 status.
+    ipv4_status: String,
+
+    /// IPv6 status.
+    ipv6_status: String,
 
     /// Settings info.
     settings: Settings,
@@ -155,6 +150,9 @@ struct AppState {
     /// Router UI theme.
     theme: Theme,
 
+    /// Toast notifications.
+    toasts: VecDeque<(String, Instant)>,
+
     /// Traffic info, shared across reconnections.
     traffic: Arc<Mutex<Traffic>>,
 
@@ -163,9 +161,6 @@ struct AppState {
 
     /// Currently active view.
     view: SidebarSelection,
-
-    /// Toast notifications.
-    toasts: VecDeque<(String, Instant)>,
 }
 
 impl AppState {
@@ -179,9 +174,10 @@ impl AppState {
             router_id,
             shutdown_tx,
             traffic,
+            web_ui,
         } = options;
 
-        let ui = if true {
+        let ui = if !web_ui {
             match Clipboard::new() {
                 Ok(clipboard) => UiKind::Native {
                     clipboard: Some(clipboard),
@@ -200,19 +196,33 @@ impl AppState {
             UiKind::Web
         };
 
+        let ipv4_status = config
+            .ssu2
+            .as_ref()
+            .is_some_and(|config| config.ipv4.is_none_or(|enabled| enabled))
+            .then_some(String::from("Testing"))
+            .unwrap_or(String::from("Disabled"));
+        let ipv6_status = config
+            .ssu2
+            .as_ref()
+            .is_some_and(|config| config.ipv6.is_none_or(|enabled| enabled))
+            .then_some(String::from("Testing"))
+            .unwrap_or(String::from("Disabled"));
+
         Self {
             address_book_handle,
             address_book: AddressBook::new(base_path.clone(), &config),
             base_path,
             events,
             hidden_services: HiddenServices::new(&config),
+            ipv4_status,
+            ipv6_status,
             theme: match config.router_ui {
                 None => Theme::Dark,
                 Some(ref config) => config.theme,
             },
             settings: Settings::new(&config),
             config,
-            native: true,
             shutdown_tx,
             sidebar_collapsed: false,
             state: RouterState::new(base64_encode(router_id.to_vec()).leak()),
@@ -273,6 +283,7 @@ impl AppState {
                     transit,
                     transport,
                     tunnel,
+                    firewall_statuses,
                     ..
                 } => {
                     self.state.num_transit_tunnels = transit.num_tunnels;
@@ -305,6 +316,14 @@ impl AppState {
                     traffic
                         .transit_bandwidth
                         .update(transit_in_diff as f64, transit_out_diff as f64);
+
+                    if let Some((status, _)) = firewall_statuses.iter().find(|(_, ipv4)| *ipv4) {
+                        self.ipv4_status = status.clone();
+                    }
+
+                    if let Some((status, _)) = firewall_statuses.iter().find(|(_, ipv4)| !*ipv4) {
+                        self.ipv6_status = status.clone();
+                    }
                 }
                 Event::ShuttingDown =>
                     if matches!(self.status, RouterStatus::Active) {
@@ -374,6 +393,7 @@ impl AppState {
                             theme: self.theme,
                             refresh_interval: 5,
                             port: None,
+                            native: None,
                         });
                     }
                     Some(config) => {
@@ -636,24 +656,25 @@ fn App() -> Element {
     });
     let view = state.read().view;
 
-    #[cfg(feature = "web-ui")]
-    use_future(move || async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(1));
-        loop {
-            interval.tick().await;
-            state.write().tick();
-        }
-    });
-    #[cfg(feature = "dioxus")]
-    use_hook(|| {
-        tokio::spawn(async move {
+    if std::matches!(state.read().ui, UiKind::Web) {
+        use_future(move || async move {
             let mut interval = tokio::time::interval(Duration::from_secs(1));
             loop {
                 interval.tick().await;
                 state.write().tick();
             }
         });
-    });
+    } else {
+        use_hook(|| {
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(1));
+                loop {
+                    interval.tick().await;
+                    state.write().tick();
+                }
+            });
+        });
+    }
 
     let app_class = if state.read().theme == Theme::Dark {
         "app"
@@ -687,5 +708,40 @@ fn App() -> Element {
                 }
             }
         }
+    }
+}
+
+/// Start the router UI.
+pub async fn start(
+    events: EventSubscriber,
+    config: EmissaryConfig,
+    base_path: PathBuf,
+    address_book_handle: Option<Arc<AddressBookHandle>>,
+    router_id: RouterId,
+    shutdown_tx: Sender<()>,
+    web_ui: bool,
+) {
+    if web_ui {
+        web::start(
+            events,
+            config,
+            base_path,
+            address_book_handle,
+            router_id,
+            shutdown_tx,
+            web_ui,
+        )
+        .await;
+    } else {
+        native::start(
+            events,
+            config,
+            base_path,
+            address_book_handle,
+            router_id,
+            shutdown_tx,
+            web_ui,
+        )
+        .await;
     }
 }
