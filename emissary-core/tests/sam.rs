@@ -2603,3 +2603,50 @@ async fn active_session_destroyed_and_recreated() {
     .expect("no timeout")
     .expect("to succeed");
 }
+
+#[tokio::test(start_paused = true)]
+async fn ping_pong_works() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
+    let mut router_infos = Vec::<Vec<u8>>::new();
+    let net_id = (TokioRuntime::rng().next_u32() % 255) as u8;
+
+    for i in 0..4 {
+        let (router, _events, router_info) =
+            make_router(i < 2, net_id, router_infos.clone(), TransportKind::Ntcp2).await;
+
+        router_infos.push(router_info);
+        tokio::spawn(router);
+    }
+
+    // create the sam router and fetch the random sam tcp port from the router
+    let router = make_router(false, net_id, router_infos.clone(), TransportKind::Ntcp2).await.0;
+    let sam_tcp = router.protocol_address_info().sam_tcp.unwrap().port();
+
+    // spawn the router inte background and wait a moment for the network to boot
+    tokio::spawn(router);
+    tokio::time::sleep(Duration::from_secs(15)).await;
+
+    let mut session = tokio::time::timeout(
+        Duration::from_secs(30),
+        Session::<Stream>::new(SessionOptions {
+            samv3_tcp_port: sam_tcp,
+            destination: DestinationKind::Transient,
+            ..Default::default()
+        }),
+    )
+    .await
+    .expect("no timeout")
+    .expect("to succeed");
+
+    // send PING with no input
+    assert_eq!(session.send_command("PING\n").await.unwrap(), "PONG\n");
+
+    // send PING with input
+    assert_eq!(
+        session.send_command("PING hello world!\n").await.unwrap(),
+        "PONG hello world!\n"
+    );
+}

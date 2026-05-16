@@ -62,6 +62,9 @@ struct ParsedCommand<'a, R: Runtime> {
     /// Supported values: `HELLO`, `STATUS` and `STREAM`.
     command: &'a str,
 
+    /// Original input.
+    input: &'a str,
+
     /// Subcommand.
     ///
     /// Supported values: `REPLY` for `HELLO`, `STATUS` for `SESSION`/`STREAM`.
@@ -294,6 +297,9 @@ pub enum SamCommand {
     /// Destroy the active session.
     Quit,
 
+    /// Ping.
+    Ping(Option<String>),
+
     /// Dummy event
     #[default]
     Dummy,
@@ -314,6 +320,7 @@ impl fmt::Display for SamCommand {
             Self::NamingLookup { name } => write!(f, "SamCommand::NamingLookup({name})"),
             Self::GenerateDestination => write!(f, "SamCommand::GenerateDestination"),
             Self::Quit => write!(f, "SamCommand::Quit"),
+            Self::Ping(_) => write!(f, "SamCommand::Ping"),
             Self::Dummy => unreachable!(),
         }
     }
@@ -796,6 +803,9 @@ impl<'a, R: Runtime> TryFrom<ParsedCommand<'a, R>> for SamCommand {
                 }
             },
             ("QUIT" | "EXIT" | "STOP", _) => Ok(SamCommand::Quit),
+            ("PING", _) => Ok(SamCommand::Ping(
+                parsed_cmd.input.strip_prefix("PING ").map(ToString::to_string),
+            )),
             (command, subcommand) => {
                 tracing::warn!(
                     target: LOG_TARGET,
@@ -825,6 +835,7 @@ impl SamCommand {
                 tag("QUIT"),
                 tag("EXIT"),
                 tag("STOP"),
+                tag("PING"),
             )),
             opt(char(' ')),
             opt(alt((
@@ -846,6 +857,7 @@ impl SamCommand {
             SamCommand::try_from(ParsedCommand::<R> {
                 command,
                 subcommand,
+                input,
                 key_value_pairs: key_value_pairs.unwrap_or(HashMap::new()),
                 _runtime: Default::default(),
             })
@@ -1069,6 +1081,7 @@ mod tests {
         for invalid_out_qty in test_cases {
             let invalid_cmd = ParsedCommand::<MockRuntime> {
                 command: "SESSION",
+                input: "",
                 subcommand: Some("CREATE"),
                 key_value_pairs: HashMap::from([
                     ("STYLE", "STREAM"),
@@ -1094,6 +1107,7 @@ mod tests {
         for invalid_in_len in test_cases {
             let invalid_cmd = ParsedCommand::<MockRuntime> {
                 command: "SESSION",
+                input: "",
                 subcommand: Some("CREATE"),
                 key_value_pairs: HashMap::from([
                     ("STYLE", "STREAM"),
@@ -1118,6 +1132,7 @@ mod tests {
         for invalid_out_len in test_cases {
             let invalid_cmd = ParsedCommand::<MockRuntime> {
                 command: "SESSION",
+                input: "",
                 subcommand: Some("CREATE"),
                 key_value_pairs: HashMap::from([
                     ("STYLE", "STREAM"),

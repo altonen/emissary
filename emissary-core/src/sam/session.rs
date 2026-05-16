@@ -1182,6 +1182,20 @@ impl<R: Runtime> Future for SamSession<R> {
                     );
                     return Poll::Ready(Arc::clone(&self.session_id));
                 }
+                SamCommand::Ping(text) => {
+                    let Some(ref mut socket) = self.socket else {
+                        continue;
+                    };
+
+                    match text {
+                        Some(text) => {
+                            socket.send_message(format!("PONG {text}\n").as_bytes().to_vec());
+                        }
+                        None => {
+                            socket.send_message(b"PONG\n".to_vec());
+                        }
+                    }
+                }
                 command => tracing::warn!(
                     target: LOG_TARGET,
                     %command,
