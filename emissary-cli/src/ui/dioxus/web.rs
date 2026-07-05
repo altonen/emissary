@@ -16,11 +16,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{
-    address_book::AddressBookHandle,
-    config::EmissaryConfig,
-    ui::dioxus::{types::Traffic, App, AppOptions},
-};
+use crate::ui::dioxus::{App, AppOptions};
 
 use axum::{
     extract::{State, WebSocketUpgrade},
@@ -30,13 +26,9 @@ use axum::{
 };
 use dioxus::prelude::*;
 use dioxus_liveview::{axum_socket, interpreter_glue, LiveViewPool};
-use emissary_core::{events::EventSubscriber, primitives::RouterId};
-use tokio::{net::TcpListener, sync::mpsc::Sender};
+use tokio::net::TcpListener;
 
-use std::{
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 /// Application data.
 struct AppData {
@@ -45,31 +37,14 @@ struct AppData {
 }
 
 /// Start the web UI.
-pub async fn start(
-    events: EventSubscriber,
-    config: EmissaryConfig,
-    base_path: PathBuf,
-    address_book_handle: Option<Arc<AddressBookHandle>>,
-    router_id: RouterId,
-    shutdown_tx: Sender<()>,
-    web_ui: bool,
-) {
-    let port = config.router_ui.as_ref().and_then(|config| config.port).unwrap_or(7657);
+pub async fn start(params: AppOptions) {
+    let port = params.config.router_ui.as_ref().and_then(|config| config.port).unwrap_or(7657);
     let router = Router::new()
         .route("/", get(index_handler))
         .route("/ws", get(ws_handler))
         .with_state(Arc::new(AppData {
             pool: LiveViewPool::new(),
-            params: AppOptions {
-                events: Arc::new(Mutex::new(events)),
-                config,
-                base_path,
-                address_book_handle,
-                router_id,
-                shutdown_tx,
-                traffic: Arc::new(Mutex::new(Traffic::new())),
-                web_ui,
-            },
+            params,
         }));
 
     let listener = TcpListener::bind(format!("0.0.0.0:{port}"))

@@ -41,14 +41,18 @@ pub enum SidebarSelection {
 }
 
 /// Router status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouterStatus {
     Active,
     ShuttingDown,
 }
 
 /// Router state.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct RouterState {
+    /// Router status.
+    pub status: RouterStatus,
+
     /// Number of connected routers.
     pub num_routers: usize,
 
@@ -64,24 +68,49 @@ pub struct RouterState {
     /// Router ID
     pub router_id: &'static str,
 
-    /// Should router ID be displayed.
-    pub show_router_id: bool,
-
     /// Router uptime.
     pub uptime: Instant,
+
+    /// IPv4 status.
+    pub ipv4_status: String,
+
+    /// IPv6 status.
+    pub ipv6_status: String,
 }
 
 impl RouterState {
     /// Create new `RouterState`.
-    pub fn new(router_id: &'static str) -> Self {
+    pub fn new(router_id: &'static str, config: &EmissaryConfig) -> Self {
+        let ipv4_status = if config
+            .ssu2
+            .as_ref()
+            .is_some_and(|config| config.ipv4.is_none_or(|enabled| enabled))
+        {
+            String::from("Testing")
+        } else {
+            String::from("Disabled")
+        };
+
+        let ipv6_status = if config
+            .ssu2
+            .as_ref()
+            .is_some_and(|config| config.ipv6.is_none_or(|enabled| enabled))
+        {
+            String::from("Testing")
+        } else {
+            String::from("Disabled")
+        };
+
         Self {
+            status: RouterStatus::Active,
             num_routers: 0usize,
             num_transit_tunnels: 0usize,
             num_tunnel_build_failures: 0usize,
             num_tunnels_built: 0usize,
             router_id,
-            show_router_id: false,
             uptime: Instant::now(),
+            ipv4_status,
+            ipv6_status,
         }
     }
 }

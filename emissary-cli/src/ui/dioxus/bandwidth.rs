@@ -240,7 +240,7 @@ pub fn BandwidthView() -> Element {
     let (inbound_bw, outbound_bw, peak_traffic, uptime_secs, selected_range) = {
         let state = state.read();
         let traffic = state.traffic.lock().expect("to succeed");
-        let up = state.state.uptime.elapsed().as_secs_f64().max(1.0);
+        let up = state.router_state().uptime.elapsed().as_secs_f64().max(1.0);
         (
             traffic.inbound_bandwidth,
             traffic.outbound_bandwidth,
