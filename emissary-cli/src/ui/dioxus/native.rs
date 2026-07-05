@@ -16,30 +16,12 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{
-    address_book::AddressBookHandle,
-    config::EmissaryConfig,
-    ui::dioxus::{style::DESKTOP_HEAD, types::Traffic, App, AppOptions},
-};
+use crate::ui::dioxus::{style::DESKTOP_HEAD, App, AppOptions};
 
-use emissary_core::{events::EventSubscriber, primitives::RouterId};
-use tokio::sync::mpsc::Sender;
-
-use std::{
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 /// Start the native router UI.
-pub async fn start(
-    events: EventSubscriber,
-    config: EmissaryConfig,
-    base_path: PathBuf,
-    address_book_handle: Option<Arc<AddressBookHandle>>,
-    router_id: RouterId,
-    shutdown_tx: Sender<()>,
-    web_ui: bool,
-) {
+pub async fn start(params: AppOptions) {
     let cfg = dioxus::desktop::Config::default()
         .with_menu(None)
         .with_custom_head(DESKTOP_HEAD.to_string())
@@ -51,15 +33,6 @@ pub async fn start(
 
     dioxus::LaunchBuilder::desktop()
         .with_cfg(cfg)
-        .with_context(Arc::new(Mutex::new(Some(AppOptions {
-            events: Arc::new(Mutex::new(events)),
-            config,
-            base_path,
-            address_book_handle,
-            router_id,
-            shutdown_tx,
-            traffic: Arc::new(Mutex::new(Traffic::new())),
-            web_ui,
-        }))))
+        .with_context(Arc::new(Mutex::new(Some(params))))
         .launch(App)
 }

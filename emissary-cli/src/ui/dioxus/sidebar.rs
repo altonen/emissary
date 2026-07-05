@@ -113,12 +113,14 @@ pub fn Sidebar() -> Element {
                     class: if is_active { "power-btn" } else { "power-btn shutting-down" },
                     title: if is_active { "Shut down router" } else { "Force quit" },
                     onclick: move |_| {
-                        let mut w = state.write();
+                        let w = state.write();
+                        let status = w.router_state.lock().expect("to succeed").status;
 
-                        match w.status {
+                        match status {
                             RouterStatus::Active => {
                                 let _ = w.shutdown_tx.try_send(());
-                                w.status = RouterStatus::ShuttingDown;
+                                w.router_state.lock().expect("to succeed").status =
+                                    RouterStatus::ShuttingDown;
                             }
                             RouterStatus::ShuttingDown => {
                                 std::process::exit(0);

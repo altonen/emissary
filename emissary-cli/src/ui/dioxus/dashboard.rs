@@ -54,14 +54,17 @@ pub fn Dashboard() -> Element {
     let mut state = use_context::<SyncSignal<AppState>>();
 
     let RouterState {
+        status: _,
         num_routers,
         num_transit_tunnels,
         num_tunnel_build_failures,
         num_tunnels_built,
         router_id,
-        show_router_id,
         uptime,
+        ipv4_status,
+        ipv6_status,
     } = state.read().router_state();
+    let show_router_id = state.read().show_router_id;
     let inbound_bandwidth = state.read().traffic.lock().expect("to succeed").inbound_bandwidth;
     let outbound_bandwidth = state.read().traffic.lock().expect("to succeed").outbound_bandwidth;
 
@@ -116,8 +119,6 @@ pub fn Dashboard() -> Element {
             (String::from("UPnP"), "panel-value enabled"),
         _ => (String::from("Off"), "panel-value disabled"),
     };
-    let ipv4_status = state.read().ipv4_status.clone();
-    let ipv6_status = state.read().ipv6_status.clone();
 
     rsx! {
         div {
@@ -238,7 +239,7 @@ pub fn Dashboard() -> Element {
                         button {
                             class: "router-id-btn",
                             onclick: move |_| {
-                                state.write().state.show_router_id = !show_router_id;
+                                state.write().show_router_id = !show_router_id;
                             },
                             if show_router_id {
                                 span { style: "font-size:11px;word-break:break-all;", "{router_id}" }

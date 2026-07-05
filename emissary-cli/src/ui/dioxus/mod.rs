@@ -81,9 +81,6 @@ enum UiKind {
 /// `App` options.
 #[derive(Clone)]
 struct AppOptions {
-    /// Event subscriber for the router.
-    events: Arc<Mutex<EventSubscriber>>,
-
     /// Router configuration.
     config: EmissaryConfig,
 
@@ -93,11 +90,11 @@ struct AppOptions {
     /// Address book handle, if enabled.
     address_book_handle: Option<Arc<AddressBookHandle>>,
 
-    /// Local router ID.
-    router_id: RouterId,
-
     /// TX channel for sending shutdown signal.
     shutdown_tx: Sender<()>,
+
+    /// Shared router state, persisted across page refreshes.
+    router_state: Arc<Mutex<RouterState>>,
 
     /// Shared traffic state, persisted across reconnections.
     traffic: Arc<Mutex<Traffic>>,
@@ -120,32 +117,20 @@ struct AppState {
     /// Router configuration.
     config: EmissaryConfig,
 
-    /// Event subscriber for the router.
-    events: Arc<Mutex<EventSubscriber>>,
-
     /// Hidden services.
     hidden_services: HiddenServices,
 
-    /// IPv4 status.
-    ipv4_status: String,
-
-    /// IPv6 status.
-    ipv6_status: String,
-
     /// Settings info.
     settings: Settings,
+
+    /// Shared router state.
+    router_state: Arc<Mutex<RouterState>>,
 
     /// TX channel for sending shutdown signal.
     shutdown_tx: Sender<()>,
 
     /// Has the sidebar been collapsed.
     sidebar_collapsed: bool,
-
-    /// Router state.
-    state: RouterState,
-
-    /// Router status.
-    status: RouterStatus,
 
     /// Router UI theme.
     theme: Theme,
@@ -161,18 +146,20 @@ struct AppState {
 
     /// Currently active view.
     view: SidebarSelection,
+
+    /// Should router ID be displayed.
+    show_router_id: bool,
 }
 
 impl AppState {
     /// Create new `AppState`.
     fn new(options: AppOptions) -> Self {
         let AppOptions {
-            events,
             config,
             base_path,
             address_book_handle,
-            router_id,
             shutdown_tx,
+            router_state,
             traffic,
             web_ui,
         } = options;
@@ -196,74 +183,56 @@ impl AppState {
             UiKind::Web
         };
 
-        let ipv4_status = if config
-            .ssu2
-            .as_ref()
-            .is_some_and(|config| config.ipv4.is_none_or(|enabled| enabled))
-        {
-            String::from("Testing")
-        } else {
-            String::from("Disabled")
-        };
-
-        let ipv6_status = if config
-            .ssu2
-            .as_ref()
-            .is_some_and(|config| config.ipv6.is_none_or(|enabled| enabled))
-        {
-            String::from("Testing")
-        } else {
-            String::from("Disabled")
-        };
-
         Self {
             address_book_handle,
             address_book: AddressBook::new(base_path.clone(), &config),
             base_path,
-            events,
             hidden_services: HiddenServices::new(&config),
-            ipv4_status,
-            ipv6_status,
             theme: match config.router_ui {
                 None => Theme::Dark,
                 Some(ref config) => config.theme,
             },
             settings: Settings::new(&config),
             config,
+            router_state,
             shutdown_tx,
             sidebar_collapsed: false,
-            state: RouterState::new(base64_encode(router_id.to_vec()).leak()),
-            status: RouterStatus::Active,
             toasts: VecDeque::new(),
             traffic,
             ui,
             view: SidebarSelection::Dashboard,
+            show_router_id: false,
         }
     }
 
     /// Is the router active.
     fn is_active(&self) -> bool {
-        std::matches!(self.status, RouterStatus::Active)
+        std::matches!(
+            self.router_state.lock().expect("to succeed").status,
+            RouterStatus::Active
+        )
     }
 
     /// Get `RouterState`.
     fn router_state(&self) -> RouterState {
-        self.state
+        self.router_state.lock().expect("to succeed").clone()
     }
 
     /// Get network status.
     ///
     /// Returns the network status string and a color representing that status.
     fn network_status(&self) -> (&'static str, &'static str) {
-        match &self.status {
+        let state = self.router_state();
+
+        match state.status {
             RouterStatus::ShuttingDown => ("Shutting Down", "#e34234"),
             RouterStatus::Active =>
-                if self.state.num_routers < 10 {
+                if state.num_routers < 10 {
                     ("Connecting", "#f59e0b")
                 } else {
-                    let total = self.state.num_tunnels_built + self.state.num_tunnel_build_failures;
+                    let total = state.num_tunnels_built + state.num_tunnel_build_failures;
                     let rate = if total > 0 {
-                        self.state.num_tunnels_built as f64 / total as f64
+                        state.num_tunnels_built as f64 / total as f64
                     } else {
                         1.0
                     };
@@ -279,66 +248,9 @@ impl AppState {
 
     /// Advance the state of the router UI.
     ///
-    /// Poll the event channel and update router state.
+    /// Retain recent toasts and trigger rerenders for shared router state updates.
     fn tick(&mut self) {
         self.toasts.retain(|(_, pushed)| pushed.elapsed() < Duration::from_secs(3));
-
-        let mut traffic = self.traffic.lock().expect("to succeed");
-        while let Some(event) = self.events.lock().expect("to succeed").router_status() {
-            match event {
-                Event::RouterStatus {
-                    transit,
-                    transport,
-                    tunnel,
-                    firewall_statuses,
-                    ..
-                } => {
-                    self.state.num_transit_tunnels = transit.num_tunnels;
-                    self.state.num_routers = transport.num_connected_routers;
-                    self.state.num_tunnels_built = tunnel.num_tunnels_built;
-                    self.state.num_tunnel_build_failures = tunnel.num_tunnel_build_failures;
-
-                    traffic.prev_inbound_bandwidth = traffic.inbound_bandwidth;
-                    traffic.prev_outbound_bandwidth = traffic.outbound_bandwidth;
-
-                    let inbound_diff =
-                        transport.inbound_bandwidth.saturating_sub(traffic.inbound_bandwidth);
-                    let outbound_diff =
-                        transport.outbound_bandwidth.saturating_sub(traffic.outbound_bandwidth);
-                    let total_diff = inbound_diff + outbound_diff;
-                    if total_diff > traffic.peak_traffic {
-                        traffic.peak_traffic = total_diff;
-                    }
-                    traffic.inbound_bandwidth = transport.inbound_bandwidth;
-                    traffic.outbound_bandwidth = transport.outbound_bandwidth;
-                    traffic.total_bandwidth.update(inbound_diff as f64, outbound_diff as f64);
-
-                    let transit_in_diff =
-                        transit.inbound_bandwidth.saturating_sub(traffic.transit_inbound_bandwidth);
-                    let transit_out_diff = transit
-                        .outbound_bandwidth
-                        .saturating_sub(traffic.transit_outbound_bandwidth);
-                    traffic.transit_inbound_bandwidth = transit.inbound_bandwidth;
-                    traffic.transit_outbound_bandwidth = transit.outbound_bandwidth;
-                    traffic
-                        .transit_bandwidth
-                        .update(transit_in_diff as f64, transit_out_diff as f64);
-
-                    if let Some((status, _)) = firewall_statuses.iter().find(|(_, ipv4)| *ipv4) {
-                        self.ipv4_status = status.clone();
-                    }
-
-                    if let Some((status, _)) = firewall_statuses.iter().find(|(_, ipv4)| !*ipv4) {
-                        self.ipv6_status = status.clone();
-                    }
-                }
-                Event::ShuttingDown =>
-                    if matches!(self.status, RouterStatus::Active) {
-                        self.status = RouterStatus::ShuttingDown;
-                    },
-                Event::ShutDown => {}
-            }
-        }
     }
 
     /// Save settings.
@@ -653,6 +565,79 @@ impl AppState {
     }
 }
 
+async fn router_status_event_loop(
+    mut events: EventSubscriber,
+    router_state: Arc<Mutex<RouterState>>,
+    traffic: Arc<Mutex<Traffic>>,
+) {
+    let mut interval = tokio::time::interval(Duration::from_secs(1));
+
+    loop {
+        interval.tick().await;
+
+        while let Some(event) = events.router_status() {
+            match event {
+                Event::RouterStatus {
+                    transit,
+                    transport,
+                    tunnel,
+                    firewall_statuses,
+                    ..
+                } => {
+                    {
+                        let mut state = router_state.lock().expect("to succeed");
+                        state.num_transit_tunnels = transit.num_tunnels;
+                        state.num_routers = transport.num_connected_routers;
+                        state.num_tunnels_built = tunnel.num_tunnels_built;
+                        state.num_tunnel_build_failures = tunnel.num_tunnel_build_failures;
+
+                        if let Some((status, _)) = firewall_statuses.iter().find(|(_, ipv4)| *ipv4)
+                        {
+                            state.ipv4_status = status.clone();
+                        }
+
+                        if let Some((status, _)) = firewall_statuses.iter().find(|(_, ipv4)| !*ipv4)
+                        {
+                            state.ipv6_status = status.clone();
+                        }
+                    }
+
+                    let mut traffic = traffic.lock().expect("to succeed");
+                    traffic.prev_inbound_bandwidth = traffic.inbound_bandwidth;
+                    traffic.prev_outbound_bandwidth = traffic.outbound_bandwidth;
+
+                    let inbound_diff =
+                        transport.inbound_bandwidth.saturating_sub(traffic.inbound_bandwidth);
+                    let outbound_diff =
+                        transport.outbound_bandwidth.saturating_sub(traffic.outbound_bandwidth);
+                    let total_diff = inbound_diff + outbound_diff;
+                    if total_diff > traffic.peak_traffic {
+                        traffic.peak_traffic = total_diff;
+                    }
+                    traffic.inbound_bandwidth = transport.inbound_bandwidth;
+                    traffic.outbound_bandwidth = transport.outbound_bandwidth;
+                    traffic.total_bandwidth.update(inbound_diff as f64, outbound_diff as f64);
+
+                    let transit_in_diff =
+                        transit.inbound_bandwidth.saturating_sub(traffic.transit_inbound_bandwidth);
+                    let transit_out_diff = transit
+                        .outbound_bandwidth
+                        .saturating_sub(traffic.transit_outbound_bandwidth);
+                    traffic.transit_inbound_bandwidth = transit.inbound_bandwidth;
+                    traffic.transit_outbound_bandwidth = transit.outbound_bandwidth;
+                    traffic
+                        .transit_bandwidth
+                        .update(transit_in_diff as f64, transit_out_diff as f64);
+                }
+                Event::ShuttingDown => {
+                    router_state.lock().expect("to succeed").status = RouterStatus::ShuttingDown;
+                }
+                Event::ShutDown => {}
+            }
+        }
+    }
+}
+
 #[component]
 fn App() -> Element {
     let options = use_context::<Arc<Mutex<Option<AppOptions>>>>();
@@ -728,27 +713,31 @@ pub async fn start(
     shutdown_tx: Sender<()>,
     web_ui: bool,
 ) {
+    let router_state = Arc::new(Mutex::new(RouterState::new(
+        base64_encode(router_id.to_vec()).leak(),
+        &config,
+    )));
+    let traffic = Arc::new(Mutex::new(Traffic::new()));
+
+    tokio::spawn(router_status_event_loop(
+        events,
+        Arc::clone(&router_state),
+        Arc::clone(&traffic),
+    ));
+
+    let params = AppOptions {
+        config,
+        base_path,
+        address_book_handle,
+        shutdown_tx,
+        router_state,
+        traffic,
+        web_ui,
+    };
+
     if web_ui {
-        web::start(
-            events,
-            config,
-            base_path,
-            address_book_handle,
-            router_id,
-            shutdown_tx,
-            web_ui,
-        )
-        .await;
+        web::start(params).await;
     } else {
-        native::start(
-            events,
-            config,
-            base_path,
-            address_book_handle,
-            router_id,
-            shutdown_tx,
-            web_ui,
-        )
-        .await;
+        native::start(params).await;
     }
 }
