@@ -19,7 +19,7 @@
 //! Peer test protocol for an active SSU2 session.
 
 use crate::{
-    crypto::SigningPublicKey,
+    crypto::VerifyingKey,
     error::PeerTestError,
     primitives::RouterId,
     runtime::{Counter, MetricsHandle, Runtime},
@@ -47,7 +47,7 @@ impl<R: Runtime> Ssu2Session<R> {
         router_id: &RouterId,
         message: &[u8],
         signature: &[u8],
-        verifying_key: &SigningPublicKey,
+        verifying_key: &VerifyingKey,
     ) -> Result<(), PeerTestError> {
         // verify signature
         {
@@ -216,12 +216,12 @@ impl<R: Runtime> Ssu2Session<R> {
                 // it in a temporary storage and if the router info was sent in a database store
                 // message, attempt to fetch it from profile storage.
                 let verifying_key = match self.pending_router_info.as_ref() {
-                    Some(router_info) => Some(router_info.identity.signing_key().clone()),
+                    Some(router_info) => Some(router_info.identity.verifying_key().clone()),
                     None => self
                         .router_ctx
                         .profile_storage()
                         .get(&router_id)
-                        .map(|router_info| router_info.identity.signing_key().clone()),
+                        .map(|router_info| router_info.identity.verifying_key().clone()),
                 };
 
                 let Some(verifying_key) = verifying_key else {
@@ -500,7 +500,7 @@ impl<R: Runtime> Ssu2Session<R> {
 mod tests {
     use super::*;
     use crate::{
-        crypto::{chachapoly::ChaChaPoly, SigningPrivateKey},
+        crypto::{chachapoly::ChaChaPoly, SigningKey},
         events::EventManager,
         primitives::{RouterId, RouterInfo, RouterInfoBuilder},
         profile::ProfileStorage,
@@ -541,7 +541,7 @@ mod tests {
         recv_socket: MockUdpSocket,
         router_id: Vec<u8>,
         session: Ssu2Session<MockRuntime>,
-        signing_key: SigningPrivateKey,
+        signing_key: SigningKey,
         transport_rx: Receiver<SubsystemEvent>,
     }
 

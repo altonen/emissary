@@ -19,8 +19,8 @@
 use crate::{
     constants,
     crypto::{
-        chachapoly::ChaChaPoly, hmac::Hmac, EphemeralPrivateKey, SigningPublicKey,
-        StaticPrivateKey, StaticPublicKey,
+        chachapoly::ChaChaPoly, hmac::Hmac, EphemeralPrivateKey, StaticPrivateKey, StaticPublicKey,
+        VerifyingKey,
     },
     error::Ssu2Error,
     primitives::RouterId,
@@ -117,7 +117,7 @@ pub struct OutboundSsu2Context<R: Runtime> {
     pub transport_tx: Sender<SubsystemEvent>,
 
     /// Verifying key of remote router.
-    pub verifying_key: SigningPublicKey,
+    pub verifying_key: VerifyingKey,
 }
 
 /// State for a pending outbound SSU2 session.
@@ -254,7 +254,7 @@ pub struct OutboundSsu2Session<R: Runtime> {
     transport_tx: Sender<SubsystemEvent>,
 
     /// Verifying key of remote router.
-    verifying_key: SigningPublicKey,
+    verifying_key: VerifyingKey,
 
     /// Write buffer.
     write_buffer: VecDeque<Vec<u8>>,

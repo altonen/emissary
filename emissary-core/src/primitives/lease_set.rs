@@ -17,7 +17,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    crypto::{SigningPrivateKey, SigningPublicKey, StaticPublicKey},
+    crypto::{SigningKey, StaticPublicKey, VerifyingKey},
     error::parser::LeaseSetParseError,
     primitives::{Destination, Mapping, OfflineSignature, RouterId, TunnelId, LOG_TARGET},
     runtime::Runtime,
@@ -50,7 +50,7 @@ pub struct LeaseSet2Header {
     pub expires: u32,
 
     /// Offline key, if specified.
-    pub offline_signature: Option<SigningPublicKey>,
+    pub offline_signature: Option<VerifyingKey>,
 
     /// When [`LeaseSet2`] was published.
     pub published: u32,
@@ -393,7 +393,7 @@ impl LeaseSet2 {
     }
 
     /// Serialize [`LeaseSet2`] into a byte vector.
-    pub fn serialize(self, signing_key: &SigningPrivateKey) -> Vec<u8> {
+    pub fn serialize(self, signing_key: &SigningKey) -> Vec<u8> {
         let mut out = BytesMut::with_capacity(self.serialized_len() + 1); // + 1 for signature
 
         out.put_u8(3u8); // leaset2
@@ -448,7 +448,7 @@ impl LeaseSet2 {
     }
 
     #[cfg(test)]
-    pub fn random() -> (LeaseSet2, SigningPrivateKey) {
+    pub fn random() -> (LeaseSet2, SigningKey) {
         use crate::{crypto::StaticPrivateKey, runtime::mock::MockRuntime};
         use rand::{Rng, RngExt};
         use std::time::SystemTime;
@@ -468,9 +468,9 @@ impl LeaseSet2 {
 
             (
                 Destination::new::<MockRuntime>(
-                    SigningPrivateKey::from_bytes(&signing_key).unwrap().public(),
+                    SigningKey::from_bytes(&signing_key).unwrap().public(),
                 ),
-                SigningPrivateKey::from_bytes(&signing_key).unwrap(),
+                SigningKey::from_bytes(&signing_key).unwrap(),
             )
         };
 
@@ -521,10 +521,9 @@ mod tests {
     #[test]
     fn serialize_and_parse_leaset() {
         let sk = StaticPrivateKey::random(MockRuntime::rng());
-        let sgk = SigningPrivateKey::from_bytes(&[1u8; 32]).unwrap();
-        let destination = Destination::new::<MockRuntime>(
-            SigningPrivateKey::from_bytes(&[1u8; 32]).unwrap().public(),
-        );
+        let sgk = SigningKey::from_bytes(&[1u8; 32]).unwrap();
+        let destination =
+            Destination::new::<MockRuntime>(SigningKey::from_bytes(&[1u8; 32]).unwrap().public());
         let id = destination.id();
 
         let (_router1, _tunnel1, _expires1, lease1) = {
@@ -588,10 +587,9 @@ mod tests {
     #[test]
     fn serialize_and_parse_leaset_no_leases() {
         let sk = StaticPrivateKey::random(MockRuntime::rng());
-        let sgk = SigningPrivateKey::from_bytes(&[1u8; 32]).unwrap();
-        let destination = Destination::new::<MockRuntime>(
-            SigningPrivateKey::from_bytes(&[1u8; 32]).unwrap().public(),
-        );
+        let sgk = SigningKey::from_bytes(&[1u8; 32]).unwrap();
+        let destination =
+            Destination::new::<MockRuntime>(SigningKey::from_bytes(&[1u8; 32]).unwrap().public());
 
         let serialized = LeaseSet2 {
             header: LeaseSet2Header {
@@ -614,10 +612,9 @@ mod tests {
 
     #[test]
     fn serialize_and_parse_leaset_no_public_keys() {
-        let sgk = SigningPrivateKey::from_bytes(&[1u8; 32]).unwrap();
-        let destination = Destination::new::<MockRuntime>(
-            SigningPrivateKey::from_bytes(&[1u8; 32]).unwrap().public(),
-        );
+        let sgk = SigningKey::from_bytes(&[1u8; 32]).unwrap();
+        let destination =
+            Destination::new::<MockRuntime>(SigningKey::from_bytes(&[1u8; 32]).unwrap().public());
 
         let (_router1, _tunnel1, _expires1, lease1) = {
             let router_id = RouterId::random();
@@ -681,10 +678,9 @@ mod tests {
     #[test]
     fn serialize_and_parse_leaset_too_many_leases() {
         let sk = StaticPrivateKey::random(MockRuntime::rng());
-        let sgk = SigningPrivateKey::from_bytes(&[1u8; 32]).unwrap();
-        let destination = Destination::new::<MockRuntime>(
-            SigningPrivateKey::from_bytes(&[1u8; 32]).unwrap().public(),
-        );
+        let sgk = SigningKey::from_bytes(&[1u8; 32]).unwrap();
+        let destination =
+            Destination::new::<MockRuntime>(SigningKey::from_bytes(&[1u8; 32]).unwrap().public());
 
         let leases = (0..17)
             .map(|_| Lease {
@@ -778,10 +774,10 @@ mod tests {
         {
             let now = MockRuntime::time_since_epoch();
 
-            let sgk = SigningPrivateKey::from_bytes(&[1u8; 32]).unwrap();
+            let sgk = SigningKey::from_bytes(&[1u8; 32]).unwrap();
             let sk = StaticPrivateKey::random(MockRuntime::rng());
             let destination = Destination::new::<MockRuntime>(
-                SigningPrivateKey::from_bytes(&[1u8; 32]).unwrap().public(),
+                SigningKey::from_bytes(&[1u8; 32]).unwrap().public(),
             );
 
             let lease1 = Lease {
@@ -821,9 +817,9 @@ mod tests {
         {
             let now = MockRuntime::time_since_epoch();
             let sk = StaticPrivateKey::random(MockRuntime::rng());
-            let sgk = SigningPrivateKey::from_bytes(&[1u8; 32]).unwrap();
+            let sgk = SigningKey::from_bytes(&[1u8; 32]).unwrap();
             let destination = Destination::new::<MockRuntime>(
-                SigningPrivateKey::from_bytes(&[1u8; 32]).unwrap().public(),
+                SigningKey::from_bytes(&[1u8; 32]).unwrap().public(),
             );
 
             let lease1 = Lease {
@@ -862,7 +858,7 @@ mod tests {
         // non-expired leaset
         {
             let now = MockRuntime::time_since_epoch();
-            let sgk = SigningPrivateKey::from_bytes(&[1u8; 32]).unwrap();
+            let sgk = SigningKey::from_bytes(&[1u8; 32]).unwrap();
             let sk = StaticPrivateKey::random(MockRuntime::rng());
             let destination = Destination::new::<MockRuntime>(sgk.public());
 
@@ -903,10 +899,9 @@ mod tests {
     #[test]
     fn invalid_signature() {
         let sk = StaticPrivateKey::random(MockRuntime::rng());
-        let wrong_sgk = SigningPrivateKey::from_bytes(&[2u8; 32]).unwrap();
-        let destination = Destination::new::<MockRuntime>(
-            SigningPrivateKey::from_bytes(&[1u8; 32]).unwrap().public(),
-        );
+        let wrong_sgk = SigningKey::from_bytes(&[2u8; 32]).unwrap();
+        let destination =
+            Destination::new::<MockRuntime>(SigningKey::from_bytes(&[1u8; 32]).unwrap().public());
 
         let (_router1, _tunnel1, _expires1, lease1) = {
             let router_id = RouterId::random();
@@ -1121,10 +1116,9 @@ mod tests {
     #[test]
     fn unpublished_lease_set() {
         let sk = StaticPrivateKey::random(MockRuntime::rng());
-        let sgk = SigningPrivateKey::from_bytes(&[1u8; 32]).unwrap();
-        let destination = Destination::new::<MockRuntime>(
-            SigningPrivateKey::from_bytes(&[1u8; 32]).unwrap().public(),
-        );
+        let sgk = SigningKey::from_bytes(&[1u8; 32]).unwrap();
+        let destination =
+            Destination::new::<MockRuntime>(SigningKey::from_bytes(&[1u8; 32]).unwrap().public());
         let id = destination.id();
 
         let (_router1, _tunnel1, _expires1, lease1) = {

@@ -1988,7 +1988,7 @@ impl<R: Runtime> Future for NetDb<R> {
 mod tests {
     use super::*;
     use crate::{
-        crypto::{SigningPrivateKey, StaticPrivateKey},
+        crypto::{SigningKey, StaticPrivateKey},
         events::EventManager,
         i2np::database::lookup::DatabaseLookupBuilder,
         primitives::{
@@ -2066,7 +2066,7 @@ mod tests {
         tokio::spawn(manager);
 
         let (key, lease_set) = {
-            let sgk = SigningPrivateKey::from_bytes(&[1u8; 32]).unwrap();
+            let sgk = SigningKey::from_bytes(&[1u8; 32]).unwrap();
             let sk = StaticPrivateKey::random(&mut MockRuntime::rng());
             let destination = Destination::new::<MockRuntime>(sgk.public());
             let id = destination.id();
@@ -2178,7 +2178,7 @@ mod tests {
         );
 
         let (key, lease_set) = {
-            let sgk = SigningPrivateKey::from_bytes(&[1u8; 32]).unwrap();
+            let sgk = SigningKey::from_bytes(&[1u8; 32]).unwrap();
             let sk = StaticPrivateKey::random(&mut MockRuntime::rng());
             let destination = Destination::new::<MockRuntime>(sgk.public());
             let id = destination.id();
@@ -2275,7 +2275,7 @@ mod tests {
         );
 
         let (key, lease_set) = {
-            let sgk = SigningPrivateKey::from_bytes(&[1u8; 32]).unwrap();
+            let sgk = SigningKey::from_bytes(&[1u8; 32]).unwrap();
             let sk = StaticPrivateKey::random(&mut MockRuntime::rng());
             let destination = Destination::new::<MockRuntime>(sgk.public());
             let id = destination.id();
@@ -2374,7 +2374,7 @@ mod tests {
         );
 
         let (key1, expired_lease_set1) = {
-            let sgk = SigningPrivateKey::from_bytes(&[1u8; 32]).unwrap();
+            let sgk = SigningKey::from_bytes(&[1u8; 32]).unwrap();
             let sk = StaticPrivateKey::random(&mut MockRuntime::rng());
             let destination = Destination::new::<MockRuntime>(sgk.public());
             let id = destination.id();
@@ -2410,7 +2410,7 @@ mod tests {
         };
 
         let (key2, expired_lease_set2) = {
-            let sgk = SigningPrivateKey::from_bytes(&[2u8; 32]).unwrap();
+            let sgk = SigningKey::from_bytes(&[2u8; 32]).unwrap();
             let sk = StaticPrivateKey::random(&mut MockRuntime::rng());
             let destination = Destination::new::<MockRuntime>(sgk.public());
             let id = destination.id();
@@ -2446,7 +2446,7 @@ mod tests {
         };
 
         let (key3, valid_lease_set) = {
-            let sgk = SigningPrivateKey::from_bytes(&[3u8; 32]).unwrap();
+            let sgk = SigningKey::from_bytes(&[3u8; 32]).unwrap();
             let sk = StaticPrivateKey::random(&mut MockRuntime::rng());
             let destination = Destination::new::<MockRuntime>(sgk.public());
             let id = destination.id();
@@ -2888,7 +2888,7 @@ mod tests {
         );
 
         let (key, lease_set, expires) = {
-            let sgk = SigningPrivateKey::from_bytes(&[1u8; 32]).unwrap();
+            let sgk = SigningKey::from_bytes(&[1u8; 32]).unwrap();
             let sk = StaticPrivateKey::random(&mut MockRuntime::rng());
             let destination = Destination::new::<MockRuntime>(sgk.public());
             let id = destination.id();
@@ -3527,7 +3527,7 @@ mod tests {
         );
 
         let (key, lease_set) = {
-            let sgk = SigningPrivateKey::from_bytes(&[1u8; 32]).unwrap();
+            let sgk = SigningKey::from_bytes(&[1u8; 32]).unwrap();
             let sk = StaticPrivateKey::random(&mut MockRuntime::rng());
             let destination = Destination::new::<MockRuntime>(sgk.public());
             let id = destination.id();
@@ -4236,7 +4236,7 @@ mod tests {
         tokio::spawn(manager);
 
         let (key, lease_set) = {
-            let sgk = SigningPrivateKey::from_bytes(&[1u8; 32]).unwrap();
+            let sgk = SigningKey::from_bytes(&[1u8; 32]).unwrap();
             let sk = StaticPrivateKey::random(&mut MockRuntime::rng());
             let destination = Destination::new::<MockRuntime>(sgk.public());
             let id = destination.id();

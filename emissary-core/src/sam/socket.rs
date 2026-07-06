@@ -181,7 +181,7 @@ impl<R: Runtime> Stream for SamSocket<R> {
                         };
                     }
                 },
-                WriteState::SendMessage { offset, message } =>
+                WriteState::SendMessage { offset, message } => {
                     match stream.as_mut().poll_write(cx, &message[offset..]) {
                         Poll::Pending => {
                             this.write_state = WriteState::SendMessage { offset, message };
@@ -207,7 +207,8 @@ impl<R: Runtime> Stream for SamSocket<R> {
                                 };
                             }
                         },
-                    },
+                    }
+                }
                 WriteState::Poisoned => {
                     tracing::warn!(
                         target: LOG_TARGET,

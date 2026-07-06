@@ -235,10 +235,12 @@ pub enum PeerTestError {
 impl fmt::Display for PeerTestError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NonExistentPeerTestSession(id) =>
-                write!(f, "remote peer test session doesn't exist: {id}"),
-            Self::UnexpectedMessage(expected) =>
-                write!(f, "unexpected message, expected {expected}"),
+            Self::NonExistentPeerTestSession(id) => {
+                write!(f, "remote peer test session doesn't exist: {id}")
+            }
+            Self::UnexpectedMessage(expected) => {
+                write!(f, "unexpected message, expected {expected}")
+            }
             Self::InvalidSignature => write!(f, "invalid signature"),
             Self::InvalidAddress => write!(f, "invalid address"),
         }

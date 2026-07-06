@@ -18,7 +18,7 @@
 
 use crate::{
     config::Config,
-    crypto::{SigningPrivateKey, StaticPrivateKey},
+    crypto::{SigningKey, StaticPrivateKey},
     error::parser::RouterInfoParseError,
     primitives::{
         router_address::TransportKind, Capabilities, Date, Mapping, RouterAddress, RouterIdentity,
@@ -69,7 +69,7 @@ impl RouterInfo {
         ssu2_ipv4: Option<RouterAddress>,
         ssu2_ipv6: Option<RouterAddress>,
         static_key: &StaticPrivateKey,
-        signing_key: &SigningPrivateKey,
+        signing_key: &SigningKey,
         transit_tunnels_disabled: bool,
     ) -> Self {
         let Config {
@@ -213,7 +213,7 @@ impl RouterInfo {
         };
 
         identity
-            .signing_key()
+            .verifying_key()
             .verify(&input[..input.len() - SIGNATURE_LEN], rest)
             .map_err(|_| Err::Error(RouterInfoParseError::InvalidSignature))?;
 
@@ -231,7 +231,7 @@ impl RouterInfo {
     }
 
     /// Serialize [`RouterInfo`] into a byte vector.
-    pub fn serialize(&self, signing_key: &SigningPrivateKey) -> Vec<u8> {
+    pub fn serialize(&self, signing_key: &SigningKey) -> Vec<u8> {
         let identity = self.identity.serialize();
         let published = self.published.serialize();
         let addresses =
@@ -495,14 +495,14 @@ pub(crate) mod builder {
         }
 
         /// Build [`RouterInfoBuilder`] into a [`RouterInfo].
-        pub fn build(&mut self) -> (RouterInfo, StaticPrivateKey, SigningPrivateKey) {
+        pub fn build(&mut self) -> (RouterInfo, StaticPrivateKey, SigningKey) {
             let static_key = match self.static_key.take() {
                 Some(key) => StaticPrivateKey::try_from_bytes(&key).unwrap(),
                 None => StaticPrivateKey::random(MockRuntime::rng()),
             };
             let signing_key = match self.signing_key.take() {
-                Some(key) => SigningPrivateKey::from_bytes(&key).unwrap(),
-                None => SigningPrivateKey::random(MockRuntime::rng()),
+                Some(key) => SigningKey::from_bytes(&key).unwrap(),
+                None => SigningKey::random(MockRuntime::rng()),
             };
             let identity = RouterIdentity::from_keys::<MockRuntime>(&static_key, &signing_key)
                 .expect("to succeed");

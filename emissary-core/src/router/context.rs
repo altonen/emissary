@@ -17,7 +17,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    crypto::{SigningPrivateKey, StaticPrivateKey},
+    crypto::{SigningKey, StaticPrivateKey},
     events::EventHandle,
     primitives::RouterId,
     profile::ProfileStorage,
@@ -56,7 +56,7 @@ struct InnerRouterContext<R: Runtime> {
 
     /// Local signing key.
     #[allow(unused)]
-    signing_key: SigningPrivateKey,
+    signing_key: SigningKey,
 
     /// Local static key.
     #[allow(unused)]
@@ -86,7 +86,7 @@ impl<R: Runtime> RouterContext<R> {
         router_id: RouterId,
         router_info: Bytes,
         static_key: StaticPrivateKey,
-        signing_key: SigningPrivateKey,
+        signing_key: SigningKey,
         net_id: u8,
         event_handle: EventHandle<R>,
     ) -> Self {
@@ -144,7 +144,7 @@ impl<R: Runtime> RouterContext<R> {
     }
 
     /// Get reference to [`SigningPrivateKey`].
-    pub fn signing_key(&self) -> &SigningPrivateKey {
+    pub fn signing_key(&self) -> &SigningKey {
         &self.inner.signing_key
     }
 
@@ -158,7 +158,7 @@ impl<R: Runtime> RouterContext<R> {
 #[allow(unused)]
 pub(crate) mod builder {
     use crate::{
-        crypto::{SigningPrivateKey, StaticPrivateKey},
+        crypto::{SigningKey, StaticPrivateKey},
         events::EventHandle,
         primitives::{RouterInfo, RouterInfoBuilder},
         profile::ProfileStorage,
@@ -175,7 +175,7 @@ pub(crate) mod builder {
     pub struct RouterContextBuilder {
         metrics_handle: Option<MockMetricsHandle>,
         net_id: u8,
-        router_info: Option<(RouterInfo, StaticPrivateKey, SigningPrivateKey)>,
+        router_info: Option<(RouterInfo, StaticPrivateKey, SigningKey)>,
         profile_storage: Option<ProfileStorage<MockRuntime>>,
         event_handle: Option<EventHandle<MockRuntime>>,
     }
@@ -198,7 +198,7 @@ pub(crate) mod builder {
             mut self,
             router_info: RouterInfo,
             static_key: StaticPrivateKey,
-            signing_key: SigningPrivateKey,
+            signing_key: SigningKey,
         ) -> Self {
             self.router_info = Some((router_info, static_key, signing_key));
             self

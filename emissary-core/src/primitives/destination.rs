@@ -22,8 +22,7 @@
 
 use crate::{
     crypto::{
-        base64_decode, base64_encode, sha256::Sha256, PrivateKeyKind, SigningKeyKind,
-        SigningPublicKey,
+        base64_decode, base64_encode, sha256::Sha256, PrivateKeyKind, SigningKeyKind, VerifyingKey,
     },
     error::parser::DestinationParseError,
     runtime::Runtime,
@@ -121,12 +120,12 @@ pub struct Destination {
     signing_key_len: usize,
 
     /// Destination's verifying key.
-    verifying_key: SigningPublicKey,
+    verifying_key: VerifyingKey,
 }
 
 impl Destination {
     /// Create new [`Destination`] from `verifying_key`.
-    pub fn new<R: Runtime>(verifying_key: SigningPublicKey) -> Self {
+    pub fn new<R: Runtime>(verifying_key: VerifyingKey) -> Self {
         let serialized = {
             let serialized_len = PADDING_LEN
                 .saturating_add(32usize) // signing public key
@@ -183,7 +182,7 @@ impl Destination {
             match (certificate_kind, certificate_len) {
                 (NULL_CERTIFICATE, _) => (
                     rest,
-                    SigningPublicKey::dsa_sha1(&initial_bytes[384 - 128..384])
+                    VerifyingKey::dsa_sha1(&initial_bytes[384 - 128..384])
                         .ok_or(Err::Error(DestinationParseError::InvalidBitstream))?,
                     256, // elgamal
                     128, // dsa-sha1
@@ -198,7 +197,7 @@ impl Destination {
                             Ok(SigningKeyKind::DsaSha1(_)) =>
                                 return Err(Err::Error(DestinationParseError::NotANullCertificate)),
                             Ok(SigningKeyKind::EcDsaSha256P256(size)) => (
-                                SigningPublicKey::p256(&initial_bytes[384 - 64..384])
+                                VerifyingKey::p256(&initial_bytes[384 - 64..384])
                                     .ok_or(Err::Error(DestinationParseError::InvalidBitstream))?,
                                 size,
                             ),
@@ -211,7 +210,7 @@ impl Destination {
                                 .expect("to succeed");
 
                                 (
-                                    SigningPublicKey::from_bytes(&public_key).ok_or({
+                                    VerifyingKey::from_bytes(&public_key).ok_or({
                                         Err::Error(DestinationParseError::InvalidBitstream)
                                     })?,
                                     size,
@@ -276,7 +275,7 @@ impl Destination {
     /// Get serialized length of [`Destination`].
     pub fn serialized_len(&self) -> usize {
         let certificate_payload_len = match self.verifying_key {
-            SigningPublicKey::DsaSha1(_) => 0usize,
+            VerifyingKey::DsaSha1(_) => 0usize,
             _ => 4usize,
         };
 
@@ -294,7 +293,7 @@ impl Destination {
     }
 
     /// Get reference to `SigningPublicKey` of the [`Destination`].
-    pub fn verifying_key(&self) -> &SigningPublicKey {
+    pub fn verifying_key(&self) -> &VerifyingKey {
         &self.verifying_key
     }
 
@@ -315,10 +314,10 @@ impl Destination {
 
     /// Create random [`Destination`] for testing.
     #[cfg(test)]
-    pub fn random() -> (Self, crate::crypto::SigningPrivateKey) {
+    pub fn random() -> (Self, crate::crypto::SigningKey) {
         use crate::runtime::mock::MockRuntime;
 
-        let signing_key = crate::crypto::SigningPrivateKey::random(MockRuntime::rng());
+        let signing_key = crate::crypto::SigningKey::random(MockRuntime::rng());
         (Self::new::<MockRuntime>(signing_key.public()), signing_key)
     }
 }
@@ -334,11 +333,11 @@ impl core::ops::Deref for Destination {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{crypto::SigningPrivateKey, runtime::mock::MockRuntime};
+    use crate::{crypto::SigningKey, runtime::mock::MockRuntime};
 
     #[test]
     fn serialize_and_parse_destination() {
-        let signing_key = SigningPrivateKey::from_bytes(&[0xa; 32]).unwrap().public();
+        let signing_key = SigningKey::from_bytes(&[0xa; 32]).unwrap().public();
         let destination = Destination::new::<MockRuntime>(signing_key.clone());
 
         let serialized = destination.clone().serialize();

@@ -1360,7 +1360,7 @@ impl<R: Runtime> Stream for PeerTestManager<R> {
                     router_id,
                     router_info,
                     tx,
-                })) =>
+                })) => {
                     if let Some(command) =
                         this.handle_bob_request(router_id, nonce, address, message, router_info)
                     {
@@ -1372,7 +1372,8 @@ impl<R: Runtime> Stream for PeerTestManager<R> {
                                 "failed to send command to bob",
                             );
                         }
-                    },
+                    }
+                }
                 Poll::Ready(Some(PeerTestEvent::CharlieResponse {
                     nonce,
                     rejection,

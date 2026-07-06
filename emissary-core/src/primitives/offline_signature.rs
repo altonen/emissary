@@ -16,9 +16,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use crate::{
-    crypto::SigningPublicKey, error::parser::OfflineSignatureParseError, runtime::Runtime,
-};
+use crate::{crypto::VerifyingKey, error::parser::OfflineSignatureParseError, runtime::Runtime};
 
 use nom::{
     bytes::complete::take,
@@ -43,8 +41,8 @@ impl OfflineSignature {
     /// Attempt to parse [`OfflineSignature`] from `input` and verify the signature using `key`
     pub fn parse_frame<'a, R: Runtime>(
         input: &'a [u8],
-        key: &SigningPublicKey,
-    ) -> IResult<&'a [u8], SigningPublicKey, OfflineSignatureParseError> {
+        key: &VerifyingKey,
+    ) -> IResult<&'a [u8], VerifyingKey, OfflineSignatureParseError> {
         // save start of the signed segment so the offline signature can be verified
         let signed_segment = input;
 
@@ -64,7 +62,7 @@ impl OfflineSignature {
                 let (rest, key) = take(32usize)(rest)?;
 
                 // must succeed since `key` has sufficient length
-                let verifying_key = SigningPublicKey::from_bytes(
+                let verifying_key = VerifyingKey::from_bytes(
                     &TryInto::<[u8; 32]>::try_into(key).expect("to succeed"),
                 )
                 .ok_or(Err::Error(OfflineSignatureParseError::InvalidPublicKey))?;
@@ -73,7 +71,7 @@ impl OfflineSignature {
             }
             SIGNATURE_KIND_ECDSA_SHA256_P256 => {
                 let (rest, key) = take(64usize)(rest)?;
-                let verifying_key = SigningPublicKey::p256(key)
+                let verifying_key = VerifyingKey::p256(key)
                     .ok_or(Err::Error(OfflineSignatureParseError::InvalidPublicKey))?;
 
                 (rest, verifying_key, 64usize)

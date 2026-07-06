@@ -950,7 +950,7 @@ impl<R: Runtime> Ssu2Socket<R> {
         // must succeed since `TransportManager` has ensured `router_info` contains
         // a valid and reachable ssu2 router address
         let router_id = router_info.identity.id();
-        let verifying_key = router_info.identity.signing_key().clone();
+        let verifying_key = router_info.identity.verifying_key().clone();
 
         // attempt to locate a router address with reachable socket address
         //

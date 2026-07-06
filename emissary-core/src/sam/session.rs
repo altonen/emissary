@@ -17,7 +17,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    crypto::{base32_decode, base32_encode, base64_encode, sha256::Sha256, SigningPrivateKey},
+    crypto::{base32_decode, base32_encode, base64_encode, sha256::Sha256, SigningKey},
     destination::{DeliveryStyle, Destination, DestinationEvent, LeaseSetStatus},
     error::QueryError,
     events::EventHandle,
@@ -125,7 +125,7 @@ pub struct SamSession<R: Runtime> {
     session_kind: SamSessionKind,
 
     /// Signing key.
-    signing_key: SigningPrivateKey,
+    signing_key: SigningKey,
 
     /// Socket for reading session-related commands from the client.
     ///
@@ -1413,7 +1413,7 @@ impl<R: Runtime> Future for SamSession<R> {
 mod tests {
     use super::*;
     use crate::{
-        crypto::SigningPrivateKey,
+        crypto::SigningKey,
         events::{EventManager, EventSubscriber},
         netdb::{NetDbAction, NetDbActionRecycle, NetDbHandle},
         primitives::Destination,
@@ -1449,7 +1449,7 @@ mod tests {
         let listener = net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
 
-        let signing_key = SigningPrivateKey::random(MockRuntime::rng());
+        let signing_key = SigningKey::random(MockRuntime::rng());
         let destination = Destination::new::<MockRuntime>(signing_key.public());
 
         let (datagram_tx, datagram_rx) = mpsc::channel(10);

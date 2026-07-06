@@ -997,7 +997,7 @@ impl<R: Runtime> Stream for Destination<R> {
 mod tests {
     use super::*;
     use crate::{
-        crypto::SigningPrivateKey,
+        crypto::SigningKey,
         i2np::garlic::GarlicClove,
         netdb::NetDbAction,
         primitives::{Destination as Dest, LeaseSet2Header, MessageId, RouterId, TunnelId},
@@ -1404,7 +1404,7 @@ mod tests {
         );
 
         // create remote destination and two leases for it
-        let signing_key = SigningPrivateKey::random(MockRuntime::rng());
+        let signing_key = SigningKey::random(MockRuntime::rng());
         let encryption_key = StaticPrivateKey::random(MockRuntime::rng());
         let dest = Dest::new::<MockRuntime>(signing_key.public());
         let remote_dest_id = dest.id();

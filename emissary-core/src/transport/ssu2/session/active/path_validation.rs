@@ -315,7 +315,7 @@ impl<R: Runtime> Ssu2Session<R> {
 mod tests {
     use super::*;
     use crate::{
-        crypto::SigningPrivateKey,
+        crypto::SigningKey,
         primitives::RouterId,
         router::context::builder::RouterContextBuilder,
         runtime::{mock::MockRuntime, UdpSocket},
@@ -336,7 +336,7 @@ mod tests {
 
     async fn make_session() -> Ssu2Session<MockRuntime> {
         let (_socket_tx, socket_rx) = channel(128);
-        let remote_signing_key = SigningPrivateKey::random(&mut MockRuntime::rng());
+        let remote_signing_key = SigningKey::random(&mut MockRuntime::rng());
         let socket = <MockRuntime as Runtime>::UdpSocket::bind("127.0.0.1:0".parse().unwrap())
             .await
             .unwrap();

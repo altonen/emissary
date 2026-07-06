@@ -17,7 +17,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    crypto::{base32_decode, base64_decode, SigningPrivateKey},
+    crypto::{base32_decode, base64_decode, SigningKey},
     primitives::{Destination, DestinationId, Str},
     runtime::Runtime,
 };
@@ -145,7 +145,7 @@ pub struct DestinationContext {
     pub private_key: Vec<u8>,
 
     /// Signing key of the destination.
-    pub signing_key: Box<SigningPrivateKey>,
+    pub signing_key: Box<SigningKey>,
 }
 
 impl fmt::Debug for DestinationContext {
@@ -309,12 +309,15 @@ impl fmt::Display for SamCommand {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Hello { min, max } => write!(f, "SamCommand::Hello({min:?}, {max:?})"),
-            Self::CreateSession { session_id, .. } =>
-                write!(f, "SamCommand::CreateSession({session_id})"),
-            Self::CreateSubSession { session_id, .. } =>
-                write!(f, "SamCommand::CreateSubSession({session_id})"),
-            Self::Connect { session_id, .. } =>
-                write!(f, "SamCommand::StreamConnect({session_id})"),
+            Self::CreateSession { session_id, .. } => {
+                write!(f, "SamCommand::CreateSession({session_id})")
+            }
+            Self::CreateSubSession { session_id, .. } => {
+                write!(f, "SamCommand::CreateSubSession({session_id})")
+            }
+            Self::Connect { session_id, .. } => {
+                write!(f, "SamCommand::StreamConnect({session_id})")
+            }
             Self::Accept { session_id, .. } => write!(f, "SamCommand::StreamAccept({session_id})"),
             Self::Forward { session_id, .. } => write!(f, "SamCommand::Forward({session_id})"),
             Self::NamingLookup { name } => write!(f, "SamCommand::NamingLookup({name})"),
@@ -425,7 +428,7 @@ impl<'a, R: Runtime> TryFrom<ParsedCommand<'a, R>> for SamCommand {
 
                 let destination = match parsed_cmd.key_value_pairs.remove("DESTINATION") {
                     Some("TRANSIENT") => {
-                        let signing_key = SigningPrivateKey::random(R::rng());
+                        let signing_key = SigningKey::random(R::rng());
                         let destination = Destination::new::<R>(signing_key.public());
 
                         DestinationContext {
@@ -478,7 +481,7 @@ impl<'a, R: Runtime> TryFrom<ParsedCommand<'a, R>> for SamCommand {
                             destination,
                             private_key: private_key.to_vec(),
                             signing_key: Box::new(
-                                SigningPrivateKey::from_bytes(signing_key).expect("to succeed"),
+                                SigningKey::from_bytes(signing_key).expect("to succeed"),
                             ),
                         }
                     }
@@ -1036,7 +1039,7 @@ mod tests {
 
         // persistent
         let privkey = {
-            let signing_key = SigningPrivateKey::random(MockRuntime::rng());
+            let signing_key = SigningKey::random(MockRuntime::rng());
             let destination = Destination::new::<MockRuntime>(signing_key.public());
 
             let mut out = BytesMut::with_capacity(destination.serialized_len() + 2 * 32);
@@ -1119,8 +1122,9 @@ mod tests {
             };
 
             match SamCommand::try_from(invalid_cmd) {
-                Ok(_) =>
-                    panic!("Failed to reject the invalid inbound tunnel length {invalid_in_len:?}",),
+                Ok(_) => {
+                    panic!("Failed to reject the invalid inbound tunnel length {invalid_in_len:?}",)
+                }
                 Err(_) => {}
             }
         }
@@ -1155,7 +1159,7 @@ mod tests {
     #[test]
     fn parse_stream_connect() {
         let destination = {
-            let signing_key = SigningPrivateKey::random(MockRuntime::rng());
+            let signing_key = SigningKey::random(MockRuntime::rng());
             base64_encode(Destination::new::<MockRuntime>(signing_key.public()).serialize())
         };
 
@@ -1498,7 +1502,7 @@ mod tests {
         // session with persistent destination
         {
             let privkey = {
-                let signing_key = SigningPrivateKey::random(MockRuntime::rng());
+                let signing_key = SigningKey::random(MockRuntime::rng());
                 let destination = Destination::new::<MockRuntime>(signing_key.public());
 
                 let mut out = BytesMut::with_capacity(destination.serialized_len() + 2 * 32);
@@ -1611,7 +1615,7 @@ mod tests {
         // session with persistent destination
         {
             let privkey = {
-                let signing_key = SigningPrivateKey::random(MockRuntime::rng());
+                let signing_key = SigningKey::random(MockRuntime::rng());
                 let destination = Destination::new::<MockRuntime>(signing_key.public());
 
                 let mut out = BytesMut::with_capacity(destination.serialized_len() + 2 * 32);
@@ -1663,7 +1667,7 @@ mod tests {
     fn parse_datagram_basic() {
         let destination = {
             let rng = MockRuntime::rng();
-            let signing_key = SigningPrivateKey::random(rng);
+            let signing_key = SigningKey::random(rng);
             Destination::new::<MockRuntime>(signing_key.public())
         };
         let serialized = {
@@ -1694,7 +1698,7 @@ mod tests {
     fn parse_datagram_with_all_options() {
         let destination = {
             let rng = MockRuntime::rng();
-            let signing_key = SigningPrivateKey::random(rng);
+            let signing_key = SigningKey::random(rng);
             Destination::new::<MockRuntime>(signing_key.public())
         };
         let serialized = {
@@ -1757,7 +1761,7 @@ mod tests {
     fn parse_datagram_with_port_options() {
         let destination = {
             let rng = MockRuntime::rng();
-            let signing_key = SigningPrivateKey::random(rng);
+            let signing_key = SigningKey::random(rng);
             Destination::new::<MockRuntime>(signing_key.public())
         };
         let serialized = {
@@ -1926,7 +1930,7 @@ mod tests {
         let (rest, _private_key) =
             take::<_, _, ()>(destination.private_key_length())(rest).unwrap();
         let (_, signing_key) = take::<_, _, ()>(destination.signing_key_length())(rest).unwrap();
-        let sk = SigningPrivateKey::from_bytes(signing_key).unwrap();
+        let sk = SigningKey::from_bytes(signing_key).unwrap();
 
         assert_eq!(sk.public(), destination.verifying_key().clone());
     }

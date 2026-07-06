@@ -648,13 +648,14 @@ impl<R: Runtime> SubsystemManager<R> {
                 MessageType::DatabaseStore
                 | MessageType::DatabaseLookup
                 | MessageType::DatabaseSearchReply
-                | MessageType::DeliveryStatus =>
+                | MessageType::DeliveryStatus => {
                     if !self
                         .bandwidth_tracker
                         .update_inbound(message.serialized_len_long(), Source::NetDb)
                     {
                         netdb.push((router_id, message));
-                    },
+                    }
+                }
                 MessageType::Garlic =>
                     if let Some(messages) = self.on_garlic_message(message) {
                         let mut inbound = vec![];

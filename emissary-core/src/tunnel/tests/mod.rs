@@ -17,7 +17,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    crypto::{SigningPrivateKey, StaticPrivateKey, StaticPublicKey},
+    crypto::{SigningKey, StaticPrivateKey, StaticPublicKey},
     events::EventManager,
     i2np::{tunnel::gateway, Message, MessageType},
     primitives::{Capabilities, MessageId, RouterId, RouterInfo, RouterInfoBuilder, Str, TunnelId},
@@ -62,7 +62,7 @@ pub fn make_router(
 ) -> (
     Bytes,
     StaticPrivateKey,
-    SigningPrivateKey,
+    SigningKey,
     NoiseContext,
     RouterInfo,
 ) {

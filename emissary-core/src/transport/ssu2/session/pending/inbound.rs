@@ -886,7 +886,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
             return Err(Ssu2Error::Malformed);
         };
 
-        let verifying_key = router_info.identity.signing_key().clone();
+        let verifying_key = router_info.identity.verifying_key().clone();
         let temp_key =
             Hmac::new(self.encryption_ctx.noise_ctx().chaining_key()).update([]).finalize();
         let k_ab = Hmac::new(&temp_key).update([0x01]).finalize();
@@ -1076,7 +1076,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
 
                     self.state = PendingSessionState::AwaitingSessionRequest { token };
                 }
-                PendingSessionState::HandleSessionRequest { payload } =>
+                PendingSessionState::HandleSessionRequest { payload } => {
                     match self.on_session_request(payload) {
                         Ok(None) => {}
                         Ok(Some(status)) => return status,
@@ -1098,7 +1098,8 @@ impl<R: Runtime> InboundSsu2Session<R> {
                                 reason: error.into(),
                             };
                         }
-                    },
+                    }
+                }
                 _ => unreachable!(),
             }
         }

@@ -221,7 +221,7 @@ impl<R: Runtime> Future for TerminatingSsu2Session<R> {
                 Poll::Pending => break,
                 Poll::Ready(None) => return Poll::Ready((self.router_id.clone(), self.dst_id)),
                 Poll::Ready(Some(Packet { mut pkt, .. })) => match self.k_session_confirmed {
-                    Some(key) =>
+                    Some(key) => {
                         if let Ok(mut reader) = HeaderReader::new(self.intro_key, &mut pkt) {
                             match reader.parse(key) {
                                 Ok(HeaderKind::SessionConfirmed { .. }) => {
@@ -243,7 +243,8 @@ impl<R: Runtime> Future for TerminatingSsu2Session<R> {
                                     "failed to parse packet with key meant for SessionConfirmed",
                                 ),
                             }
-                        },
+                        }
+                    }
                     None =>
                         if let Err(error) = self.on_packet(pkt) {
                             tracing::debug!(

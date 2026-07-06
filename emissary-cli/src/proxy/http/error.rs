@@ -71,8 +71,9 @@ impl std::fmt::Display for HttpError {
             HttpError::MethodMissing => write!(f, "Method missing"),
             HttpError::MethodNotSupported(method) => write!(f, "Method not supported: {method}"),
             HttpError::HostNotFound => write!(f, "Host not found in address book"),
-            HttpError::AddressBookNotEnabled =>
-                write!(f, "Cannot connect to .i2p host, address book not enabled"),
+            HttpError::AddressBookNotEnabled => {
+                write!(f, "Cannot connect to .i2p host, address book not enabled")
+            }
             HttpError::OutproxyNotEnabled => write!(
                 f,
                 "Cannot connect to clearnet address, outproxy not enabled"

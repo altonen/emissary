@@ -17,7 +17,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    crypto::{base64_encode, sha256::Sha256, SigningPrivateKey, SigningPublicKey},
+    crypto::{base64_encode, sha256::Sha256, SigningKey, VerifyingKey},
     error::Error,
     i2cp::I2cpPayload,
     primitives::{DatagramFlags, Destination, Mapping, OfflineSignature},
@@ -51,7 +51,7 @@ pub struct DatagramManager<R: Runtime> {
     listeners: HashMap<u16, u16>,
 
     /// Signing key.
-    signing_key: SigningPrivateKey,
+    signing_key: SigningKey,
 
     /// Marker for `Runtime`
     _runtime: PhantomData<R>,
@@ -63,7 +63,7 @@ impl<R: Runtime> DatagramManager<R> {
         destination: Destination,
         datagram_tx: Sender<(u16, Vec<u8>)>,
         options: HashMap<String, String>,
-        signing_key: SigningPrivateKey,
+        signing_key: SigningKey,
     ) -> Self {
         Self {
             destination_hash: Sha256::new().update(destination.as_ref()).finalize_new(),
@@ -172,7 +172,7 @@ impl<R: Runtime> DatagramManager<R> {
                         .map_err(|_| Error::InvalidData)?;
 
                 match destination.verifying_key() {
-                    SigningPublicKey::DsaSha1(_) => return Err(Error::NotSupported),
+                    VerifyingKey::DsaSha1(_) => return Err(Error::NotSupported),
                     verifying_key => verifying_key.verify(rest, signature)?,
                 }
 
@@ -233,7 +233,7 @@ impl<R: Runtime> DatagramManager<R> {
                         .map_err(|_| Error::InvalidData)?;
 
                 match verifying_key.as_ref() {
-                    SigningPublicKey::DsaSha1(_) => return Err(Error::NotSupported),
+                    VerifyingKey::DsaSha1(_) => return Err(Error::NotSupported),
                     verifying_key => verifying_key.verify(&out, signature)?,
                 }
 

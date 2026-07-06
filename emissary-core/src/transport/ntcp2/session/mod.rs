@@ -765,7 +765,7 @@ impl<R: Runtime> SessionManager<R> {
 mod tests {
     use super::*;
     use crate::{
-        crypto::{SigningPrivateKey, StaticPrivateKey},
+        crypto::{SigningKey, StaticPrivateKey},
         events::EventManager,
         i2np::{Message, MessageType, I2NP_MESSAGE_EXPIRATION},
         primitives::{Capabilities, Date, Mapping, RouterAddress, RouterIdentity, RouterInfo, Str},
@@ -865,7 +865,7 @@ mod tests {
         }
 
         fn build(mut self) -> Ntcp2 {
-            let signing_key = SigningPrivateKey::random(R::rng());
+            let signing_key = SigningKey::random(R::rng());
             let static_key = StaticPrivateKey::random(R::rng());
             let identity =
                 RouterIdentity::from_keys::<MockRuntime>(&static_key, &signing_key).unwrap();
@@ -910,7 +910,7 @@ mod tests {
         ntcp2_iv: [u8; 16],
         ntcp2_key: [u8; 32],
         router_info: RouterInfo,
-        signing_key: SigningPrivateKey,
+        signing_key: SigningKey,
         static_key: StaticPrivateKey,
     }
 

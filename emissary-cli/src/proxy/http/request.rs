@@ -186,7 +186,7 @@ impl Request {
         // an address obviously doesn't need to (and cannot be) resolved to a .b32.i2p hostname
         let (host, port, keep_original_host) = match (self.host, address_book, outproxy) {
             (HostKind::B32 { host }, _, _) => (host, None, false),
-            (HostKind::I2p { host }, Some(address_book), _) =>
+            (HostKind::I2p { host }, Some(address_book), _) => {
                 match address_book.resolve_base32(&host) {
                     Some(host) => (format!("{host}.b32.i2p"), None, false),
                     None => {
@@ -197,7 +197,8 @@ impl Request {
                         );
                         return Err(HttpError::HostNotFound);
                     }
-                },
+                }
+            }
             (HostKind::Clearnet { .. }, _, Some(OutproxyKind::Host(outproxy))) =>
                 (outproxy.clone(), None, true),
             (HostKind::Clearnet { .. }, _, Some(OutproxyKind::HostWithPort(outproxy, port))) =>

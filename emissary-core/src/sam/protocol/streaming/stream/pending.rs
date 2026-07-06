@@ -17,7 +17,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    crypto::SigningPrivateKey,
+    crypto::SigningKey,
     error::StreamingError,
     primitives::{Destination, DestinationId},
     runtime::Runtime,
@@ -98,7 +98,7 @@ impl<R: Runtime> PendingStream<R> {
         remote_destination: Destination,
         recv_stream_id: u32,
         syn_payload: Vec<u8>,
-        signing_key: &SigningPrivateKey,
+        signing_key: &SigningKey,
     ) -> (Self, Vec<u8>) {
         let send_stream_id = R::rng().next_u32();
         let packet = PacketBuilder::new(send_stream_id)
@@ -213,13 +213,13 @@ mod tests {
 
     #[test]
     fn ignore_duplicate_ack() {
-        let signing_key = SigningPrivateKey::from_bytes(&[0u8; 32]).unwrap();
+        let signing_key = SigningKey::from_bytes(&[0u8; 32]).unwrap();
         let (mut stream, _) = PendingStream::<NoopRuntime>::new(
             &Destination::new::<NoopRuntime>(signing_key.public()),
             Destination::random().0,
             1337u32,
             vec![],
-            &SigningPrivateKey::random(NoopRuntime::rng()),
+            &SigningKey::random(NoopRuntime::rng()),
         );
 
         let packet = PacketBuilder::new(stream.send_stream_id)
@@ -236,13 +236,13 @@ mod tests {
 
     #[test]
     fn destroy_stream_on_close() {
-        let signing_key = SigningPrivateKey::from_bytes(&[0u8; 32]).unwrap();
+        let signing_key = SigningKey::from_bytes(&[0u8; 32]).unwrap();
         let (mut stream, _) = PendingStream::<NoopRuntime>::new(
             &Destination::new::<NoopRuntime>(signing_key.public()),
             Destination::random().0,
             1337u32,
             vec![],
-            &SigningPrivateKey::random(NoopRuntime::rng()),
+            &SigningKey::random(NoopRuntime::rng()),
         );
 
         let packet = PacketBuilder::new(stream.send_stream_id)
@@ -260,13 +260,13 @@ mod tests {
 
     #[test]
     fn destroy_stream_on_reset() {
-        let signing_key = SigningPrivateKey::from_bytes(&[0u8; 32]).unwrap();
+        let signing_key = SigningKey::from_bytes(&[0u8; 32]).unwrap();
         let (mut stream, _) = PendingStream::<NoopRuntime>::new(
             &Destination::new::<NoopRuntime>(signing_key.public()),
             Destination::random().0,
             1337u32,
             vec![],
-            &SigningPrivateKey::random(NoopRuntime::rng()),
+            &SigningKey::random(NoopRuntime::rng()),
         );
 
         let packet = PacketBuilder::new(stream.send_stream_id)
@@ -284,13 +284,13 @@ mod tests {
 
     #[test]
     fn buffer_data_correctly() {
-        let signing_key = SigningPrivateKey::from_bytes(&[0u8; 32]).unwrap();
+        let signing_key = SigningKey::from_bytes(&[0u8; 32]).unwrap();
         let (mut stream, _) = PendingStream::<NoopRuntime>::new(
             &Destination::new::<NoopRuntime>(signing_key.public()),
             Destination::random().0,
             1337u32,
             vec![],
-            &SigningPrivateKey::random(NoopRuntime::rng()),
+            &SigningKey::random(NoopRuntime::rng()),
         );
 
         for i in 1..=3 {
@@ -330,13 +330,13 @@ mod tests {
 
     #[test]
     fn ignore_invalid_packets() {
-        let signing_key = SigningPrivateKey::from_bytes(&[0u8; 32]).unwrap();
+        let signing_key = SigningKey::from_bytes(&[0u8; 32]).unwrap();
         let (mut stream, _) = PendingStream::<NoopRuntime>::new(
             &Destination::new::<NoopRuntime>(signing_key.public()),
             Destination::random().0,
             1337u32,
             vec![],
-            &SigningPrivateKey::random(NoopRuntime::rng()),
+            &SigningKey::random(NoopRuntime::rng()),
         );
 
         match stream.on_packet(vec![1, 2, 3, 4]) {
@@ -347,13 +347,13 @@ mod tests {
 
     #[test]
     fn receive_window_full() {
-        let signing_key = SigningPrivateKey::from_bytes(&[0u8; 32]).unwrap();
+        let signing_key = SigningKey::from_bytes(&[0u8; 32]).unwrap();
         let (mut stream, _) = PendingStream::<NoopRuntime>::new(
             &Destination::new::<NoopRuntime>(signing_key.public()),
             Destination::random().0,
             1337u32,
             vec![],
-            &SigningPrivateKey::random(NoopRuntime::rng()),
+            &SigningKey::random(NoopRuntime::rng()),
         );
 
         for i in 1..=INITIAL_WINDOW_SIZE {
@@ -395,13 +395,13 @@ mod tests {
 
     #[test]
     fn syn_payload_not_empty() {
-        let signing_key = SigningPrivateKey::from_bytes(&[0u8; 32]).unwrap();
+        let signing_key = SigningKey::from_bytes(&[0u8; 32]).unwrap();
         let (mut stream, _) = PendingStream::<NoopRuntime>::new(
             &Destination::new::<NoopRuntime>(signing_key.public()),
             Destination::random().0,
             1337u32,
             vec![1, 2, 3, 4],
-            &SigningPrivateKey::random(NoopRuntime::rng()),
+            &SigningKey::random(NoopRuntime::rng()),
         );
 
         match stream.packets.pop_front() {

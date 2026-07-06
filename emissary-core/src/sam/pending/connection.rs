@@ -17,7 +17,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::{
-    crypto::{base64_encode, SigningPrivateKey},
+    crypto::{base64_encode, SigningKey},
     error::{ConnectionError, Error},
     primitives::Destination,
     runtime::Runtime,
@@ -412,7 +412,7 @@ impl<R: Runtime> Future for PendingSamConnection<R> {
 
                         // generate keys and destination
                         let (signing_key, destination) = {
-                            let signing_key = SigningPrivateKey::random(R::rng());
+                            let signing_key = SigningKey::random(R::rng());
                             let destination = Destination::new::<R>(signing_key.public());
 
                             (signing_key, destination)

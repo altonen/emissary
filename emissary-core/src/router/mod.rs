@@ -18,7 +18,7 @@
 
 use crate::{
     config::{Config, I2cpConfig, MetricsConfig, SamConfig},
-    crypto::{SigningPrivateKey, StaticPrivateKey},
+    crypto::{SigningKey, StaticPrivateKey},
     error::Error,
     events::{EventManager, EventSubscriber},
     i2cp::I2cpServer,
@@ -193,7 +193,7 @@ impl<R: Runtime> Router<R> {
                 R::rng().fill_bytes(&mut key);
                 key
             }));
-        let local_signing_key = SigningPrivateKey::from(config.signing_key.unwrap_or_else(|| {
+        let local_signing_key = SigningKey::from(config.signing_key.unwrap_or_else(|| {
             let mut key = [0u8; 32];
             R::rng().fill_bytes(&mut key);
             key

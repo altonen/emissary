@@ -19,7 +19,7 @@
 #![allow(unused)]
 
 use crate::{
-    crypto::{SigningPrivateKey, SigningPublicKey},
+    crypto::{SigningKey, VerifyingKey},
     error::parser::{
         DestinationParseError, FlagsParseError, OfflineSignatureParseError, PacketParseError,
     },
@@ -66,7 +66,7 @@ pub struct Flags<'a> {
     max_packet_size: Option<u16>,
 
     /// Signing public key from [`OfflineSignature`].
-    offline_signature: Option<SigningPublicKey>,
+    offline_signature: Option<VerifyingKey>,
 
     /// Requested delay, if received.
     requested_delay: Option<u16>,
@@ -250,7 +250,7 @@ impl<'a> Flags<'a> {
     }
 
     /// Get included offline signature, if received.
-    pub fn offline_signature(&self) -> Option<&SigningPublicKey> {
+    pub fn offline_signature(&self) -> Option<&VerifyingKey> {
         self.offline_signature.as_ref()
     }
 }
@@ -746,7 +746,7 @@ impl<'a> PacketBuilder<'a> {
     /// Build [`PacketBuilder`] into [`Packet`] with signature.
     ///
     /// Panics if one of the needed fields is missing.
-    pub fn build_and_sign(self, signing_key: &SigningPrivateKey) -> BytesMut {
+    pub fn build_and_sign(self, signing_key: &SigningKey) -> BytesMut {
         let (flags, options) = self.flags_builder.build();
 
         if (flags >> 3) & 1 == 0 {
@@ -814,7 +814,7 @@ mod tests {
 
     #[test]
     fn syn_flags() {
-        let signing_key = SigningPrivateKey::random(MockRuntime::rng());
+        let signing_key = SigningKey::random(MockRuntime::rng());
         let destination = Destination::new::<MockRuntime>(signing_key.public());
 
         let (flags, options) = FlagsBuilder::default()
@@ -867,7 +867,7 @@ mod tests {
 
     #[test]
     fn all_flags() {
-        let signing_key = SigningPrivateKey::random(MockRuntime::rng());
+        let signing_key = SigningKey::random(MockRuntime::rng());
         let destination = Destination::new::<MockRuntime>(signing_key.public());
 
         let (flags, options) = FlagsBuilder::default()
@@ -905,7 +905,7 @@ mod tests {
 
     #[test]
     fn build_syn() {
-        let signing_key = SigningPrivateKey::random(MockRuntime::rng());
+        let signing_key = SigningKey::random(MockRuntime::rng());
         let destination = Destination::new::<MockRuntime>(signing_key.public());
         let recv_destination_id = DestinationId::random();
         let mut payload = "hello, world".as_bytes();
@@ -999,7 +999,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn call_build_and_sign_without_signature() {
-        let signing_key = SigningPrivateKey::random(MockRuntime::rng());
+        let signing_key = SigningKey::random(MockRuntime::rng());
         let destination = Destination::new::<MockRuntime>(signing_key.public());
         let recv_destination_id = DestinationId::random();
         let mut payload = "hello, world".as_bytes();
@@ -1019,7 +1019,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn call_build_with_signature() {
-        let signing_key = SigningPrivateKey::random(MockRuntime::rng());
+        let signing_key = SigningKey::random(MockRuntime::rng());
         let destination = Destination::new::<MockRuntime>(signing_key.public());
         let recv_destination_id = DestinationId::random();
         let mut payload = "hello, world".as_bytes();

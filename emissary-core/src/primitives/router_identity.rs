@@ -18,8 +18,8 @@
 
 use crate::{
     crypto::{
-        base64_decode, base64_encode, sha256::Sha256, SigningPrivateKey, SigningPublicKey,
-        StaticPrivateKey, StaticPublicKey,
+        base64_decode, base64_encode, sha256::Sha256, SigningKey, StaticPrivateKey,
+        StaticPublicKey, VerifyingKey,
     },
     error::parser::RouterIdentityParseError,
     runtime::Runtime,
@@ -107,7 +107,7 @@ pub struct RouterIdentity {
     router: RouterId,
 
     /// Router's signing key.
-    signing_key: SigningPublicKey,
+    signing_key: VerifyingKey,
 
     /// Router's public key.
     static_key: StaticPublicKey,
@@ -117,7 +117,7 @@ impl RouterIdentity {
     /// Create new [`RouterIdentity`] from keys.
     pub fn from_keys<R: Runtime>(
         static_key: &StaticPrivateKey,
-        signing_key: &SigningPrivateKey,
+        signing_key: &SigningKey,
     ) -> crate::Result<Self> {
         let padding = {
             let mut padding = [0u8; 320];
@@ -184,7 +184,7 @@ impl RouterIdentity {
                     TryInto::<[u8; 32]>::try_into(initial_bytes[384 - 32..384].to_vec())
                         .expect("to succeed");
 
-                SigningPublicKey::from_bytes(&public_key)
+                VerifyingKey::from_bytes(&public_key)
                     .ok_or(Err::Error(RouterIdentityParseError::InvalidBitstream))?
             }),
             _ => None,
@@ -234,7 +234,7 @@ impl RouterIdentity {
     }
 
     /// Get reference to router's signing public key.
-    pub fn signing_key(&self) -> &SigningPublicKey {
+    pub fn verifying_key(&self) -> &VerifyingKey {
         &self.signing_key
     }
 
@@ -255,7 +255,7 @@ impl RouterIdentity {
 
     /// Generate random [`RouterIdentity`].
     #[cfg(test)]
-    pub fn random() -> (Self, StaticPrivateKey, SigningPrivateKey) {
+    pub fn random() -> (Self, StaticPrivateKey, SigningKey) {
         use crate::runtime::mock::MockRuntime;
 
         let sk = {
@@ -268,7 +268,7 @@ impl RouterIdentity {
             let mut out = [0u8; 32];
             MockRuntime::rng().fill_bytes(&mut out);
 
-            SigningPrivateKey::from(out)
+            SigningKey::from(out)
         };
 
         let identity = RouterIdentity::from_keys::<MockRuntime>(&sk, &sgk).unwrap();
