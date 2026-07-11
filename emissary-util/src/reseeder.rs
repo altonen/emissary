@@ -59,6 +59,7 @@ const RESEED_SERVERS: &[&str] = &[
     "https://i2pseed.creativecowpat.net:8443/",
     "https://reseed.sahil.world/",
     "https://i2p.diyarciftci.xyz/",
+    "https://spiral.likogan.dev/",
 ];
 
 /// HTTPS reseeder.
