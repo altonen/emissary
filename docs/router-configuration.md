@@ -109,6 +109,7 @@ Run `emissary-cli --help` to show the built-in help message with all available o
 | `publish_ipv6` | - | Publish the IPv6 address in router info for incoming connections. (default: true) |
 | `disable_pq` | - | Disable PQ connections (default: false) |
 | `ml_kem` | - | ML-KEM preference for inbound connections (default: 4) |
+| `max_connections` | - | Maximum number of connections (default: unlimited) |
 
 **ML-KEM preference (`ml_kem`)**
 

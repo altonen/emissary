@@ -124,6 +124,9 @@ async fn main() -> anyhow::Result<()> {
             // enable PQ and use ML-KEM-768
             ml_kem: Some(4),
             disable_pq: false,
+
+            // allow unlimited connections
+            max_connections: None,
         }),
 
         // enable SSU2

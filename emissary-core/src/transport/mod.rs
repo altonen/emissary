@@ -1701,6 +1701,7 @@ mod tests {
 
     async fn external_address_discovered_ntcp2(ipv4: bool) {
         let context = Ntcp2Transport::<MockRuntime>::initialize(Some(Ntcp2Config {
+            max_connections: None,
             port: 0,
             ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
             ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
@@ -1776,6 +1777,7 @@ mod tests {
 
     async fn external_address_discovered_ntcp2_unpublished(ipv4: bool) {
         let context = Ntcp2Transport::<MockRuntime>::initialize(Some(Ntcp2Config {
+            max_connections: None,
             port: 0,
             ipv4_host: None,
             ipv6_host: None,
@@ -1998,6 +2000,7 @@ mod tests {
         .0
         .unwrap();
         let ntcp2_context = Ntcp2Transport::<MockRuntime>::initialize(Some(Ntcp2Config {
+            max_connections: None,
             port: 0,
             ipv4_host: None,
             ipv6_host: None,
@@ -2091,6 +2094,7 @@ mod tests {
 
     async fn discovered_address_doesnt_match_published_address_ntcp2(ipv4: bool) {
         let context = Ntcp2Transport::<MockRuntime>::initialize(Some(Ntcp2Config {
+            max_connections: None,
             port: 0,
             ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
             ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
@@ -2660,6 +2664,7 @@ mod tests {
             event_handle.clone(),
         );
         let context = Ntcp2Transport::<MockRuntime>::initialize(Some(Ntcp2Config {
+            max_connections: None,
             port: 0,
             ipv4_host: Some("192.168.0.1".parse().unwrap()),
             ipv6_host: None,
@@ -2866,6 +2871,7 @@ mod tests {
         );
         builder.register_netdb_handle(handle);
         let context = Ntcp2Transport::<MockRuntime>::initialize(Some(Ntcp2Config {
+            max_connections: None,
             port: 0,
             ipv4_host: Some("192.168.0.1".parse().unwrap()),
             ipv6_host: None,
@@ -3598,6 +3604,7 @@ mod tests {
                 ipv6_mtu: None,
             });
             let ntcp2_config = self.ntcp2.is_some().then(|| Ntcp2Config {
+                max_connections: None,
                 port: 8889,
                 ipv4_host: None,
                 ipv6_host: None,
@@ -3726,6 +3733,7 @@ mod tests {
 
         let (router_info, ..) = RouterInfoBuilder::default()
             .with_ntcp2(Ntcp2Config {
+                max_connections: None,
                 port: 9999,
                 ipv4_host: ipv4.then_some("127.0.0.1".parse().unwrap()),
                 ipv6_host: (!ipv4).then_some("::1".parse().unwrap()),
@@ -3787,6 +3795,7 @@ mod tests {
 
         let (router_info, ..) = RouterInfoBuilder::default()
             .with_ntcp2(Ntcp2Config {
+                max_connections: None,
                 port: 9999,
                 ipv4_host: remote_ipv4.then_some("127.0.0.1".parse().unwrap()),
                 ipv6_host: (!remote_ipv4).then_some("::1".parse().unwrap()),
@@ -3915,6 +3924,7 @@ mod tests {
 
         let (router_info, ..) = RouterInfoBuilder::default()
             .with_ntcp2(Ntcp2Config {
+                max_connections: None,
                 port: 9999,
                 ipv4_host: Some("127.0.0.1".parse().unwrap()),
                 ipv6_host: None,

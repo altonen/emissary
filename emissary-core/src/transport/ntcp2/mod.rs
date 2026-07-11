@@ -44,6 +44,7 @@ use thingbuf::mpsc::Sender;
 use alloc::{format, vec, vec::Vec};
 use core::{
     net::{IpAddr, SocketAddr},
+    num::NonZeroUsize,
     pin::Pin,
     task::{Context, Poll, Waker},
 };
@@ -117,6 +118,12 @@ pub struct Ntcp2Transport<R: Runtime> {
     /// IPv6 connection listener.
     ipv6_listener: Option<Ntcp2Listener<R>>,
 
+    /// Maximum amount of connections.
+    max_connections: Option<NonZeroUsize>,
+
+    /// Number of active connections.
+    num_connections: usize,
+
     /// Open connections.
     open_connections: R::JoinSet<(RouterId, TerminationReason)>,
 
@@ -173,12 +180,15 @@ impl<R: Runtime> Ntcp2Transport<R> {
             ipv6_address = ?ipv6_socket_address,
             ?allow_local,
             allow_pq = ?(!config.disable_pq),
+            max_connections = ?config.max_connections,
             "starting ntcp2",
         );
 
         Ntcp2Transport {
             ipv4_listener: ipv4_listener.map(|listener| Ntcp2Listener::new(listener, allow_local)),
             ipv6_listener: ipv6_listener.map(|listener| Ntcp2Listener::new(listener, allow_local)),
+            max_connections: config.max_connections,
+            num_connections: 0usize,
             open_connections: R::join_set(),
             pending_connections: HashMap::new(),
             pending_handshakes: R::join_set(),
@@ -402,6 +412,7 @@ impl<R: Runtime> Transport for Ntcp2Transport<R> {
                 self.router_ctx.metrics_handle().counter(CONNECTIONS_OPENED).increment(1);
 
                 self.open_connections.push(session.run());
+                self.num_connections += 1;
 
                 if let Some(waker) = self.waker.take() {
                     waker.wake_by_ref();
@@ -455,6 +466,7 @@ impl<R: Runtime> Stream for Ntcp2Transport<R> {
                     .metrics_handle()
                     .counter(CONNECTIONS_CLOSED)
                     .increment_with_label(1, "reason", reason.into());
+                this.num_connections = this.num_connections.saturating_sub(1);
 
                 return Poll::Ready(Some(TransportEvent::ConnectionClosed { router_id, reason }));
             }
@@ -471,6 +483,22 @@ impl<R: Runtime> Stream for Ntcp2Transport<R> {
                             ?address,
                             "inbound ipv4 tcp connection, accept session",
                         );
+
+                        if this.max_connections.is_some_and(|max| max.get() == this.num_connections)
+                        {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                max_connections = ?this.max_connections,
+                                ?address,
+                                "connection limit at max, dropping ipv4 connection",
+                            );
+                            this.router_ctx
+                                .metrics_handle()
+                                .counter(CONNECTIONS_DROPPED)
+                                .increment_with_label(1, "protocol", "ipv4");
+
+                            continue;
+                        }
 
                         let future = this.session_manager.accept_session(stream, address);
                         this.pending_handshakes.push(future);
@@ -490,6 +518,22 @@ impl<R: Runtime> Stream for Ntcp2Transport<R> {
                             target: LOG_TARGET,
                             "inbound ipv6 tcp connection, accept session",
                         );
+
+                        if this.max_connections.is_some_and(|max| max.get() == this.num_connections)
+                        {
+                            tracing::debug!(
+                                target: LOG_TARGET,
+                                max_connections = ?this.max_connections,
+                                ?address,
+                                "connection limit at max, dropping ipv6 connection",
+                            );
+                            this.router_ctx
+                                .metrics_handle()
+                                .counter(CONNECTIONS_DROPPED)
+                                .increment_with_label(1, "protocol", "ipv6");
+
+                            continue;
+                        }
 
                         let future = this.session_manager.accept_session(stream, address);
                         this.pending_handshakes.push(future);
@@ -592,8 +636,18 @@ impl<R: Runtime> Stream for Ntcp2Transport<R> {
 
 #[cfg(test)]
 mod tests {
+    use futures::StreamExt;
+    use std::time::Duration;
+    use thingbuf::mpsc;
+
     use super::*;
-    use crate::{primitives::Str, runtime::mock::MockRuntime};
+    use crate::{
+        crypto::StaticPrivateKey,
+        primitives::{RouterInfoBuilder, Str},
+        router::context::builder::RouterContextBuilder,
+        runtime::mock::MockRuntime,
+        timeout,
+    };
 
     #[tokio::test]
     async fn publish_ntcp2_ipv4() {
@@ -609,6 +663,7 @@ mod tests {
             iv: [0xbb; 16],
             ipv4: true,
             ipv6: false,
+            max_connections: None,
         });
         let (context, ipv4_address, ipv6_address) =
             Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
@@ -649,6 +704,7 @@ mod tests {
             disable_pq: false,
             key: [0xaa; 32],
             iv: [0xbb; 16],
+            max_connections: None,
         });
         let (context, ipv4_address, ipv6_address) =
             Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
@@ -684,6 +740,7 @@ mod tests {
             publish_ipv6: false,
             key: [0xaa; 32],
             iv: [0xbb; 16],
+            max_connections: None,
         });
         let (context, ipv4_address, ipv6_address) =
             Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
@@ -719,6 +776,7 @@ mod tests {
             iv: [0xbb; 16],
             ipv4: false,
             ipv6: true,
+            max_connections: None,
         });
         let (context, ipv4_address, ipv6_address) =
             Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
@@ -761,6 +819,7 @@ mod tests {
             ipv6: true,
             ml_kem: None,
             disable_pq: false,
+            max_connections: None,
         });
         let (context, ipv4_address, ipv6_address) =
             Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
@@ -823,6 +882,7 @@ mod tests {
             ipv6: false,
             ml_kem: None,
             disable_pq: false,
+            max_connections: None,
         });
         let (context, ipv4_address, ipv6_address) =
             Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
@@ -858,6 +918,7 @@ mod tests {
             ipv6: false,
             ml_kem: None,
             disable_pq: false,
+            max_connections: None,
         });
         let (context, ipv4_address, ipv6_address) =
             Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
@@ -893,6 +954,7 @@ mod tests {
             ipv6: false,
             ml_kem: None,
             disable_pq: false,
+            max_connections: None,
         });
         let (context, ipv4_address, ipv6_address) =
             Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
@@ -928,6 +990,7 @@ mod tests {
             iv: [0xbb; 16],
             ipv4: true,
             ipv6: false,
+            max_connections: None,
         });
         let (context, ipv4_address, ipv6_address) =
             Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
@@ -964,6 +1027,7 @@ mod tests {
             iv: [0xbb; 16],
             ipv4: true,
             ipv6: false,
+            max_connections: None,
         });
         let (context, ipv4_address, ipv6_address) =
             Ntcp2Transport::<MockRuntime>::initialize(config).await.unwrap();
@@ -997,5 +1061,138 @@ mod tests {
         assert!(context.is_none());
         assert!(ipv4_address.is_none());
         assert!(ipv6_address.is_none());
+    }
+
+    #[tokio::test]
+    async fn connection_limits_work() {
+        let config = Ntcp2Config {
+            port: 0u16,
+            ipv4_host: Some("127.0.0.1".parse().unwrap()),
+            ipv6_host: None,
+            publish_ipv4: true,
+            publish_ipv6: false,
+            key: [0xaa; 32],
+            iv: [0xbb; 16],
+            ipv4: true,
+            ipv6: false,
+            ml_kem: None,
+            disable_pq: false,
+            max_connections: Some(NonZeroUsize::new(1).unwrap()),
+        };
+        let (context, ipv4_address, _ipv6_address) =
+            Ntcp2Transport::<MockRuntime>::initialize(Some(config.clone())).await.unwrap();
+        let context = context.unwrap();
+
+        let local_builder = RouterInfoBuilder::default();
+        let (local_router_info, local_static_key, local_signing_key) = local_builder
+            .with_static_key(config.key.to_vec())
+            .with_ntcp2(Ntcp2Config {
+                port: context.port(),
+                ..config.clone()
+            })
+            .build();
+        let router_ctx = RouterContextBuilder::default()
+            .with_net_id(local_router_info.net_id)
+            .with_router_info(
+                local_router_info.clone(),
+                local_static_key,
+                local_signing_key,
+            )
+            .build();
+        let (tx, transport_rx) = mpsc::channel(16);
+
+        let mut transport = Ntcp2Transport::new(context, true, router_ctx, tx);
+
+        let local_address = match ipv4_address.unwrap() {
+            RouterAddress::Ntcp2 {
+                socket_address: Some(address),
+                ..
+            } => address,
+            _ => unreachable!(),
+        };
+        assert_eq!(
+            local_address.port(),
+            local_router_info.addresses[0].socket_address().unwrap().port()
+        );
+
+        let make_remote_manager = |key: [u8; 32], iv: [u8; 16]| {
+            let remote_ctx =
+                RouterContextBuilder::default().with_net_id(local_router_info.net_id).build();
+            let (tx, rx) = mpsc::channel(16);
+
+            (
+                SessionManager::new(
+                    StaticPrivateKey::from_bytes(key),
+                    iv,
+                    remote_ctx.clone(),
+                    true,
+                    true,
+                    tx,
+                ),
+                remote_ctx.router_id().clone(),
+                rx,
+            )
+        };
+
+        let (remote1_manager, remote1_router_id, remote1_rx) =
+            make_remote_manager([0x11; 32], [0x21; 16]);
+        let first_dial = tokio::spawn({
+            let local_router_info = local_router_info.clone();
+            async move { remote1_manager.create_session(local_router_info, true, false).await }
+        });
+
+        let first_router_id = match timeout!(transport.next()).await.unwrap().unwrap() {
+            TransportEvent::ConnectionEstablished { router_id, .. } => router_id,
+            event => panic!("unexpected event: {event:?}"),
+        };
+        assert_eq!(first_router_id, remote1_router_id);
+
+        transport.accept(&first_router_id);
+
+        let first_session = timeout!(first_dial).await.unwrap().unwrap().unwrap();
+        tokio::spawn(first_session.run());
+
+        timeout!(async {
+            let _ = transport_rx.recv().await;
+        })
+        .await
+        .unwrap();
+        timeout!(async {
+            let _ = remote1_rx.recv().await;
+        })
+        .await
+        .unwrap();
+
+        let dropped_before = MockRuntime::get_counter_value(CONNECTIONS_DROPPED).unwrap_or(0);
+
+        let (remote2_manager, _remote2_router_id, _remote2_rx) =
+            make_remote_manager([0x12; 32], [0x22; 16]);
+        let mut second_dial = tokio::spawn({
+            let local_router_info = local_router_info.clone();
+            async move { remote2_manager.create_session(local_router_info, true, false).await }
+        });
+
+        let result = timeout!(async {
+            loop {
+                tokio::select! {
+                    event = transport.next() => match event {
+                        Some(event) => panic!("unexpected event: {event:?}"),
+                        None => panic!(),
+                    },
+                    result = &mut second_dial => {
+                        break result.unwrap();
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(20)) => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        assert!(result.is_err());
+        assert_eq!(
+            MockRuntime::get_counter_value(CONNECTIONS_DROPPED).unwrap_or(0),
+            dropped_before + 1,
+        );
     }
 }

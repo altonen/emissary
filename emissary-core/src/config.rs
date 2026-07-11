@@ -19,7 +19,10 @@
 use crate::{primitives::Str, profile::Profile, tunnel::TunnelPoolConfig};
 
 use alloc::{string::String, vec::Vec};
-use core::net::{Ipv4Addr, Ipv6Addr};
+use core::{
+    net::{Ipv4Addr, Ipv6Addr},
+    num::NonZeroUsize,
+};
 
 /// Exploratory tunnel pool config.
 #[derive(Clone, PartialEq, Eq)]
@@ -93,6 +96,11 @@ pub struct Ntcp2Config {
 
     /// Should NTCP2 IPv6 address be published in router info.
     pub publish_ipv6: bool,
+
+    /// Maximum number of connections.
+    ///
+    /// `None` for unlimited connections.
+    pub max_connections: Option<NonZeroUsize>,
 }
 
 /// SSU2 configuration.

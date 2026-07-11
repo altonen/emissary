@@ -75,6 +75,7 @@ impl Client {
             //  * generate random NTCP2 key and IV
             //  * enable both IPv4 and IPv6
             //  * enable PQ and use ML-KEM-768
+            //  * allow unlimited connections
             ntcp2: Some(Ntcp2Config {
                 port: 0,
                 ipv4_host: None,
@@ -95,6 +96,7 @@ impl Client {
                 },
                 ml_kem: Some(4),
                 disable_pq: false,
+                max_connections: None,
             }),
 
             // create SSU2 config:

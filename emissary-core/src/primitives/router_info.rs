@@ -520,6 +520,7 @@ pub(crate) mod builder {
                 publish_ipv6,
                 ml_kem,
                 disable_pq,
+                ..
             }) = self.ntcp2.take()
             {
                 if ipv4 {

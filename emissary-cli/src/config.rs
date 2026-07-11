@@ -34,6 +34,7 @@ use tokio::io::AsyncWriteExt;
 use std::{
     collections::HashSet,
     net::{Ipv4Addr, Ipv6Addr},
+    num::NonZeroUsize,
     path::PathBuf,
 };
 
@@ -89,6 +90,7 @@ pub struct Ntcp2Config {
     pub ml_kem: Option<usize>,
     pub disable_pq: Option<bool>,
     pub publish: Option<bool>,
+    pub max_connections: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -315,6 +317,7 @@ impl EmissaryConfig {
                 publish: None,
                 disable_pq: None,
                 ml_kem: Some(4),
+                max_connections: None,
             }),
             ssu2: Some(Ssu2Config {
                 port,
@@ -698,6 +701,7 @@ impl Config {
                 iv: ntcp2_iv,
                 ml_kem: config.ml_kem,
                 disable_pq: config.disable_pq.unwrap_or(false),
+                max_connections: config.max_connections.and_then(NonZeroUsize::new),
             }),
             port_forwarding: config.port_forwarding.map(From::from),
             profiles: Vec::new(),
@@ -1164,6 +1168,7 @@ mod tests {
                 publish: None,
                 ml_kem: None,
                 disable_pq: None,
+                max_connections: None,
             }),
             ..EmissaryConfig::new::<TokioRuntime>()
         };

@@ -91,6 +91,7 @@ let config = Config {
         ipv4: true,
         ipv6: true,
         ml_kem: Some(4),
+        max_connections: None,
         disable_pq: false,
     }),
     ssu2: Some(Ssu2Config {

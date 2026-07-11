@@ -36,6 +36,7 @@ pub fn TransportsTab() -> Element {
         ntcp2_ipv6_enabled,
         ntcp_disable_pq,
         ntcp2_ml_kem,
+        ntcp2_max_connections,
         ntcp2_enabled,
     ) = {
         let state = state.read();
@@ -49,6 +50,7 @@ pub fn TransportsTab() -> Element {
             state.settings.ntcp2.ipv6.unwrap_or(true),
             state.settings.ntcp2.disable_pq.unwrap_or(false),
             state.settings.ntcp2.ml_kem.clone().unwrap_or_default(),
+            state.settings.ntcp2.max_connections.clone().unwrap_or_default(),
             state.settings.ntcp2.enabled,
         )
     };
@@ -133,6 +135,22 @@ pub fn TransportsTab() -> Element {
                         oninput: move |e: Event<FormData>| {
                             let mut state = state.write();
                             state.settings.ntcp2.port = Some(e.value());
+                            state.settings.dirty = true;
+                        }
+                    }
+                    span { class: "sf-label", "Max connections" }
+                    input {
+                        r#type: "text",
+                        class: if !ntcp2_max_connections.is_empty() && ntcp2_max_connections.parse::<u16>().is_err() {
+                            "sf-input-short input-error"
+                        } else {
+                            ""
+                        },
+                        value: "{ntcp2_max_connections}",
+                        placeholder: "Max connections",
+                        oninput: move |e: Event<FormData>| {
+                            let mut state = state.write();
+                            state.settings.ntcp2.max_connections = Some(e.value());
                             state.settings.dirty = true;
                         }
                     }

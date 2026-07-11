@@ -35,6 +35,7 @@ pub struct Ntcp2Config {
     pub ipv6: Option<bool>,
     pub ml_kem: Option<String>,
     pub disable_pq: Option<bool>,
+    pub max_connections: Option<String>,
     pub enabled: bool,
 }
 
@@ -53,6 +54,7 @@ impl From<&EmissaryConfig> for Ntcp2Config {
             ipv6_host: config.ipv6_host.map(|address| address.to_string()),
             publish_ipv4: config.publish_ipv4,
             publish_ipv6: config.publish_ipv6,
+            max_connections: config.max_connections.map(|max| max.to_string()),
             ipv4: config.ipv4,
             ipv6: config.ipv6,
             ml_kem: config.ml_kem.map(|ml_kem| ml_kem.to_string()),
@@ -96,6 +98,15 @@ impl TryInto<Option<crate::config::Ntcp2Config>> for Ntcp2Config {
             ipv6: self.ipv6,
             publish_ipv4: self.publish_ipv4,
             publish_ipv6: self.publish_ipv6,
+            max_connections: match self.max_connections {
+                None => None,
+                Some(max) if max.is_empty() => None,
+                Some(max) => Some(
+                    max.parse::<NonZeroUsize>()
+                        .map_err(|_| String::from("Invalid NTCP2 maximum connections"))?
+                        .get(),
+                ),
+            },
             publish: None,
             disable_pq: self.disable_pq,
             ml_kem: match self.ml_kem {
