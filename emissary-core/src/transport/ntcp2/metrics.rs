@@ -31,6 +31,7 @@ pub const INBOUND_BW: &str = "ntcp2_inbound_bw_count";
 pub const OUTBOUND_BW: &str = "ntcp2_outbound_bw_count";
 pub const CONNECTIONS_OPENED: &str = "ntcp2_connections_opened_count";
 pub const CONNECTIONS_CLOSED: &str = "ntcp2_connections_closed_count";
+pub const CONNECTIONS_DROPPED: &str = "ntcp2_connections_dropped";
 
 // active connection
 pub const NUM_BLOCKS_PER_MSG: &str = "ntcp2_blocks_per_msg";
@@ -72,6 +73,10 @@ pub fn register_metrics(mut metrics: Vec<MetricType>) -> Vec<MetricType> {
     metrics.push(MetricType::Counter {
         name: CONNECTIONS_CLOSED,
         description: "how many connections have been closed",
+    });
+    metrics.push(MetricType::Counter {
+        name: CONNECTIONS_DROPPED,
+        description: "how many connections have been dropped",
     });
 
     // gauges

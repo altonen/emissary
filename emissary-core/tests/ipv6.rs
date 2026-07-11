@@ -62,6 +62,7 @@ async fn make_router(
                 disable_pq: false,
                 ipv4: mixed,
                 ipv6: true,
+                max_connections: None,
             }),
             None,
         ),
