@@ -1280,6 +1280,7 @@ mod tests {
 
         let (mut router_info, _, signing_key) = RouterInfoBuilder::default()
             .with_ssu2(crate::Ssu2Config {
+                max_connections: None,
                 disable_pq: false,
                 port: outbound_address.port(),
                 ipv4_host: Some(Ipv4Addr::new(127, 0, 0, 1)),

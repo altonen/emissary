@@ -107,6 +107,7 @@ let config = Config {
         ipv4_mtu: None,
         ipv6_mtu: None,
         disable_pq: false,
+        max_connections: None,
         ml_kem: Some("4".to_string()),
     }),
     samv3_config: Some(SamConfig {

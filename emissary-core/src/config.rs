@@ -148,6 +148,11 @@ pub struct Ssu2Config {
 
     /// SSU2 static key.
     pub static_key: [u8; 32],
+
+    /// Maximum number of connections.
+    ///
+    /// `None` for unlimited connections.
+    pub max_connections: Option<NonZeroUsize>,
 }
 
 /// I2CP configuration.

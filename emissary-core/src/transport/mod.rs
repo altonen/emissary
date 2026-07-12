@@ -1844,6 +1844,7 @@ mod tests {
 
     async fn external_address_discovered_ssu2(ipv4: bool) {
         let ssu2 = Ssu2Config {
+            max_connections: None,
             ml_kem: None,
             disable_pq: false,
             port: 0,
@@ -1915,6 +1916,7 @@ mod tests {
 
     async fn external_address_discovered_ssu2_unpublished(ipv4: bool) {
         let context = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+            max_connections: None,
             ml_kem: None,
             disable_pq: false,
             port: 0,
@@ -1981,6 +1983,7 @@ mod tests {
 
     async fn new_external_address_discovered(ipv4: bool) {
         let ssu2_context = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+            max_connections: None,
             ml_kem: None,
             disable_pq: false,
             port: 0,
@@ -2171,6 +2174,7 @@ mod tests {
 
     async fn discovered_address_doesnt_match_published_address_ssu2(ipv4: bool) {
         let context = Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+            max_connections: None,
             ml_kem: None,
             disable_pq: false,
             port: 0,
@@ -2827,6 +2831,7 @@ mod tests {
         let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
         let (remote_router_info, _, _) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                max_connections: None,
                 ml_kem: None,
                 disable_pq: false,
                 port: 888u16,
@@ -2962,6 +2967,7 @@ mod tests {
     #[tokio::test]
     async fn simultaneous_outbound_ssu2_connections() {
         let config1 = Ssu2Config {
+            max_connections: None,
             ml_kem: None,
             disable_pq: false,
             port: 0,
@@ -2980,6 +2986,7 @@ mod tests {
             Ssu2Transport::<MockRuntime>::initialize(Some(config1)).await.unwrap();
         let (router_info1, static_key1, signing_key1) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                max_connections: None,
                 ml_kem: None,
                 disable_pq: false,
                 port: address1.unwrap().ssu2_ipv4_address().port(),
@@ -3000,6 +3007,7 @@ mod tests {
         let router_id1 = router_info1.identity.id();
 
         let config2 = Ssu2Config {
+            max_connections: None,
             ml_kem: None,
             disable_pq: false,
             port: 0,
@@ -3019,6 +3027,7 @@ mod tests {
 
         let (router_info2, static_key2, signing_key2) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                max_connections: None,
                 ml_kem: None,
                 disable_pq: false,
                 port: address2.unwrap().ssu2_ipv4_address().port(),
@@ -3335,6 +3344,7 @@ mod tests {
     async fn introducers_published() {
         let (router_info, static_key, signing_key) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                max_connections: None,
                 ml_kem: None,
                 disable_pq: false,
                 port: 888,
@@ -3589,6 +3599,7 @@ mod tests {
             };
 
             let ssu2_config = self.ssu2.is_some().then(|| Ssu2Config {
+                max_connections: None,
                 ml_kem: None,
                 disable_pq: false,
                 port: 8888,
@@ -3863,6 +3874,7 @@ mod tests {
 
         let (router_info, ..) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                max_connections: None,
                 ml_kem: None,
                 disable_pq: false,
                 port: 9999,
@@ -3991,6 +4003,7 @@ mod tests {
 
         let (router_info, ..) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                max_connections: None,
                 ml_kem: None,
                 disable_pq: false,
                 port: 9999,
@@ -4046,6 +4059,7 @@ mod tests {
 
         let (router_info, ..) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                max_connections: None,
                 ml_kem: None,
                 disable_pq: false,
                 port: 9999,
@@ -4110,6 +4124,7 @@ mod tests {
         let (introducer, introducer_router_id) = {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 9999,
@@ -4135,6 +4150,7 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 10000,
@@ -4215,6 +4231,7 @@ mod tests {
         let (introducer, introducer_router_id) = {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 9999,
@@ -4240,6 +4257,7 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 10000,
@@ -4366,6 +4384,7 @@ mod tests {
         let (introducer, introducer_router_id) = {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 9999,
@@ -4391,6 +4410,7 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 10000,
@@ -4512,6 +4532,7 @@ mod tests {
         let (introducer, introducer_router_id) = {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 9999,
@@ -4537,6 +4558,7 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 10000,
@@ -4668,6 +4690,7 @@ mod tests {
         let (introducer, introducer_router_id) = {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 9999,
@@ -4693,6 +4716,7 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 10000,
@@ -4819,6 +4843,7 @@ mod tests {
         let (_introducer, introducer_router_id) = {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 9999,
@@ -4844,6 +4869,7 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 10000,
@@ -4995,6 +5021,7 @@ mod tests {
         let (introducer, introducer_router_id) = {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 9999,
@@ -5020,6 +5047,7 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 10000,
@@ -5180,6 +5208,7 @@ mod tests {
         let (introducer, introducer_router_id) = {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 9999,
@@ -5205,6 +5234,7 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 10000,
@@ -5361,6 +5391,7 @@ mod tests {
             .map(|i| {
                 let (introducer, _, sigkey) = RouterInfoBuilder::default()
                     .with_ssu2(Ssu2Config {
+                        max_connections: None,
                         ml_kem: None,
                         disable_pq: false,
                         port: 9999,
@@ -5387,6 +5418,7 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 10000,
@@ -5557,6 +5589,7 @@ mod tests {
             .map(|i| {
                 let (introducer, _, sigkey) = RouterInfoBuilder::default()
                     .with_ssu2(Ssu2Config {
+                        max_connections: None,
                         ml_kem: None,
                         disable_pq: false,
                         port: 9999,
@@ -5583,6 +5616,7 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 10000,
@@ -5754,6 +5788,7 @@ mod tests {
             .map(|i| {
                 let (introducer, _, sigkey) = RouterInfoBuilder::default()
                     .with_ssu2(Ssu2Config {
+                        max_connections: None,
                         ml_kem: None,
                         disable_pq: false,
                         port: 9999,
@@ -5780,6 +5815,7 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 10000,
@@ -5935,6 +5971,7 @@ mod tests {
             .map(|i| {
                 let (introducer, _, sigkey) = RouterInfoBuilder::default()
                     .with_ssu2(Ssu2Config {
+                        max_connections: None,
                         ml_kem: None,
                         disable_pq: false,
                         port: 9999,
@@ -5961,6 +5998,7 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 10000,
@@ -6177,6 +6215,7 @@ mod tests {
             .map(|i| {
                 let (introducer, _, sigkey) = RouterInfoBuilder::default()
                     .with_ssu2(Ssu2Config {
+                        max_connections: None,
                         ml_kem: None,
                         disable_pq: false,
                         port: 9999,
@@ -6203,6 +6242,7 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 10000,
@@ -6387,6 +6427,7 @@ mod tests {
             .map(|i| {
                 let (introducer, _, sigkey) = RouterInfoBuilder::default()
                     .with_ssu2(Ssu2Config {
+                        max_connections: None,
                         ml_kem: None,
                         disable_pq: false,
                         port: 9999,
@@ -6413,6 +6454,7 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 10000,
@@ -7052,6 +7094,7 @@ mod tests {
             .map(|i| {
                 let (introducer, _, sigkey) = RouterInfoBuilder::default()
                     .with_ssu2(Ssu2Config {
+                        max_connections: None,
                         ml_kem: None,
                         disable_pq: false,
                         port: 8888 + i,
@@ -7079,6 +7122,7 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 10000,
@@ -7176,6 +7220,7 @@ mod tests {
         let ipv4_introducer = ipv4.then(|| {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 9999,
@@ -7200,6 +7245,7 @@ mod tests {
         let ipv6_introducer = (!ipv4).then(|| {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 9999,
@@ -7226,6 +7272,7 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 10000,
@@ -7497,6 +7544,7 @@ mod tests {
         let (introducer, introducer_router_id) = {
             let (introducer, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 9999,
@@ -7522,6 +7570,7 @@ mod tests {
         let (mut router_info, router_id) = {
             let (router_info, _, sigkey) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 10000,

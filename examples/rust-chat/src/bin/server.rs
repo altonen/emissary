@@ -142,6 +142,7 @@ impl Server {
                 ipv6_mtu: None,
                 disable_pq: false,
                 ml_kem: Some("4,3".to_string()),
+                max_connections: None,
             }),
 
             // enable SAMv3 and bind TCP and UDP to random, OS-assigned ports
