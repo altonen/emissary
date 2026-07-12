@@ -108,6 +108,7 @@ pub struct Ssu2Config {
     pub disable_pq: Option<bool>,
     pub publish: Option<bool>,
     pub ml_kem: Option<String>,
+    pub max_connections: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -332,6 +333,7 @@ impl EmissaryConfig {
                 publish: None,
                 ml_kem: Some("4,3".to_string()),
                 disable_pq: None,
+                max_connections: None,
             }),
             port_forwarding: Some(PortForwardingConfig {
                 nat_pmp: true,
@@ -735,6 +737,7 @@ impl Config {
                     .unwrap_or_else(|| config.publish.unwrap_or(false)),
                 static_key: ssu2_static_key,
                 ml_kem: config.ml_kem,
+                max_connections: config.max_connections.and_then(NonZeroUsize::new),
             }),
             static_key,
             transit: config.transit.map(|config| emissary_core::TransitConfig {

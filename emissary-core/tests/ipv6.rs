@@ -69,6 +69,7 @@ async fn make_router(
         TransportKind::Ssu2 => (
             None,
             Some(Ssu2Config {
+                max_connections: None,
                 ipv4_host: mixed.then_some("127.0.0.1".parse().unwrap()),
                 ipv4: mixed,
                 ipv6_host: Some("::1".parse().unwrap()),

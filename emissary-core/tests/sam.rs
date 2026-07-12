@@ -79,6 +79,7 @@ async fn make_router(
         TransportKind::Ssu2 => (
             None,
             Some(Ssu2Config {
+                max_connections: None,
                 port: 0u16,
                 ipv4_host: Some("127.0.0.1".parse().unwrap()),
                 ml_kem: None,
@@ -1654,6 +1655,7 @@ async fn host_lookup(kind: TransportKind) {
         TransportKind::Ssu2 => (
             None,
             Some(Ssu2Config {
+                max_connections: None,
                 port: 0u16,
                 ipv4_host: Some("127.0.0.1".parse().unwrap()),
                 ipv6_host: None,

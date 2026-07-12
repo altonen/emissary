@@ -27,7 +27,7 @@ use crate::{
     transport::{
         ssu2::{
             detector::Detector,
-            message::{HeaderKind, HeaderReader, ProtocolVersion},
+            message::{handshake::RetryBuilder, HeaderKind, HeaderReader, ProtocolVersion},
             metrics::*,
             peer_test::{PeerTestManager, PeerTestManagerEvent},
             relay::{
@@ -59,6 +59,7 @@ use alloc::{collections::VecDeque, vec, vec::Vec};
 use core::{
     fmt, mem,
     net::SocketAddr,
+    num::NonZeroUsize,
     pin::Pin,
     task::{Context, Poll, Waker},
     time::Duration,
@@ -208,11 +209,11 @@ pub struct Ssu2Socket<R: Runtime> {
     /// Firewall/external address detector.
     ipv4_detector: Detector<R>,
 
-    /// IPv4 MTU.
-    ipv4_mtu: usize,
-
     /// IPv4 ML-KEM preference.
     ipv4_ml_kem: Option<MlKemPreference>,
+
+    /// IPv4 MTU.
+    ipv4_mtu: usize,
 
     /// IPv4 UDP socket.
     ipv4_socket: Option<R::UdpSocket>,
@@ -220,20 +221,26 @@ pub struct Ssu2Socket<R: Runtime> {
     /// Firewall/external address detector.
     ipv6_detector: Detector<R>,
 
-    /// IPv6 MTU.
-    ipv6_mtu: usize,
-
     /// IPv6 ML-KEM preference.
     ipv6_ml_kem: Option<MlKemPreference>,
 
+    /// IPv6 MTU.
+    ipv6_mtu: usize,
+
     /// IPv4 UDP socket.
     ipv6_socket: Option<R::UdpSocket>,
+
+    /// Maximum number of connections.
+    max_connections: Option<NonZeroUsize>,
 
     /// Protocol state for ML-KEM-512-x25519.
     ml_kem_512: ProtocolState,
 
     /// Protocol state for ML-KEM-768-x25519.
     ml_kem_768: ProtocolState,
+
+    /// Number of active connections.
+    num_connections: usize,
 
     /// Peer test manager.
     peer_test_manager: PeerTestManager<R>,
@@ -307,6 +314,7 @@ impl<R: Runtime> Ssu2Socket<R> {
         router_ctx: RouterContext<R>,
         firewalled: bool,
         disable_pq: bool,
+        max_connections: Option<NonZeroUsize>,
     ) -> Self {
         let public_key = static_key.public();
         let make_key_context = |protocol_name: &str| -> ProtocolState {
@@ -354,8 +362,10 @@ impl<R: Runtime> Ssu2Socket<R> {
             ipv6_mtu: ipv6_mtu.unwrap_or(ssu2::MAX_MTU),
             ipv6_ml_kem,
             ipv6_socket: ipv6_socket.clone(),
+            max_connections,
             ml_kem_512,
             ml_kem_768,
+            num_connections: 0usize,
             peer_test_manager: PeerTestManager::new(
                 intro_key,
                 ipv4_socket.clone(),
@@ -386,6 +396,39 @@ impl<R: Runtime> Ssu2Socket<R> {
             write_state: WriteState::GetPacket,
             x25519,
         }
+    }
+
+    /// Send `Retry` containing a termination block indicating.
+    fn send_termination(
+        &mut self,
+        encryption_ctx: EncryptionContext,
+        dst_id: u64,
+        src_id: u64,
+        address: SocketAddr,
+        reason: TerminationReason,
+    ) {
+        tracing::debug!(
+            target: LOG_TARGET,
+            ?address,
+            ?dst_id,
+            ?src_id,
+            ?reason,
+            "sending Retry with termination",
+        );
+
+        self.pending_pkts.push_back((
+            RetryBuilder::default()
+                .with_k_header_1(self.intro_key)
+                .with_version(encryption_ctx.version())
+                .with_src_id(dst_id)
+                .with_dst_id(src_id)
+                .with_token(0)
+                .with_termination(reason)
+                .with_address(address)
+                .with_net_id(self.router_ctx.net_id())
+                .build::<R>(),
+            address,
+        ));
     }
 
     /// Get UDP socket for `address`.
@@ -525,6 +568,17 @@ impl<R: Runtime> Ssu2Socket<R> {
                         return Err(Ssu2Error::InvalidVersion);
                     }
                 };
+
+                if self.max_connections.is_some_and(|max| self.num_connections >= max.get()) {
+                    self.send_termination(
+                        encryption_ctx,
+                        connection_id,
+                        src_id,
+                        address,
+                        TerminationReason::ConnectionLimits,
+                    );
+                    return Err(Ssu2Error::ConnectionLimits);
+                }
 
                 let (tx, rx) = channel(CHANNEL_SIZE);
                 let relay_tag = self.relay_manager.allocate_relay_tag();
@@ -747,6 +801,17 @@ impl<R: Runtime> Ssu2Socket<R> {
                         return Err(Ssu2Error::InvalidVersion);
                     }
                 };
+
+                if self.max_connections.is_some_and(|max| self.num_connections >= max.get()) {
+                    self.send_termination(
+                        encryption_ctx,
+                        connection_id,
+                        !connection_id,
+                        address,
+                        TerminationReason::ConnectionLimits,
+                    );
+                    return Err(Ssu2Error::ConnectionLimits);
+                }
 
                 let (tx, rx) = channel(CHANNEL_SIZE);
                 let relay_tag = self.relay_manager.allocate_relay_tag();
@@ -1201,6 +1266,7 @@ impl<R: Runtime> Ssu2Socket<R> {
         );
         self.router_ctx.metrics_handle().gauge(NUM_ACTIVE_CONNECTIONS).increment(1);
         self.router_ctx.metrics_handle().counter(CONNECTIONS_OPENED).increment(1);
+        self.num_connections += 1;
 
         if let Some(waker) = self.waker.take() {
             waker.wake_by_ref();
@@ -1438,6 +1504,7 @@ impl<R: Runtime> Stream for Ssu2Socket<R> {
                     .metrics_handle()
                     .histogram(SESSION_DURATION)
                     .record(duration.as_secs() as f64);
+                this.num_connections = this.num_connections.saturating_sub(1);
 
                 return Poll::Ready(Some(TransportEvent::ConnectionClosed { router_id, reason }));
             }

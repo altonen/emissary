@@ -155,6 +155,9 @@ async fn main() -> anyhow::Result<()> {
             // enable PQ and use ML-KEM-768
             disable_pq: false,
             ml_kem: Some("4".to_string()),
+
+            // allow unlimited connections
+            max_connections: None,
         }),
 
         // enable SAMv3 and bind TCP and UDP to random, OS-assigned ports

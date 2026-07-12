@@ -165,6 +165,8 @@ impl<R: Runtime> Ssu2Transport<R> {
             ipv6_address = ?ipv6_socket_address,
             ipv6_mtu = ?ipv6_mtu,
             ?allow_local,
+            disable_pq = ?config.disable_pq,
+            max_connections = ?config.max_connections,
             "starting ssu2",
         );
 
@@ -182,6 +184,7 @@ impl<R: Runtime> Ssu2Transport<R> {
                 router_ctx.clone(),
                 firewalled,
                 config.disable_pq,
+                config.max_connections,
             ),
         }
     }
@@ -416,6 +419,7 @@ mod tests {
     use super::*;
     use crate::{
         crypto::{base64_encode, SigningPrivateKey},
+        error::DialError,
         events::EventManager,
         i2np::{Message, MessageType, I2NP_MESSAGE_EXPIRATION},
         primitives::Str,
@@ -423,10 +427,10 @@ mod tests {
         runtime::mock::MockRuntime,
         subsystem::{OutboundMessage, OutboundMessageRecycle},
         timeout,
-        transport::{EncryptionKind, FirewallStatus},
+        transport::{EncryptionKind, FirewallStatus, TerminationReason},
     };
     use bytes::Bytes;
-    use std::{collections::HashMap, time::Duration};
+    use std::{collections::HashMap, num::NonZeroUsize, time::Duration};
     use thingbuf::mpsc::channel;
 
     #[tokio::test]
@@ -464,6 +468,7 @@ mod tests {
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let (ctx1, address1_ipv4, address1_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                max_connections: None,
                 ml_kem: ml_kem.clone(),
                 disable_pq,
                 port: 0u16,
@@ -482,6 +487,7 @@ mod tests {
             .unwrap();
         let (ctx2, address2_ipv4, address2_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                max_connections: None,
                 ml_kem: ml_kem.clone(),
                 disable_pq,
                 port: 0u16,
@@ -644,6 +650,7 @@ mod tests {
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let (ctx1, address1_ipv4, address1_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                max_connections: None,
                 ml_kem: ml_kem.clone(),
                 disable_pq,
                 port: 0u16,
@@ -662,6 +669,7 @@ mod tests {
             .unwrap();
         let (ctx2, address2_ipv4, address2_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                max_connections: None,
                 ml_kem: ml_kem.clone(),
                 disable_pq,
                 port: 0u16,
@@ -793,6 +801,7 @@ mod tests {
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let (ctx1, address1_ipv4, address1_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                max_connections: None,
                 ml_kem: ml_kem.clone(),
                 disable_pq,
                 port: 0u16,
@@ -811,6 +820,7 @@ mod tests {
             .unwrap();
         let (ctx2, address2_ipv4, address2_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                max_connections: None,
                 ml_kem: ml_kem.clone(),
                 disable_pq,
                 port: 0u16,
@@ -829,6 +839,7 @@ mod tests {
             .unwrap();
         let (ctx3, address3_ipv4, address3_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                max_connections: None,
                 ml_kem: ml_kem.clone(),
                 disable_pq,
                 port: 0u16,
@@ -1108,6 +1119,7 @@ mod tests {
         // router that is behind firewall
         let (ctx1, address1_ipv4, address1_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                max_connections: None,
                 ml_kem: ml_kem.clone(),
                 disable_pq,
                 port: 0u16,
@@ -1132,6 +1144,7 @@ mod tests {
         // introducer for router1
         let (ctx2, address2_ipv4, address2_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                max_connections: None,
                 ml_kem: ml_kem.clone(),
                 disable_pq,
                 port: 0u16,
@@ -1324,6 +1337,7 @@ mod tests {
         // create third router which connects to router1 with the help of router2
         let (ctx3, address3_ipv4, address3_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                max_connections: None,
                 ml_kem: ml_kem.clone(),
                 disable_pq,
                 port: 0u16,
@@ -1502,6 +1516,7 @@ mod tests {
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let (ctx1, address1_ipv4, address1_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                max_connections: None,
                 ml_kem: ml_kem.clone(),
                 disable_pq,
                 port: 0u16,
@@ -1520,6 +1535,7 @@ mod tests {
             .unwrap();
         let (ctx2, address2_ipv4, address2_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                max_connections: None,
                 ml_kem: ml_kem.clone(),
                 disable_pq,
                 port: 0u16,
@@ -1660,6 +1676,7 @@ mod tests {
     async fn too_small_ipv4_mtu() {
         let (ctx, address_ipv4, address_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                max_connections: None,
                 ml_kem: None,
                 disable_pq: false,
                 port: 0u16,
@@ -1686,6 +1703,7 @@ mod tests {
     async fn too_small_ipv6_mtu() {
         let (ctx, address_ipv4, address_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                max_connections: None,
                 ml_kem: None,
                 disable_pq: false,
                 port: 0u16,
@@ -1712,6 +1730,7 @@ mod tests {
     async fn too_small_ipv4_and_ipv6_mtu() {
         let (ctx, address_ipv4, address_ipv6) =
             Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                max_connections: None,
                 ml_kem: None,
                 disable_pq: false,
                 port: 0u16,
@@ -1732,5 +1751,209 @@ mod tests {
         assert!(ctx.is_none());
         assert!(address_ipv4.is_none());
         assert!(address_ipv6.is_none());
+    }
+
+    #[tokio::test]
+    async fn connection_limits_work() {
+        let (_event_mgr, _event_subscriber, event_handle) =
+            EventManager::new(None, MockRuntime::register_metrics(vec![], None));
+        let (ctx1, address1_ipv4, address1_ipv6) =
+            Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                max_connections: None,
+                ml_kem: None,
+                disable_pq: true,
+                port: 0u16,
+                ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                ipv6_host: Some("::1".parse().unwrap()),
+                ipv4: true,
+                ipv6: !true,
+                publish_ipv4: true,
+                publish_ipv6: true,
+                static_key: [0xaa; 32],
+                intro_key: [0xbb; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
+            }))
+            .await
+            .unwrap();
+        let (ctx2, address2_ipv4, address2_ipv6) =
+            Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                max_connections: NonZeroUsize::new(1),
+                ml_kem: None,
+                disable_pq: true,
+                port: 0u16,
+                ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                ipv6_host: Some("::1".parse().unwrap()),
+                ipv4: true,
+                ipv6: !true,
+                publish_ipv4: true,
+                publish_ipv6: true,
+                static_key: [0xcc; 32],
+                intro_key: [0xdd; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
+            }))
+            .await
+            .unwrap();
+        let (ctx3, address3_ipv4, address3_ipv6) =
+            Ssu2Transport::<MockRuntime>::initialize(Some(Ssu2Config {
+                max_connections: None,
+                ml_kem: None,
+                disable_pq: true,
+                port: 0u16,
+                ipv4_host: Some("127.0.0.1".parse().unwrap()),
+                ipv6_host: Some("::1".parse().unwrap()),
+                ipv4: true,
+                ipv6: !true,
+                publish_ipv4: true,
+                publish_ipv6: true,
+                static_key: [0xee; 32],
+                intro_key: [0xff; 32],
+                ipv4_mtu: None,
+                ipv6_mtu: None,
+            }))
+            .await
+            .unwrap();
+
+        let (static1, signing1) = (
+            StaticPrivateKey::random(MockRuntime::rng()),
+            SigningPrivateKey::random(MockRuntime::rng()),
+        );
+        let (static2, signing2) = (
+            StaticPrivateKey::random(MockRuntime::rng()),
+            SigningPrivateKey::random(MockRuntime::rng()),
+        );
+        let (static3, signing3) = (
+            StaticPrivateKey::random(MockRuntime::rng()),
+            SigningPrivateKey::random(MockRuntime::rng()),
+        );
+        let router_info1 = RouterInfo::new::<MockRuntime>(
+            &Default::default(),
+            None,
+            None,
+            address1_ipv4,
+            address1_ipv6,
+            &static1,
+            &signing1,
+            false,
+        );
+        let router_info2 = RouterInfo::new::<MockRuntime>(
+            &Default::default(),
+            None,
+            None,
+            address2_ipv4,
+            address2_ipv6,
+            &static2,
+            &signing2,
+            false,
+        );
+        let router_info3 = RouterInfo::new::<MockRuntime>(
+            &Default::default(),
+            None,
+            None,
+            address3_ipv4,
+            address3_ipv6,
+            &static3,
+            &signing3,
+            false,
+        );
+        let (event1_tx, _event1_rx) = channel(64);
+        let (event2_tx, _event2_rx) = channel(64);
+        let (event3_tx, _event3_rx) = channel(64);
+
+        let mut transport1 = Ssu2Transport::<MockRuntime>::new(
+            ctx1.unwrap(),
+            true,
+            RouterContext::new(
+                MockRuntime::register_metrics(Vec::new(), None),
+                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                router_info1.identity.id(),
+                Bytes::from(router_info1.serialize(&signing1)),
+                static1,
+                signing1.clone(),
+                2u8,
+                event_handle.clone(),
+            ),
+            event1_tx,
+        );
+        let mut transport2 = Ssu2Transport::<MockRuntime>::new(
+            ctx2.unwrap(),
+            true,
+            RouterContext::new(
+                MockRuntime::register_metrics(Vec::new(), None),
+                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                router_info2.identity.id(),
+                Bytes::from(router_info2.serialize(&signing2)),
+                static2,
+                signing2.clone(),
+                2u8,
+                event_handle.clone(),
+            ),
+            event2_tx,
+        );
+        let mut transport3 = Ssu2Transport::<MockRuntime>::new(
+            ctx3.unwrap(),
+            true,
+            RouterContext::new(
+                MockRuntime::register_metrics(Vec::new(), None),
+                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                router_info3.identity.id(),
+                Bytes::from(router_info3.serialize(&signing3)),
+                static3,
+                signing3.clone(),
+                2u8,
+                event_handle.clone(),
+            ),
+            event3_tx,
+        );
+        let router_info2 =
+            RouterInfo::parse::<MockRuntime>(router_info2.serialize(&signing2)).unwrap();
+
+        tokio::spawn(async move {
+            loop {
+                match transport2.next().await.unwrap() {
+                    TransportEvent::ConnectionEstablished { router_id, .. } => {
+                        transport2.accept(&router_id);
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        transport1.connect(router_info2.clone());
+        timeout!(async {
+            loop {
+                match transport1.next().await.unwrap() {
+                    TransportEvent::ConnectionEstablished { router_id, .. } => {
+                        transport1.accept(&router_id);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        transport3.connect(router_info2);
+        timeout!(
+            async {
+                loop {
+                    match transport3.next().await.unwrap() {
+                        TransportEvent::ConnectionFailure { reason, .. } => {
+                            assert_eq!(
+                                reason,
+                                DialError::SessionTerminated(TerminationReason::ConnectionLimits)
+                            );
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            },
+            std::time::Duration::from_secs(30)
+        )
+        .await
+        .unwrap();
     }
 }

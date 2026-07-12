@@ -137,6 +137,7 @@ pub struct Ssu2Config {
     pub ipv6_mtu: Option<String>,
     pub ipv6: Option<bool>,
     pub ml_kem: Option<String>,
+    pub max_connections: Option<String>,
     pub port: Option<String>,
     pub publish_ipv4: Option<bool>,
     pub publish_ipv6: Option<bool>,
@@ -152,8 +153,7 @@ impl TryInto<Option<crate::config::Ssu2Config>> for Ssu2Config {
 
         Ok(Some(crate::config::Ssu2Config {
             port: match self.port {
-                Some(port) =>
-                    port.parse::<u16>().map_err(|_| String::from("Invalid NTCP2 port"))?,
+                Some(port) => port.parse::<u16>().map_err(|_| String::from("Invalid SSU2 port"))?,
                 None => 0,
             },
             ipv4_host: match self.ipv4_host.as_ref() {
@@ -161,7 +161,7 @@ impl TryInto<Option<crate::config::Ssu2Config>> for Ssu2Config {
                 Some(host) if host.is_empty() => None,
                 Some(host) => Some(
                     host.parse::<Ipv4Addr>()
-                        .map_err(|_| String::from("Invalid NTCP2 IPv4 address"))?,
+                        .map_err(|_| String::from("Invalid SSU2 IPv4 address"))?,
                 ),
             },
             ipv6_host: match self.ipv6_host.as_ref() {
@@ -169,7 +169,7 @@ impl TryInto<Option<crate::config::Ssu2Config>> for Ssu2Config {
                 Some(host) if host.is_empty() => None,
                 Some(host) => Some(
                     host.parse::<Ipv6Addr>()
-                        .map_err(|_| String::from("Invalid NTCP2 IPv6 address"))?,
+                        .map_err(|_| String::from("Invalid SSU2 IPv6 address"))?,
                 ),
             },
             ipv4_mtu: match self.ipv4_mtu {
@@ -192,6 +192,15 @@ impl TryInto<Option<crate::config::Ssu2Config>> for Ssu2Config {
             publish_ipv6: self.publish_ipv6,
             publish: None,
             disable_pq: self.disable_pq,
+            max_connections: match self.max_connections {
+                None => None,
+                Some(max) if max.is_empty() => None,
+                Some(max) => Some(
+                    max.parse::<NonZeroUsize>()
+                        .map_err(|_| String::from("Invalid SSU2 maximum connections"))?
+                        .get(),
+                ),
+            },
             ml_kem: match self.ml_kem {
                 None => None,
                 Some(value) => match &*value {
@@ -223,6 +232,7 @@ impl From<&EmissaryConfig> for Ssu2Config {
             ipv4: config.ipv4,
             ipv6: config.ipv6,
             ml_kem: config.ml_kem.clone(),
+            max_connections: config.max_connections.map(|max| max.to_string()),
             disable_pq: config.disable_pq,
             enabled: true,
         }

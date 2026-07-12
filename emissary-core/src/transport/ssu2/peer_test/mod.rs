@@ -2569,6 +2569,7 @@ mod tests {
             .unwrap();
         let (bob_router_info, _bob_static_key, bob_signing_key) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                max_connections: None,
                 ml_kem: None,
                 disable_pq: false,
                 port: bob_socket.local_address().unwrap().port(),
@@ -2595,6 +2596,7 @@ mod tests {
         let (charlie_router_info, _charlie_static_key, _charlie_signing_key) =
             RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: charlie_socket.local_address().unwrap().port(),
@@ -2771,6 +2773,7 @@ mod tests {
             .unwrap();
         let (bob_router_info, _bob_static_key, bob_signing_key) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                max_connections: None,
                 ml_kem: None,
                 disable_pq: false,
                 port: bob_socket.local_address().unwrap().port(),
@@ -2913,6 +2916,7 @@ mod tests {
             .unwrap();
         let (bob_router_info, _bob_static_key, bob_signing_key) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                max_connections: None,
                 ml_kem: None,
                 disable_pq: false,
                 port: bob_socket.local_address().unwrap().port(),
@@ -2939,6 +2943,7 @@ mod tests {
         let (charlie_router_info, _charlie_static_key, _charlie_signing_key) =
             RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: charlie_socket.local_address().unwrap().port(),
@@ -3129,6 +3134,7 @@ mod tests {
             .unwrap();
         let (bob_router_info, _bob_static_key, bob_signing_key) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                max_connections: None,
                 ml_kem: None,
                 disable_pq: false,
                 port: bob_socket.local_address().unwrap().port(),
@@ -3155,6 +3161,7 @@ mod tests {
         let (charlie_router_info, _charlie_static_key, _charlie_signing_key) =
             RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: charlie_socket.local_address().unwrap().port(),
@@ -3316,6 +3323,7 @@ mod tests {
             .unwrap();
         let (bob_router_info, _bob_static_key, bob_signing_key) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                max_connections: None,
                 ml_kem: None,
                 disable_pq: false,
                 port: bob_socket.local_address().unwrap().port(),
@@ -3342,6 +3350,7 @@ mod tests {
         let (charlie_router_info, _charlie_static_key, _charlie_signing_key) =
             RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: charlie_socket.local_address().unwrap().port(),
@@ -3525,6 +3534,7 @@ mod tests {
             .unwrap();
         let (bob_router_info, _bob_static_key, bob_signing_key) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
+                max_connections: None,
                 ml_kem: None,
                 disable_pq: false,
                 port: bob_socket.local_address().unwrap().port(),
@@ -3609,6 +3619,7 @@ mod tests {
         for i in 0..10 {
             let (router_info, _static_key, signing_key) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 8888 + i,
@@ -3673,6 +3684,7 @@ mod tests {
         for i in 0..3 {
             let (router_info, _static_key, signing_key) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 8888 + i,
@@ -3737,6 +3749,7 @@ mod tests {
         for i in 0..10 {
             let (router_info, _static_key, signing_key) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: 8888 + i,

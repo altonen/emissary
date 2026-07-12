@@ -1355,6 +1355,7 @@ mod tests {
                 .unwrap();
             let (mut router_info, static_key, signing_key) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: socket.local_address().unwrap().port(),
@@ -1416,6 +1417,7 @@ mod tests {
                 .unwrap();
             let (router_info, static_key, signing_key) = RouterInfoBuilder::default()
                 .with_ssu2(Ssu2Config {
+                    max_connections: None,
                     ml_kem: None,
                     disable_pq: false,
                     port: socket.local_address().unwrap().port(),

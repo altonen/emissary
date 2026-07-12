@@ -296,6 +296,9 @@ pub enum Ssu2Error {
 
     /// Parse error.
     Parse(Ssu2ParseError),
+
+    /// Connection limits have been exceeded.
+    ConnectionLimits,
 }
 
 impl fmt::Display for Ssu2Error {
@@ -314,6 +317,7 @@ impl fmt::Display for Ssu2Error {
             Self::Relay(error) => write!(f, "{error}"),
             Self::NonExistentOutbound => write!(f, "non-existent outbound session"),
             Self::Parse(error) => write!(f, "parse error: {error:?}"),
+            Self::ConnectionLimits => write!(f, "connection limits"),
         }
     }
 }
@@ -334,6 +338,7 @@ impl From<Ssu2Error> for &'static str {
             Ssu2Error::Relay(error) => error.into(),
             Ssu2Error::NonExistentOutbound => "no-outbound-session",
             Ssu2Error::Parse(_) => "payload-format",
+            Ssu2Error::ConnectionLimits => "connection-limits",
         }
     }
 }
@@ -354,6 +359,7 @@ impl From<Ssu2Error> for TerminationReason {
             Ssu2Error::Relay(_) => Self::Unspecified,
             Ssu2Error::NonExistentOutbound => Self::Unspecified,
             Ssu2Error::Parse(_) => Self::PayloadFormatError,
+            Ssu2Error::ConnectionLimits => Self::ConnectionLimits,
         }
     }
 }

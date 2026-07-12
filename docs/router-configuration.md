@@ -153,6 +153,7 @@ ml_kem = 3
 | `publish_ipv6` | - | Publish the IPv6 address in router info for incoming connections. (default: true) |
 | `disable_pq` | - | Disable PQ connections (default: false) |
 | `ml_kem` | - | ML-KEM preferences for inbound connections (default: `4,3`) |
+| `max_connections` | - | Maximum number of connections (default: unlimited) |
 
 **ML-KEM preference (`ml_kem`)**
 

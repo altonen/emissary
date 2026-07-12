@@ -67,6 +67,7 @@ pub fn TransportsTab() -> Element {
         ssu2_ipv6_enabled,
         ssu2_disable_pq,
         ssu2_ml_kem,
+        ssu2_max_connections,
         ssu2_enabled,
     ) = {
         let state = state.read();
@@ -82,6 +83,7 @@ pub fn TransportsTab() -> Element {
             state.settings.ssu2.ipv6.unwrap_or(false),
             state.settings.ssu2.disable_pq.unwrap_or(false),
             state.settings.ssu2.ml_kem.clone().unwrap_or_default(),
+            state.settings.ssu2.max_connections.clone().unwrap_or_default(),
             state.settings.ssu2.enabled,
         )
     };
@@ -332,6 +334,22 @@ pub fn TransportsTab() -> Element {
                         oninput: move |e: Event<FormData>| {
                             let mut state = state.write();
                             state.settings.ssu2.port = Some(e.value());
+                            state.settings.dirty = true;
+                        }
+                    }
+                    span { class: "sf-label", "Max connections" }
+                    input {
+                        r#type: "text",
+                        class: if !ssu2_max_connections.is_empty() && ssu2_max_connections.parse::<u16>().is_err() {
+                            "sf-input-short input-error"
+                        } else {
+                            ""
+                        },
+                        value: "{ssu2_max_connections}",
+                        placeholder: "Max connections",
+                        oninput: move |e: Event<FormData>| {
+                            let mut state = state.write();
+                            state.settings.ssu2.max_connections = Some(e.value());
                             state.settings.dirty = true;
                         }
                     }
