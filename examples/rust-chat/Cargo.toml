@@ -14,7 +14,7 @@ categories.workspace = true
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 emissary-core = { path = "../../emissary-core", version = "0.4.0" }
-emissary-util = { path = "../../emissary-util", version = "0.4.0", default-features = false, features = ["tokio"] }
+emissary-util = { path = "../../emissary-util", version = "0.4.0", default-features = false, features = ["tokio", "native-tls"] }
 rand = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
