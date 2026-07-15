@@ -30,7 +30,7 @@ ed25519-dalek = { workspace = true, features = ["rand_core", "fast"] }
 futures = { workspace = true }
 nom = { workspace = true, features = ["alloc"] }
 rand = { workspace = true, features = ["thread_rng"] }
-reqwest = { workspace = true, features = ["default-tls"] }
+reqwest = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 smol = { workspace = true, optional = true }
 socket2 = { workspace = true }
@@ -42,7 +42,13 @@ tracing = { workspace = true, features = ["log"] }
 x25519-dalek = { workspace = true, features = ["getrandom", "static_secrets", "precomputed-tables"] }
 
 [features]
-default = ["tokio"]
+# TLS backend for the HTTPS reseeder. `native-tls` (the default) keeps the
+# existing behaviour (OpenSSL/Schannel/Secure Transport). `rustls` selects a
+# pure-Rust stack so the crate cross-compiles without OpenSSL, e.g. to Android
+# and iOS. Enable exactly one: `default-features = false` + `features = ["rustls"]`.
+default = ["tokio", "native-tls"]
 tokio = ["dep:tokio", "dep:tokio-util"]
 smol = ["dep:smol"]
 metrics = ["dep:metrics", "dep:metrics-exporter-prometheus"]
+native-tls = ["reqwest/default-tls"]
+rustls = ["reqwest/rustls-tls"]
