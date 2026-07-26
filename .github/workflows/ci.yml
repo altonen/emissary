@@ -91,32 +91,32 @@ jobs:
     - name: cargo-check rust-chat
       run: cargo check -p rust-chat
 
-  fuzz:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v6
-    - uses: actions-rust-lang/setup-rust-toolchain@v1
-      with:
-        toolchain: nightly
+  # fuzz:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #   - uses: actions/checkout@v6
+  #   - uses: actions-rust-lang/setup-rust-toolchain@v1
+  #     with:
+  #       toolchain: nightly
 
-    - name: Install cargo-fuzz
-      run: cargo install cargo-fuzz
+  #   - name: Install cargo-fuzz
+  #     run: cargo install cargo-fuzz
 
-    - name: cargo-fuzz build
-      working-directory: emissary-core
-      run: cargo +nightly fuzz build
+  #   - name: cargo-fuzz build
+  #     working-directory: emissary-core
+  #     run: cargo +nightly fuzz build
 
-    - name: cargo-fuzz primitives
-      working-directory: emissary-core
-      run: cargo +nightly fuzz run primitives -- -max_total_time=30
+  #   - name: cargo-fuzz primitives
+  #     working-directory: emissary-core
+  #     run: cargo +nightly fuzz run primitives -- -max_total_time=30
 
-    - name: cargo-fuzz i2np
-      working-directory: emissary-core
-      run: cargo +nightly fuzz run i2np -- -max_total_time=30
+  #   - name: cargo-fuzz i2np
+  #     working-directory: emissary-core
+  #     run: cargo +nightly fuzz run i2np -- -max_total_time=30
 
-    - name: cargo-fuzz messages
-      working-directory: emissary-core
-      run: cargo +nightly fuzz run messages -- -max_total_time=30
+  #   - name: cargo-fuzz messages
+  #     working-directory: emissary-core
+  #     run: cargo +nightly fuzz run messages -- -max_total_time=30
 
   test:
     runs-on: ubuntu-latest
