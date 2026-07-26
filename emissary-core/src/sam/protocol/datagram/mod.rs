@@ -66,7 +66,7 @@ impl<R: Runtime> DatagramManager<R> {
         signing_key: SigningPrivateKey,
     ) -> Self {
         Self {
-            destination_hash: Sha256::new().update(destination.as_ref()).finalize_new(),
+            destination_hash: Sha256::new().update(&*destination).finalize_new(),
             datagram_tx,
             destination,
             listeners: {
@@ -178,7 +178,7 @@ impl<R: Runtime> DatagramManager<R> {
 
                 let info = format!(
                     "{} FROM_PORT={src_port} TO_PORT={dst_port}\n",
-                    base64_encode(destination.as_ref())
+                    base64_encode(&*destination)
                 );
 
                 let info = info.as_bytes();
@@ -241,7 +241,7 @@ impl<R: Runtime> DatagramManager<R> {
 
                 let info = format!(
                     "{} FROM_PORT={src_port} TO_PORT={dst_port}\n",
-                    base64_encode(destination.as_ref())
+                    base64_encode(&*destination)
                 );
 
                 let info = info.as_bytes();

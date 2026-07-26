@@ -1021,7 +1021,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             false,
-            ProfileStorage::new(&[], &[]),
+            ProfileStorage::new(&[], &[], None),
         );
 
         // insert dummy lease set for `remote` into `Destination`
@@ -1055,7 +1055,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             false,
-            ProfileStorage::new(&[], &[]),
+            ProfileStorage::new(&[], &[], None),
         );
 
         // insert lease set which expired 10 seconds ago
@@ -1096,7 +1096,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             false,
-            ProfileStorage::new(&[], &[]),
+            ProfileStorage::new(&[], &[], None),
         );
 
         // query lease set and verify it's not found and that a query has been started
@@ -1126,7 +1126,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             false,
-            ProfileStorage::new(&[], &[]),
+            ProfileStorage::new(&[], &[], None),
         );
 
         // query lease set and verify it's not found and that a query has been started
@@ -1162,7 +1162,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             false,
-            ProfileStorage::new(&[], &[]),
+            ProfileStorage::new(&[], &[], None),
         );
 
         // spam the netdb handle full of queries
@@ -1210,7 +1210,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             false,
-            ProfileStorage::new(&[], &[]),
+            ProfileStorage::new(&[], &[], None),
         );
 
         destination
@@ -1241,7 +1241,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             false,
-            ProfileStorage::new(&[], &[]),
+            ProfileStorage::new(&[], &[], None),
         );
 
         // new inbound tunnel built
@@ -1289,7 +1289,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             true,
-            ProfileStorage::new(&[], &[]),
+            ProfileStorage::new(&[], &[], None),
         );
 
         // insert lease set which expired 10 seconds ago
@@ -1400,7 +1400,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             false,
-            ProfileStorage::new(&[], &[]),
+            ProfileStorage::new(&[], &[], None),
         );
 
         // create remote destination and two leases for it

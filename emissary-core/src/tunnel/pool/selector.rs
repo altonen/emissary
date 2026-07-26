@@ -1076,7 +1076,7 @@ mod tests {
     #[tokio::test]
     async fn not_enough_routers_for_exploratory_tunnel() {
         let build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         for _ in 0..3 {
             profile_storage.add_router({
@@ -1097,7 +1097,7 @@ mod tests {
     #[tokio::test]
     async fn select_exploratory_hops() {
         let build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         for _ in 0..10 {
             profile_storage.add_router({
@@ -1134,7 +1134,7 @@ mod tests {
     #[tokio::test]
     async fn select_exploratory_hops_ipv6() {
         let build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         for _ in 0..10 {
             profile_storage.add_router({
@@ -1171,7 +1171,7 @@ mod tests {
     #[tokio::test]
     async fn select_exploratory_hops_mixed() {
         let build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         for _ in 0..10 {
             profile_storage.add_router({
@@ -1208,7 +1208,7 @@ mod tests {
     #[tokio::test]
     async fn use_fast_routers_as_fallback() {
         let build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         for i in 0..3 {
             profile_storage.add_router({
@@ -1276,7 +1276,7 @@ mod tests {
     async fn not_enough_routers_for_client_tunnel() {
         let exploratory_build_parameters = TunnelPoolBuildParameters::new(Default::default());
         let client_build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         for _ in 0..3 {
             profile_storage.add_router({
@@ -1300,7 +1300,7 @@ mod tests {
     async fn select_client_hops() {
         let exploratory_build_parameters = TunnelPoolBuildParameters::new(Default::default());
         let client_build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         for _ in 0..10 {
             profile_storage.add_router({
@@ -1340,7 +1340,7 @@ mod tests {
     async fn use_standard_routers_as_fallback() {
         let exploratory_build_parameters = TunnelPoolBuildParameters::new(Default::default());
         let client_build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         for _ in 0..5 {
             profile_storage.add_router({
@@ -1389,7 +1389,7 @@ mod tests {
     #[tokio::test]
     async fn exploratory_not_enough_routers_in_distinct_subnets() {
         let build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         // 5 addresses from 192.168.x.x subnet
         for i in 0..5 {
@@ -1442,7 +1442,7 @@ mod tests {
     #[tokio::test]
     async fn exploratory_not_enough_routers_in_distinct_subnets_ipv6() {
         let build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         let first_subnet: Vec<Ipv6Addr> = vec![
             "2001:db8:abcd:0001::1".parse().unwrap(),
@@ -1508,7 +1508,7 @@ mod tests {
     async fn client_not_enough_routers_in_distinct_subnets() {
         let exploratory_build_parameters = TunnelPoolBuildParameters::new(Default::default());
         let client_build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         // 5 addresses from 192.168.x.x subnet
         for i in 0..5 {
@@ -1565,7 +1565,7 @@ mod tests {
     async fn client_not_enough_routers_in_distinct_subnets_ipv4() {
         let exploratory_build_parameters = TunnelPoolBuildParameters::new(Default::default());
         let client_build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         let first_subnet: Vec<Ipv6Addr> = vec![
             "2001:db8:abcd:0001::1".parse().unwrap(),
@@ -1632,7 +1632,7 @@ mod tests {
     #[tokio::test]
     async fn exploratory_not_enough_reachable_routers() {
         let build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         // 5 unreachable standard routers
         for i in 0..5 {
@@ -1670,7 +1670,7 @@ mod tests {
     async fn client_not_enough_standard_or_fast_routers() {
         let exploratory_build_parameters = TunnelPoolBuildParameters::new(Default::default());
         let client_build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         // 3 reachable standard routers
         for _ in 0..3 {
@@ -1709,7 +1709,7 @@ mod tests {
     #[tokio::test]
     async fn exploratory_insecure_tunnels_not_enough_distinct_subnets() {
         let build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         // 5 addresses from 192.168.x.x subnet
         for i in 0..5 {
@@ -1767,7 +1767,7 @@ mod tests {
     #[tokio::test]
     async fn exploratory_insecure_tunnels_not_enough_distinct_subnets_ipv6() {
         let build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         let first_subnet: Vec<Ipv6Addr> = vec![
             "2001:db8:abcd:0001::1".parse().unwrap(),
@@ -1837,7 +1837,7 @@ mod tests {
     async fn client_insecure_tunnels_not_enough_distinct_subnets() {
         let exploratory_build_parameters = TunnelPoolBuildParameters::new(Default::default());
         let client_build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         // 5 addresses from 192.168.x.x subnet
         for i in 0..5 {
@@ -1898,7 +1898,7 @@ mod tests {
     async fn client_insecure_tunnels_not_enough_distinct_subnets_ipv6() {
         let exploratory_build_parameters = TunnelPoolBuildParameters::new(Default::default());
         let client_build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         let first_subnet: Vec<Ipv6Addr> = vec![
             "2001:db8:abcd:0001::1".parse().unwrap(),
@@ -1969,7 +1969,7 @@ mod tests {
     #[tokio::test]
     async fn exploratory_insecure_tunnels_not_enough_distinct_subnets_or_standard_peers() {
         let build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         // 5 addresses from 192.168.x.x subnet
         for i in 0..3 {
@@ -2051,7 +2051,7 @@ mod tests {
     #[tokio::test]
     async fn exploratory_insecure_tunnels_not_enough_distinct_subnets_or_standard_peers_ipv6() {
         let build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         let first_subnet: Vec<Ipv6Addr> = vec![
             "2001:db8:abcd:0001::1".parse().unwrap(),
@@ -2143,7 +2143,7 @@ mod tests {
     async fn client_insecure_tunnels_not_enough_distinct_subnets_or_fast_peers() {
         let exploratory_build_parameters = TunnelPoolBuildParameters::new(Default::default());
         let client_build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         // 5 addresses from 192.168.x.x subnet
         for i in 0..5 {
@@ -2228,7 +2228,7 @@ mod tests {
     async fn client_insecure_tunnels_not_enough_distinct_subnets_or_fast_peers_ipv6() {
         let exploratory_build_parameters = TunnelPoolBuildParameters::new(Default::default());
         let client_build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         let first_subnet: Vec<Ipv6Addr> = vec![
             "2001:db8:abcd:0001::1".parse().unwrap(),
@@ -2321,7 +2321,7 @@ mod tests {
     #[tokio::test]
     async fn router_participation() {
         let build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
         let routers = (0..11).map(|_| RouterId::random()).collect::<Vec<_>>();
 
         let selector = ExploratorySelector::new(
@@ -2400,7 +2400,7 @@ mod tests {
     #[tokio::test]
     async fn exploratory_enforce_max_participation() {
         let build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         for _ in 0..6 {
             profile_storage.add_router({
@@ -2439,7 +2439,7 @@ mod tests {
     #[tokio::test]
     async fn exploratory_ignore_max_participation_for_insecure_tunnels() {
         let build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         for _ in 0..6 {
             profile_storage.add_router({
@@ -2477,7 +2477,7 @@ mod tests {
     #[tokio::test]
     async fn exploratory_enforce_max_participation_with_fast_fallbacks() {
         let build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         for _ in 0..6 {
             profile_storage.add_router({
@@ -2552,7 +2552,7 @@ mod tests {
     async fn client_enforce_max_participation() {
         let exploratory_build_parameters = TunnelPoolBuildParameters::new(Default::default());
         let client_build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         for _ in 0..6 {
             profile_storage.add_router({
@@ -2594,7 +2594,7 @@ mod tests {
     async fn client_ignore_max_participation_for_insecure_tunnels() {
         let exploratory_build_parameters = TunnelPoolBuildParameters::new(Default::default());
         let client_build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         for _ in 0..6 {
             profile_storage.add_router({
@@ -2635,7 +2635,7 @@ mod tests {
     async fn client_enforce_max_participation_with_fast_fallbacks() {
         let exploratory_build_parameters = TunnelPoolBuildParameters::new(Default::default());
         let client_build_parameters = TunnelPoolBuildParameters::new(Default::default());
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
 
         for _ in 0..3 {
             profile_storage.add_router({

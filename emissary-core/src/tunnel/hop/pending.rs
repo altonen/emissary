@@ -845,7 +845,7 @@ mod test {
                                 }),
                                 RouterContext::new(
                                     handle.clone(),
-                                    ProfileStorage::new(&[], &[]),
+                                    ProfileStorage::new(&[], &[], None),
                                     router_info.identity.id(),
                                     Bytes::from(router_info.serialize(&signing_key)),
                                     static_key,
@@ -1255,7 +1255,7 @@ mod test {
                 }),
                 RouterContext::new(
                     handle.clone(),
-                    ProfileStorage::new(&[], &[]),
+                    ProfileStorage::new(&[], &[], None),
                     router_info.identity.id(),
                     Bytes::from(router_info.serialize(&signing_key)),
                     static_key,
@@ -1506,7 +1506,7 @@ mod test {
                                 }),
                                 RouterContext::new(
                                     handle.clone(),
-                                    ProfileStorage::new(&[], &[]),
+                                    ProfileStorage::new(&[], &[], None),
                                     router_info.identity.id(),
                                     Bytes::from(router_info.serialize(&signing_key)),
                                     static_key,
@@ -1658,7 +1658,7 @@ mod test {
                                 }),
                                 RouterContext::new(
                                     handle.clone(),
-                                    ProfileStorage::new(&[], &[]),
+                                    ProfileStorage::new(&[], &[], None),
                                     router_info.identity.id(),
                                     Bytes::from(router_info.serialize(&signing_key)),
                                     static_key,
@@ -1774,7 +1774,7 @@ mod test {
                                 }),
                                 RouterContext::new(
                                     handle.clone(),
-                                    ProfileStorage::new(&[], &[]),
+                                    ProfileStorage::new(&[], &[], None),
                                     router_info.identity.id(),
                                     Bytes::from(router_info.serialize(&signing_key)),
                                     static_key,
@@ -1890,7 +1890,7 @@ mod test {
                                 }),
                                 RouterContext::new(
                                     handle.clone(),
-                                    ProfileStorage::new(&[], &[]),
+                                    ProfileStorage::new(&[], &[], None),
                                     router_info.identity.id(),
                                     Bytes::from(router_info.serialize(&signing_key)),
                                     static_key,

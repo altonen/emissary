@@ -1576,7 +1576,7 @@ mod tests {
     async fn session_doesnt_support_ssu2() {
         let (router_info, _, _) = RouterInfoBuilder::default().build();
         let router_id = router_info.identity.id();
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         storage.add_router(router_info);
 
         let mut manager = PeerTestManager::new(
@@ -1599,7 +1599,7 @@ mod tests {
     #[tokio::test]
     async fn router_doesnt_support_peer_testing() {
         let (router_id, router_info, _) = make_router_info(Str::from("C"), Some(true));
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         storage.add_router(router_info);
 
         let mut manager = PeerTestManager::new(
@@ -1622,7 +1622,7 @@ mod tests {
     #[tokio::test]
     async fn router_doesnt_support_ipv4_or_ipv6() {
         let (router_id, router_info, _) = make_router_info(Str::from("BC"), None);
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         storage.add_router(router_info);
 
         let mut manager = PeerTestManager::new(
@@ -1645,7 +1645,7 @@ mod tests {
     #[tokio::test]
     async fn router_supports_peer_testing_over_ipv4() {
         let (router_id, router_info, _) = make_router_info(Str::from("BC"), Some(true));
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         storage.add_router(router_info);
 
         let mut manager = PeerTestManager::new(
@@ -1669,7 +1669,7 @@ mod tests {
     #[tokio::test]
     async fn router_supports_peer_testing_over_ipv6() {
         let (router_id, router_info, _) = make_router_info(Str::from("BC"), Some(false));
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         storage.add_router(router_info);
 
         let mut manager = PeerTestManager::new(
@@ -1693,7 +1693,7 @@ mod tests {
     #[tokio::test]
     #[should_panic]
     async fn inbound_request_alice_doesnt_exist() {
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         let (router_id, router_info, _) = make_router_info(Str::from("BC"), Some(true));
         storage.add_router(router_info);
 
@@ -1727,7 +1727,7 @@ mod tests {
     // make sure it's not chosen as charlie
     #[tokio::test]
     async fn inbound_request_alice_is_not_chosen() {
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         let (router_id, router_info, _) = make_router_info(Str::from("BC"), Some(true));
         storage.add_router(router_info);
 
@@ -1766,7 +1766,7 @@ mod tests {
 
     #[tokio::test]
     async fn inbound_request_rejected_no_ipv4_routers() {
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         let (router_id1, router_info1, _) = make_router_info(Str::from("BC"), Some(true));
         let (_router_id2, router_info2, _) = make_router_info(Str::from("BC"), Some(false));
         storage.add_router(router_info1);
@@ -1807,7 +1807,7 @@ mod tests {
 
     #[tokio::test]
     async fn inbound_request_rejected_no_ipv6_routers() {
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         let (router_id1, router_info1, _) = make_router_info(Str::from("BC"), Some(false));
         let (_router_id2, router_info2, _) = make_router_info(Str::from("BC"), Some(true));
         storage.add_router(router_info1);
@@ -1848,7 +1848,7 @@ mod tests {
 
     #[tokio::test]
     async fn inbound_request_accepted() {
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         let (router_id1, router_info1, serialized1) = make_router_info(Str::from("BC"), Some(true));
         let (router_id2, router_info2, serialized2) = make_router_info(Str::from("BC"), Some(true));
         storage.discover_router(router_info1, serialized1);
@@ -1911,7 +1911,7 @@ mod tests {
 
     #[tokio::test]
     async fn bob_request_rejected_already_connected() {
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         let (alice_router_id, alice_router_info, alice_serialized) =
             make_router_info(Str::from("BC"), Some(true));
         let (bob_router_id, bob_router_info, bob_serialized) =
@@ -1965,7 +1965,7 @@ mod tests {
 
     #[tokio::test]
     async fn bob_request_rejected_ipv6_not_supported() {
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         let (alice_router_id, alice_router_info, alice_serialized) =
             make_router_info(Str::from("BC"), Some(true));
         let (bob_router_id, bob_router_info, bob_serialized) =
@@ -2017,7 +2017,7 @@ mod tests {
 
     #[tokio::test]
     async fn bob_request_rejected_ipv4_not_supported() {
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         let (alice_router_id, alice_router_info, alice_serialized) =
             make_router_info(Str::from("BC"), Some(true));
         let (bob_router_id, bob_router_info, bob_serialized) =
@@ -2069,7 +2069,7 @@ mod tests {
 
     #[tokio::test]
     async fn bob_request_accepted() {
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         let (alice_router_id, alice_router_info, alice_serialized) =
             make_router_info(Str::from("BC"), Some(true));
         let (bob_router_id, bob_router_info, bob_serialized) =
@@ -2166,7 +2166,7 @@ mod tests {
 
     #[tokio::test]
     async fn alice_request_charlie_no_longer_connected() {
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         let (charlie_router_id, charlie_router_info, charlie_serialized) =
             make_router_info(Str::from("BC"), Some(true));
         let (alice_router_id, alice_router_info, alice_serialized) =
@@ -2232,7 +2232,7 @@ mod tests {
 
     #[tokio::test]
     async fn charlie_response_relayed() {
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         let (charlie_router_id, charlie_router_info, charlie_serialized) =
             make_router_info(Str::from("BC"), Some(true));
         let (alice_router_id, alice_router_info, alice_serialized) =
@@ -2616,7 +2616,7 @@ mod tests {
         let charlie_router_id = charlie_router_info.identity.id();
 
         // add bob to alice's router storage so they can be contacted
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         storage.discover_router(bob_router_info, Bytes::from(bob_serialized));
 
         // create alice
@@ -2800,7 +2800,7 @@ mod tests {
         let charlie_address = charlie_socket.local_address().unwrap();
 
         // add bob to alice's router storage so they can be contacted
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         storage.discover_router(bob_router_info, Bytes::from(bob_serialized));
 
         // create alice
@@ -2963,7 +2963,7 @@ mod tests {
         let charlie_router_id = charlie_router_info.identity.id();
 
         // add bob to alice's router storage so they can be contacted
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         storage.discover_router(bob_router_info, Bytes::from(bob_serialized));
 
         // create alice
@@ -3181,7 +3181,7 @@ mod tests {
         let charlie_router_id = charlie_router_info.identity.id();
 
         // add bob to alice's router storage so they can be contacted
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         storage.discover_router(bob_router_info, Bytes::from(bob_serialized));
 
         // create alice
@@ -3370,7 +3370,7 @@ mod tests {
         let charlie_router_id = charlie_router_info.identity.id();
 
         // add bob to alice's router storage so they can be contacted
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         storage.discover_router(bob_router_info, Bytes::from(bob_serialized));
 
         // create alice
@@ -3554,7 +3554,7 @@ mod tests {
         let bob_router_id = bob_router_info.identity.id();
 
         // add bob to alice's router storage so they can be contacted
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         storage.discover_router(bob_router_info, Bytes::from(bob_serialized));
 
         // create alice
@@ -3612,7 +3612,7 @@ mod tests {
     #[tokio::test]
     async fn parallel_tests() {
         // create 10 routers which all support peer testing
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         let mut channels = Vec::new();
         let mut routers = Vec::new();
 
@@ -3677,7 +3677,7 @@ mod tests {
     #[tokio::test]
     async fn parallel_test_not_enough_routers() {
         // add only 3 routers (3 < MAX_PARALLEL_TESTS)
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         let mut channels = Vec::new();
         let mut routers = Vec::new();
 
@@ -3742,7 +3742,7 @@ mod tests {
     #[tokio::test]
     async fn pending_test_no_new_tests_started() {
         // create 10 routers which all support peer testing
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         let mut channels = Vec::new();
         let mut routers = Vec::new();
 

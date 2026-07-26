@@ -395,6 +395,7 @@ impl Storage {
                             Some((
                                 name,
                                 emissary_core::Profile {
+                                    is_connected: false,
                                     last_activity: Duration::from_secs(
                                         profile.last_activity.unwrap_or(0),
                                     ),
@@ -480,6 +481,36 @@ impl Storage {
 
         Ok(())
     }
+
+    /// Remove the router info of `router_id` from disk.
+    async fn remove_router_info(&self, router_id: &str) -> anyhow::Result<()> {
+        let dir = router_id.chars().next().ok_or(anyhow!("invalid router id"))?;
+
+        match tokio::fs::remove_file(
+            self.base_path.join(format!("netDb/r{dir}/routerInfo-{router_id}.dat")),
+        )
+        .await
+        {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// Remove the profile of `router_id` from disk.
+    async fn remove_profile(&self, router_id: &str) -> anyhow::Result<()> {
+        let dir = router_id.chars().next().ok_or(anyhow!("invalid router id"))?;
+
+        match tokio::fs::remove_file(
+            self.base_path.join(format!("peerProfiles/p{dir}/profile-{router_id}.toml")),
+        )
+        .await
+        {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
 }
 
 impl emissary_core::runtime::Storage for Storage {
@@ -507,6 +538,32 @@ impl emissary_core::runtime::Storage for Storage {
                         ?router_id,
                         ?error,
                         "failed to store router profile to disk",
+                    );
+                }
+            }
+        });
+    }
+
+    fn remove_from_disk(&self, routers: Vec<String>) {
+        let storage_handle = self.clone();
+
+        tokio::spawn(async move {
+            for router_id in routers {
+                if let Err(error) = storage_handle.remove_router_info(&router_id).await {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        %router_id,
+                        ?error,
+                        "failed to remove router info from disk"
+                    );
+                }
+
+                if let Err(error) = storage_handle.remove_profile(&router_id).await {
+                    tracing::warn!(
+                        target: LOG_TARGET,
+                        %router_id,
+                        ?error,
+                        "failed to remove router profile from disk"
                     );
                 }
             }

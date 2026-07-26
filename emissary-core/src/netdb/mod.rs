@@ -2011,7 +2011,7 @@ mod tests {
 
     #[tokio::test]
     async fn lease_set_store_to_floodfill() {
-        let storage = ProfileStorage::new(&Vec::new(), &Vec::new());
+        let storage = ProfileStorage::new(&Vec::new(), &Vec::new(), None);
         let (tp_handle, _tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
 
         // add few floodfills to router storage
@@ -2140,7 +2140,7 @@ mod tests {
 
     #[tokio::test]
     async fn lease_set_store_to_non_floodfill() {
-        let storage = ProfileStorage::new(&Vec::new(), &Vec::new());
+        let storage = ProfileStorage::new(&Vec::new(), &Vec::new(), None);
         let (tp_handle, _tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
 
         // add few floodfills to router storage
@@ -2237,7 +2237,7 @@ mod tests {
 
     #[tokio::test]
     async fn expired_lease_set_store() {
-        let storage = ProfileStorage::new(&Vec::new(), &Vec::new());
+        let storage = ProfileStorage::new(&Vec::new(), &Vec::new(), None);
         let (tp_handle, _tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
 
         // add few floodfills to router storage
@@ -2336,7 +2336,7 @@ mod tests {
 
     #[tokio::test]
     async fn expired_lease_sets_are_pruned() {
-        let storage = ProfileStorage::new(&Vec::new(), &Vec::new());
+        let storage = ProfileStorage::new(&Vec::new(), &Vec::new(), None);
         let (tp_handle, _tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
 
         // add few floodfills to router storage
@@ -2636,7 +2636,7 @@ mod tests {
 
     #[tokio::test]
     async fn router_info_store_to_floodfill() {
-        let storage = ProfileStorage::new(&Vec::new(), &Vec::new());
+        let storage = ProfileStorage::new(&Vec::new(), &Vec::new(), None);
         let (tp_handle, _tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
 
         // add few floodfills to router storage
@@ -2761,7 +2761,7 @@ mod tests {
 
     #[tokio::test]
     async fn stale_router_info_not_stored_nor_flooded() {
-        let storage = ProfileStorage::new(&Vec::new(), &Vec::new());
+        let storage = ProfileStorage::new(&Vec::new(), &Vec::new(), None);
         let (tp_handle, _tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
 
         // add few floodfills to router storage
@@ -2850,7 +2850,7 @@ mod tests {
 
     #[tokio::test]
     async fn lease_set_query() {
-        let storage = ProfileStorage::new(&Vec::new(), &Vec::new());
+        let storage = ProfileStorage::new(&Vec::new(), &Vec::new(), None);
         let (tp_handle, tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
 
         // add few floodfills to router storage
@@ -2971,7 +2971,7 @@ mod tests {
 
     #[tokio::test]
     async fn lease_set_query_value_not_found() {
-        let storage = ProfileStorage::new(&Vec::new(), &Vec::new());
+        let storage = ProfileStorage::new(&Vec::new(), &Vec::new(), None);
         let (tp_handle, tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
 
         // add few floodfills to router storage
@@ -3057,7 +3057,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn router_info_query() {
-        let storage = ProfileStorage::new(&Vec::new(), &Vec::new());
+        let storage = ProfileStorage::new(&Vec::new(), &Vec::new(), None);
         let (tp_handle, tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
 
         // add few floodfills to router storage
@@ -3197,7 +3197,7 @@ mod tests {
 
     #[tokio::test]
     async fn router_info_query_value_not_found() {
-        let storage = ProfileStorage::new(&Vec::new(), &Vec::new());
+        let storage = ProfileStorage::new(&Vec::new(), &Vec::new(), None);
         let (tp_handle, tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
 
         // add few floodfills to router storage
@@ -3305,7 +3305,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn pending_messages_sent_when_floodfill_connects() {
-        let storage = ProfileStorage::new(&Vec::new(), &Vec::new());
+        let storage = ProfileStorage::new(&Vec::new(), &Vec::new(), None);
         let (tp_handle, _tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
 
         // add few floodfills to router storage
@@ -3401,7 +3401,7 @@ mod tests {
 
     #[tokio::test]
     async fn router_info_with_different_network_id_ignored() {
-        let storage = ProfileStorage::new(&Vec::new(), &Vec::new());
+        let storage = ProfileStorage::new(&Vec::new(), &Vec::new(), None);
         let (tp_handle, _tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
 
         // add few floodfills to router storage
@@ -3489,7 +3489,7 @@ mod tests {
 
     #[tokio::test]
     async fn lease_set_store_with_zero_reply_token() {
-        let storage = ProfileStorage::new(&Vec::new(), &Vec::new());
+        let storage = ProfileStorage::new(&Vec::new(), &Vec::new(), None);
         let (tp_handle, _tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
 
         // add few floodfills to router storage
@@ -3581,7 +3581,7 @@ mod tests {
 
     #[tokio::test]
     async fn router_info_store_with_zero_reply_token() {
-        let storage = ProfileStorage::new(&Vec::new(), &Vec::new());
+        let storage = ProfileStorage::new(&Vec::new(), &Vec::new(), None);
         let (tp_handle, _tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
 
         // add few floodfills to router storage
@@ -3670,7 +3670,7 @@ mod tests {
 
     #[tokio::test]
     async fn recursive_lease_set_query_with_duplicate_floodfills() {
-        let storage = ProfileStorage::new(&Vec::new(), &Vec::new());
+        let storage = ProfileStorage::new(&Vec::new(), &Vec::new(), None);
         let (tp_handle, tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
 
         // add few floodfills to router storage
@@ -3839,7 +3839,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn local_router_info_store() {
-        let storage = ProfileStorage::new(&Vec::new(), &Vec::new());
+        let storage = ProfileStorage::new(&Vec::new(), &Vec::new(), None);
         let (tp_handle, _tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
 
         // add few floodfills to router storage
@@ -3955,7 +3955,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn router_exploration_works() {
-        let storage = ProfileStorage::new(&Vec::new(), &Vec::new());
+        let storage = ProfileStorage::new(&Vec::new(), &Vec::new(), None);
         let (tp_handle, tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
 
         // add few floodfills to router storage
@@ -4025,7 +4025,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn duplicate_lease_set_query() {
-        let storage = ProfileStorage::new(&Vec::new(), &Vec::new());
+        let storage = ProfileStorage::new(&Vec::new(), &Vec::new(), None);
         let (tp_handle, _tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
 
         // add few floodfills to router storage
@@ -4102,7 +4102,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn duplicate_router_info_query() {
-        let storage = ProfileStorage::new(&Vec::new(), &Vec::new());
+        let storage = ProfileStorage::new(&Vec::new(), &Vec::new(), None);
         let (tp_handle, _tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
 
         // add few floodfills to router storage
@@ -4180,7 +4180,7 @@ mod tests {
 
     #[tokio::test]
     async fn floodfill_is_ibgw() {
-        let storage = ProfileStorage::new(&Vec::new(), &Vec::new());
+        let storage = ProfileStorage::new(&Vec::new(), &Vec::new(), None);
         let (tp_handle, _tm_rx, _tp_tx, _srx) = TunnelPoolHandle::create();
 
         // add few floodfills to router storage

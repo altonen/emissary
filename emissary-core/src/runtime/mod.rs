@@ -230,4 +230,7 @@ pub trait AddressBook: Unpin + Send + Sync + 'static {
 pub trait Storage: Unpin + Send + Sync + 'static {
     /// Save routers and their profiles to disk.
     fn save_to_disk(&self, routers: Vec<(String, Option<Vec<u8>>, crate::Profile)>);
+
+    /// Rmoeve routers and their profiles from disk.
+    fn remove_from_disk(&self, routers: Vec<String>);
 }

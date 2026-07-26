@@ -157,8 +157,9 @@ impl fmt::Debug for DestinationContext {
 impl PartialEq for DestinationContext {
     fn eq(&self, other: &Self) -> bool {
         self.destination == other.destination
-            && (*self.private_key).as_ref() == (*other.private_key).as_ref()
-            && (*self.signing_key).as_ref() == (*other.signing_key).as_ref()
+            && AsRef::<[u8]>::as_ref(&self.private_key) == AsRef::<[u8]>::as_ref(&other.private_key)
+            && AsRef::<[u8]>::as_ref(&*self.signing_key)
+                == AsRef::<[u8]>::as_ref(&*other.signing_key)
     }
 }
 
