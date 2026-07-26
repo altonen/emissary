@@ -1379,6 +1379,7 @@ impl<R: Runtime> Future for TransportManager<R> {
                             Some(false) =>
                                 this.router_ctx.metrics_handle().gauge(NUM_IPV6).decrement(1),
                         }
+                        this.router_ctx.profile_storage().connection_closed(&router_id);
                         this.router_ctx.metrics_handle().gauge(NUM_ACTIVE_CONNECTIONS).decrement(1);
                         this.router_ctx
                             .metrics_handle()
@@ -1667,7 +1668,7 @@ mod tests {
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let ctx = RouterContext::new(
             MockRuntime::register_metrics(vec![], None),
-            ProfileStorage::<MockRuntime>::new(&[], &[]),
+            ProfileStorage::<MockRuntime>::new(&[], &[], None),
             router_info.identity.id(),
             serialized.clone(),
             static_key,
@@ -2247,7 +2248,7 @@ mod tests {
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let ctx = RouterContext::new(
             MockRuntime::register_metrics(vec![], None),
-            ProfileStorage::<MockRuntime>::new(&[], &[]),
+            ProfileStorage::<MockRuntime>::new(&[], &[], None),
             router_info.identity.id(),
             serialized.clone(),
             static_key,
@@ -2365,7 +2366,7 @@ mod tests {
     async fn inbound_connection_rejected_outbound_pending() {
         let (router_info, static_key, signing_key) = RouterInfoBuilder::default().build();
         let serialized = Bytes::from(router_info.serialize(&signing_key));
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let (handle, _) = NetDbHandle::create();
@@ -2511,7 +2512,7 @@ mod tests {
     async fn inbound_connection_rejected_while_netdb_lookup_pending() {
         let (router_info, static_key, signing_key) = RouterInfoBuilder::default().build();
         let serialized = Bytes::from(router_info.serialize(&signing_key));
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let (handle, netdb_rx) = NetDbHandle::create();
@@ -2653,7 +2654,7 @@ mod tests {
     async fn transit_tunnels_disabled() {
         let (router_info, static_key, signing_key) = RouterInfoBuilder::default().build();
         let serialized = Bytes::from(router_info.serialize(&signing_key));
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         let (handle, _netdb_rx) = NetDbHandle::create();
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
@@ -2717,7 +2718,7 @@ mod tests {
     async fn router_info_query_fails() {
         let (router_info, static_key, signing_key) = RouterInfoBuilder::default().build();
         let serialized = Bytes::from(router_info.serialize(&signing_key));
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         let (_event_mgr, _event_subscriber, event_handle) =
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let (handle, netdb_rx) = NetDbHandle::create();
@@ -2828,7 +2829,7 @@ mod tests {
     async fn router_without_ntcp2_support_dialed() {
         let (router_info, static_key, signing_key) = RouterInfoBuilder::default().build();
         let serialized = Bytes::from(router_info.serialize(&signing_key));
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         let (remote_router_info, _, _) = RouterInfoBuilder::default()
             .with_ssu2(Ssu2Config {
                 max_connections: None,
@@ -3003,7 +3004,7 @@ mod tests {
             })
             .build();
         let serialized1 = Bytes::from(router_info1.serialize(&signing_key1));
-        let storage1 = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage1 = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         let router_id1 = router_info1.identity.id();
 
         let config2 = Ssu2Config {
@@ -3044,7 +3045,7 @@ mod tests {
             })
             .build();
         let serialized2 = Bytes::from(router_info2.serialize(&signing_key2));
-        let storage2 = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage2 = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         let router_id2 = router_info2.identity.id();
 
         storage1.add_router(router_info2.clone());
@@ -3219,7 +3220,7 @@ mod tests {
         let (storage, remote_router_id) = {
             let (router_info, _static_key, _signing_key) = RouterInfoBuilder::default().build();
             let router_id = router_info.identity.id();
-            let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+            let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
             storage.add_router(router_info);
 
             (storage, router_id)
@@ -3640,9 +3641,9 @@ mod tests {
             let (router_info, static_key, signing_key) = builder.build();
 
             let profile_storage = if self.routers.is_empty() {
-                ProfileStorage::new(&[], &[])
+                ProfileStorage::new(&[], &[], None)
             } else {
-                let storage = ProfileStorage::new(&[], &[]);
+                let storage = ProfileStorage::new(&[], &[], None);
 
                 for router in self.routers {
                     storage.add_router(router);

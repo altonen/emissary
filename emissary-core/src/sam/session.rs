@@ -542,7 +542,7 @@ impl<R: Runtime> SamSession<R> {
                     Protocol::Datagram => self.datagram_manager.make_datagram(datagram),
                     Protocol::Datagram2 => self.datagram_manager.make_datagram2(
                         datagram,
-                        &Sha256::new().update(destination.as_ref()).finalize(),
+                        &Sha256::new().update(&*destination).finalize(),
                         options,
                     ),
                     Protocol::Streaming => unreachable!(),
@@ -664,7 +664,7 @@ impl<R: Runtime> SamSession<R> {
                         Protocol::Datagram => self.datagram_manager.make_datagram(datagram),
                         Protocol::Datagram2 => self.datagram_manager.make_datagram2(
                             datagram,
-                            &Sha256::new().update(destination.as_ref()).finalize(),
+                            &Sha256::new().update(&*destination).finalize(),
                             options,
                         ),
                         Protocol::Streaming => unreachable!(),
@@ -1481,7 +1481,7 @@ mod tests {
                 netdb_handle,
                 options,
                 outbound: Default::default(),
-                profile_storage: ProfileStorage::new(&[], &[]),
+                profile_storage: ProfileStorage::new(&[], &[], None),
                 receiver: rx,
                 session_id: "test".into(),
                 session_kind: SessionKind::Stream,

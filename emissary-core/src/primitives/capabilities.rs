@@ -141,7 +141,7 @@ impl Capabilities {
     pub fn parse(caps: &Str) -> Option<Self> {
         let bandwidth = Bandwidth::parse(caps);
         let floodfill = caps.contains("f");
-        let usable = !(caps.contains("E") || caps.contains("G"));
+        let usable = !caps.contains("G");
         let reachable = !(caps.contains("U") || caps.contains("H"));
 
         Some(Self {
@@ -224,7 +224,7 @@ mod tests {
     #[test]
     fn usable() {
         assert!(!Capabilities::parse(&Str::from("LG")).unwrap().is_usable());
-        assert!(!Capabilities::parse(&Str::from("LE")).unwrap().is_usable());
+        assert!(Capabilities::parse(&Str::from("LE")).unwrap().is_usable());
     }
 
     #[test]

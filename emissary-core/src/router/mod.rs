@@ -60,12 +60,6 @@ const NET_ID: u8 = 2u8;
 /// immediately, cancelling graceful shutdown.
 const IMMEDIATE_SHUTDOWN_COUNT: usize = 2usize;
 
-/// Profile storage backup interval.
-///
-/// How often is backup (stored to disk) taken of [`ProfileStorage`].
-const PROFILE_STORAGE_BACKUP_INTERVAL: Duration = Duration::from_secs(15 * 60);
-// const PROFILE_STORAGE_BACKUP_INTERVAL: Duration = Duration::from_secs(30);
-
 /// Protocol address information.
 #[derive(Debug, Default, Copy, Clone)]
 pub struct ProtocolAddressInfo {
@@ -226,7 +220,7 @@ impl<R: Runtime> Router<R> {
             ..
         } = config;
 
-        let profile_storage = ProfileStorage::<R>::new(&routers, &profiles);
+        let profile_storage = ProfileStorage::<R>::new(&routers, &profiles, storage.clone());
         let serialized_router_info = local_router_info.serialize(&local_signing_key);
         let local_router_id = local_router_info.identity.id();
         let mut address_info = ProtocolAddressInfo::default();
@@ -413,29 +407,6 @@ impl<R: Runtime> Router<R> {
             address_info.sam_udp = sam_server.udp_local_address();
 
             R::spawn(sam_server)
-        }
-
-        // start profile storage task in the background if it was enabled
-        //
-        // all this task does is periodically backup router infos and profiles to disk
-        if let Some(storage) = storage {
-            R::spawn(async move {
-                loop {
-                    let _ = R::delay(PROFILE_STORAGE_BACKUP_INTERVAL).await;
-
-                    let routers = profile_storage.backup();
-
-                    if !routers.is_empty() {
-                        tracing::info!(
-                            target: LOG_TARGET,
-                            num_routers = ?routers.len(),
-                            "taking backup of profile storage",
-                        );
-
-                        storage.save_to_disk(routers);
-                    }
-                }
-            });
         }
 
         if let Some(context) = ntcp2_context {

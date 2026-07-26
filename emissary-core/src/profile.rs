@@ -19,7 +19,7 @@
 use crate::{
     crypto::{base64_decode, base64_encode},
     primitives::{RouterId, RouterInfo},
-    runtime::Runtime,
+    runtime::{Instant, Runtime, Storage},
 };
 
 use bytes::Bytes;
@@ -47,11 +47,19 @@ const UNREACHABILITY_THRESHOLD: Duration = Duration::from_secs(180);
 /// How often [`ProfileManager`] sorts profiles.
 const PROFILE_STORAGE_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(60);
 
+/// Profile storage backup interval.
+///
+/// How often is a backup taken of [`ProfileStorage`].
+const PROFILE_STORAGE_BACKUP_INTERVAL: Duration = Duration::from_secs(15 * 60);
+
 /// How many routers does the high capacity bucket hold.
-const NUM_HIGH_CAPACITY_ROUTERS: usize = 100usize;
+const NUM_HIGH_CAPACITY_ROUTERS: usize = 200usize;
 
 /// How many routers does the standard bucket hold.
-const NUM_STANDARD_ROUTERS: usize = 300usize;
+const NUM_STANDARD_ROUTERS: usize = 400usize;
+
+/// How many routers does the untracked bucket hold.
+const NUM_UNTRACKED_ROUTERS: usize = 2000usize;
 
 /// Router bucket.
 pub enum Bucket {
@@ -71,6 +79,9 @@ pub enum Bucket {
 /// Router profile.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Profile {
+    /// Is there an active connection to the router.
+    pub is_connected: bool,
+
     /// Last activity, duration since UNIX epoch.
     pub last_activity: Duration,
 
@@ -124,6 +135,7 @@ impl Profile {
         Self {
             last_activity: Duration::from_secs(0),
             last_declined: None,
+            is_connected: false,
             last_dial_failure: None,
             num_accepted: 0usize,
             num_connection: 0usize,
@@ -137,6 +149,70 @@ impl Profile {
             num_test_successes: 0usize,
             num_unaswered: 0usize,
         }
+    }
+
+    /// Create new [`Profile`] with `last_activity` set to now.
+    fn new_with_activity<R: Runtime>() -> Self {
+        Self {
+            last_activity: R::time_since_epoch(),
+            is_connected: false,
+            last_declined: None,
+            last_dial_failure: None,
+            num_accepted: 0usize,
+            num_connection: 0usize,
+            num_dial_failures: 0usize,
+            num_lookup_failures: 0usize,
+            num_lookup_no_responses: 0usize,
+            num_lookup_successes: 0usize,
+            num_rejected: 0usize,
+            num_selected: 0usize,
+            num_test_failures: 0usize,
+            num_test_successes: 0usize,
+            num_unaswered: 0usize,
+        }
+    }
+
+    /// Is the router considered always inactive.
+    ///
+    /// The router is considered always inactive if it's at least 30 minutes old and has had no
+    /// recorded activity.
+    fn is_always_inactive(&self) -> bool {
+        if self.last_activity < Duration::from_secs(30 * 60) {
+            return false;
+        }
+
+        self.last_declined.is_none()
+            && self.last_dial_failure.is_none()
+            && self.num_accepted == 0usize
+            && self.num_connection == 0usize
+            && self.num_dial_failures == 0usize
+            && self.num_lookup_failures == 0usize
+            && self.num_lookup_no_responses == 0usize
+            && self.num_lookup_successes == 0usize
+            && self.num_rejected == 0usize
+            && self.num_selected == 0usize
+            && self.num_test_failures == 0usize
+            && self.num_test_successes == 0usize
+            && self.num_unaswered == 0usize
+    }
+
+    /// Is the router considered always unreachable.
+    ///
+    /// If the router has had more than 5 dial failures with no successes, the router is considered
+    /// always unreachable.
+    fn is_always_unreachable(&self) -> bool {
+        self.num_dial_failures > 5 && self.num_connection == 0
+    }
+
+    /// Is the router considered "recently inactive".
+    ///
+    /// If the router hasn't had any activity in the last 2 hours, it's considered recently
+    /// inactive.
+    ///
+    /// This is different from `is_always_inactive()` as the router may have had activity at some
+    /// point in time but hasn't any activity in the last 2 hours and is not actively connected.
+    fn is_recently_inactive(&self) -> bool {
+        self.last_activity > Duration::from_secs(2 * 60 * 60) && !self.is_connected
     }
 
     /// Has the router recently declined a tunnel.
@@ -264,22 +340,29 @@ pub struct ProfileStorage<R: Runtime> {
     /// Untracked routers.
     untracked: Arc<RwLock<HashSet<RouterId>>>,
 
+    /// Object providing storage access, if provided.
+    storage: Option<Arc<dyn Storage>>,
+
     /// Marker for `Runtime`.
     _runtime: PhantomData<R>,
 }
 
 impl<R: Runtime> ProfileStorage<R> {
     /// Create new [`ProfileStorage`].
-    pub fn new(routers: &[Vec<u8>], profiles: &[(String, Profile)]) -> Self {
+    pub fn new(
+        routers: &[Vec<u8>],
+        profiles: &[(String, Profile)],
+        storage: Option<Arc<dyn Storage>>,
+    ) -> Self {
         tracing::info!(
             target: LOG_TARGET,
             num_routers = ?routers.len(),
             num_profiles = ?profiles.len(),
-            "initialize profile storage",
+            "initializing profile storage",
         );
 
         // TODO: not good
-        let (routers, raw_router_infos): (HashMap<_, _>, HashMap<_, _>) = routers
+        let (mut routers, mut raw_router_infos): (HashMap<_, _>, HashMap<_, _>) = routers
             .iter()
             .filter_map(|router| {
                 RouterInfo::parse::<R>(router)
@@ -324,6 +407,7 @@ impl<R: Runtime> ProfileStorage<R> {
             })
             .unzip();
 
+        // split routers into fast and untracked buckets
         let (fast, untracked) = {
             let (total, routers, untracked) = fast.iter().flatten().fold(
                 (0f64, HashSet::<RouterId>::new(), HashSet::<RouterId>::new()),
@@ -368,6 +452,7 @@ impl<R: Runtime> ProfileStorage<R> {
                 let untracked = routers
                     .into_iter()
                     .filter_map(|(router_id, _)| (!fast.contains(&router_id)).then_some(router_id))
+                    .chain(untracked)
                     .collect();
 
                 (fast, untracked)
@@ -376,6 +461,7 @@ impl<R: Runtime> ProfileStorage<R> {
 
         let standard = standard.into_iter().flatten().chain(untracked).collect::<HashSet<_>>();
 
+        // split routers into standard and untracked buckets
         let (standard, untracked) = {
             let (total, routers, untracked) = standard.iter().fold(
                 (0f64, HashSet::<RouterId>::new(), HashSet::<RouterId>::new()),
@@ -422,26 +508,105 @@ impl<R: Runtime> ProfileStorage<R> {
                     .filter_map(|(router_id, _)| {
                         (!standard.contains(&router_id)).then_some(router_id)
                     })
+                    .chain(untracked)
                     .collect();
 
                 (standard, untracked)
             }
         };
 
-        let storage = Self {
+        // cull the untracked bucket down to 2000 routers
+        let untracked = {
+            let untracked = untracked.into_iter().collect::<Vec<_>>();
+            let mut total = 0f64;
+            let tracked = untracked
+                .iter()
+                .cloned()
+                .filter_map(|router_id| {
+                    profiles.get(&router_id).expect("to exist").participation_rate().map(|rate| {
+                        total += rate;
+                        router_id
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            if tracked.is_empty() {
+                untracked.into_iter().take(NUM_UNTRACKED_ROUTERS).collect::<HashSet<_>>()
+            } else {
+                let avg = total / tracked.len() as f64;
+                let mut tracked = tracked
+                    .into_iter()
+                    .map(|router_id| {
+                        // profile must exist since the router's participation rate was calculated
+                        let rate = profiles
+                            .get(&router_id)
+                            .expect("to exist")
+                            .weighted_participation_rate(avg);
+
+                        (router_id, rate)
+                    })
+                    .collect::<Vec<_>>();
+
+                tracked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+                tracked
+                    .iter()
+                    .take(NUM_UNTRACKED_ROUTERS)
+                    .map(|(router_id, _)| router_id.clone())
+                    .collect::<HashSet<_>>()
+            }
+        };
+
+        // remove all routers that were not included in any of the buckets
+        {
+            let router_ids = routers
+                .iter()
+                .flat_map(|(router_id, _)| {
+                    (!fast.contains(router_id)
+                        && !standard.contains(router_id)
+                        && !untracked.contains(router_id))
+                    .then(|| router_id.clone())
+                })
+                .collect::<Vec<_>>();
+
+            let router_ids = router_ids
+                .into_iter()
+                .map(|router_id| {
+                    routers.remove(&router_id);
+                    raw_router_infos.remove(&router_id);
+                    profiles.remove(&router_id);
+
+                    base64_encode(router_id.to_vec())
+                })
+                .collect::<Vec<_>>();
+
+            if let Some(ref storage) = storage {
+                storage.remove_from_disk(router_ids);
+            }
+        }
+
+        tracing::info!(
+            target: LOG_TARGET,
+            num_fast = fast.len(),
+            num_standard = standard.len(),
+            num_untracked = untracked.len(),
+            "profile storage initialized"
+        );
+
+        let profile_storage = Self {
             discovered_routers: Default::default(),
             fast: Arc::new(RwLock::new(fast)),
             profiles: Arc::new(RwLock::new(profiles)),
             raw_router_infos: Arc::new(RwLock::new(raw_router_infos)),
             routers: Arc::new(RwLock::new(routers)),
             standard: Arc::new(RwLock::new(standard)),
+            storage,
             untracked: Arc::new(RwLock::new(untracked)),
             _runtime: Default::default(),
         };
 
-        R::spawn(ProfileManager::<R>::new(storage.clone()).run());
+        R::spawn(ProfileManager::<R>::new(profile_storage.clone()).run());
 
-        storage
+        profile_storage
     }
 
     /// Insert `router` into [`ProfileStorage`].
@@ -462,7 +627,7 @@ impl<R: Runtime> ProfileStorage<R> {
         }
 
         if self.routers.write().insert(router_id.clone(), router_info).is_none() {
-            self.profiles.write().insert(router_id, Profile::new());
+            self.profiles.write().insert(router_id, Profile::new_with_activity::<R>());
         }
 
         true
@@ -605,6 +770,7 @@ impl<R: Runtime> ProfileStorage<R> {
         let profile = inner.get_mut(router_id).expect("to exist");
 
         profile.num_selected += 1;
+        profile.last_activity = R::time_since_epoch();
     }
 
     /// Record that `router_id`'s participation for a tunnel could not be determined.
@@ -687,15 +853,26 @@ impl<R: Runtime> ProfileStorage<R> {
         match inner.get_mut(router_id) {
             Some(profile) => {
                 profile.num_connection += 1;
+                profile.is_connected = true;
                 profile.last_activity = R::time_since_epoch();
             }
             None => {
                 let mut profile = Profile::new();
+                profile.is_connected = true;
                 profile.num_connection += 1;
                 profile.last_activity = R::time_since_epoch();
 
                 inner.insert(router_id.clone(), profile);
             }
+        }
+    }
+
+    /// Connection to the router has been closed.
+    pub fn connection_closed(&self, router_id: &RouterId) {
+        let mut inner = self.profiles.write();
+
+        if let Some(profile) = inner.get_mut(router_id) {
+            profile.is_connected = false
         }
     }
 
@@ -749,23 +926,6 @@ impl<R: Runtime> ProfileStorage<R> {
         }
     }
 
-    /// Get backup of [`ProfileStorage`].
-    pub fn backup(&self) -> Vec<(String, Option<Vec<u8>>, Profile)> {
-        let profiles = self.profiles.read().clone();
-        let mut inner = self.discovered_routers.write();
-
-        profiles
-            .into_iter()
-            .map(|(router_id, profile)| {
-                (
-                    base64_encode(router_id.to_vec()),
-                    inner.remove(&router_id),
-                    profile,
-                )
-            })
-            .collect::<Vec<_>>()
-    }
-
     /// Create new [`ProfileStorage`] from random `routers`.
     ///
     /// Only used in tests.
@@ -801,6 +961,7 @@ impl<R: Runtime> ProfileStorage<R> {
             raw_router_infos: Default::default(),
             routers: Arc::new(RwLock::new(routers)),
             standard: Arc::new(RwLock::new(standard.into_iter().flatten().collect())),
+            storage: None,
             untracked: Default::default(),
             _runtime: Default::default(),
         }
@@ -821,6 +982,8 @@ impl<R: Runtime> ProfileManager<R> {
 
     /// Run the event loop of profile manager.
     async fn run(self) {
+        let mut last_backup = R::now();
+
         loop {
             R::delay(PROFILE_STORAGE_MAINTENANCE_INTERVAL).await;
 
@@ -877,13 +1040,16 @@ impl<R: Runtime> ProfileManager<R> {
             let mut fast = HashSet::<RouterId>::new();
             let mut standard = HashSet::<RouterId>::new();
             let mut untracked = HashSet::<RouterId>::new();
+            let mut removed = HashSet::<RouterId>::new();
 
             for (router_id, _) in routers {
                 let Some(router_info) = router_infos.get(&router_id) else {
+                    removed.insert(router_id);
                     continue;
                 };
 
                 if !router_info.is_reachable() {
+                    removed.insert(router_id);
                     continue;
                 }
 
@@ -902,10 +1068,165 @@ impl<R: Runtime> ProfileManager<R> {
 
             untracked.extend(no_profile_routers);
 
+            // remove unusable routers
+            if let Some(ref storage) = self.profile_storage.storage {
+                storage.remove_from_disk(
+                    removed
+                        .into_iter()
+                        .map(|router_id| base64_encode(router_id.to_vec()))
+                        .collect::<Vec<_>>(),
+                );
+            }
+
             // replace old groups with new groups
-            *self.profile_storage.fast.write() = fast;
-            *self.profile_storage.standard.write() = standard;
-            *self.profile_storage.untracked.write() = untracked;
+            {
+                *self.profile_storage.fast.write() = fast;
+                *self.profile_storage.standard.write() = standard;
+                *self.profile_storage.untracked.write() = untracked;
+            }
+            drop(profiles);
+            drop(router_infos);
+
+            if last_backup.elapsed() <= PROFILE_STORAGE_BACKUP_INTERVAL {
+                continue;
+            }
+
+            // cull the set of untracked routers to `NUM_UNTRACKED_ROUTERS`
+            let router_ids = {
+                let inner = self.profile_storage.untracked.read();
+                let profiles = self.profile_storage.profiles.read();
+
+                if inner.len() <= NUM_UNTRACKED_ROUTERS {
+                    Vec::new()
+                } else {
+                    let mut always_inactive = Vec::new();
+                    let mut always_unreachable = Vec::new();
+                    let mut recently_inactive = Vec::new();
+
+                    // first remove always inactive routers
+                    inner.iter().for_each(|router_id| {
+                        if profiles
+                            .get(router_id)
+                            .is_some_and(|profile| profile.is_always_inactive())
+                        {
+                            always_inactive.push(router_id.clone());
+                        }
+                    });
+
+                    // if necessary, remove always unreachable routers
+                    if inner.len() - always_inactive.len() > NUM_UNTRACKED_ROUTERS {
+                        inner.iter().for_each(|router_id| {
+                            if profiles
+                                .get(router_id)
+                                .is_some_and(|profile| profile.is_always_unreachable())
+                            {
+                                always_unreachable.push(router_id.clone());
+                            }
+                        })
+                    }
+
+                    if inner.len() - always_inactive.len() - always_unreachable.len()
+                        > NUM_UNTRACKED_ROUTERS
+                    {
+                        inner.iter().for_each(|router_id| {
+                            if profiles
+                                .get(router_id)
+                                .is_some_and(|profile| profile.is_recently_inactive())
+                            {
+                                recently_inactive.push(router_id.clone());
+                            }
+                        })
+                    }
+
+                    always_inactive
+                        .into_iter()
+                        .chain(always_unreachable)
+                        .chain(recently_inactive)
+                        .collect()
+                }
+            };
+
+            if let Some(ref storage) = self.profile_storage.storage {
+                if !router_ids.is_empty() {
+                    // purge all collections from the removed routers
+                    let router_ids = {
+                        let mut removed = Vec::new();
+                        let mut fast = self.profile_storage.fast.write();
+                        let mut standard = self.profile_storage.standard.write();
+                        let mut untracked = self.profile_storage.untracked.write();
+                        let mut profiles = self.profile_storage.profiles.write();
+                        let mut raw_router_infos = self.profile_storage.raw_router_infos.write();
+                        let mut routers = self.profile_storage.routers.write();
+                        let mut discovered = self.profile_storage.discovered_routers.write();
+
+                        for router_id in router_ids {
+                            if untracked.len() <= NUM_UNTRACKED_ROUTERS {
+                                break;
+                            }
+
+                            let Some(profile) = profiles.get(&router_id) else {
+                                continue;
+                            };
+
+                            let should_remove = !profile.is_connected
+                                && (profile.is_always_inactive()
+                                    || profile.is_always_unreachable()
+                                    || profile.is_recently_inactive());
+
+                            if !should_remove || !untracked.contains(&router_id) {
+                                continue;
+                            }
+
+                            fast.remove(&router_id);
+                            standard.remove(&router_id);
+                            untracked.remove(&router_id);
+                            profiles.remove(&router_id);
+                            raw_router_infos.remove(&router_id);
+                            routers.remove(&router_id);
+                            discovered.remove(&router_id);
+                            removed.push(base64_encode(router_id.to_vec()));
+                        }
+
+                        removed
+                    };
+
+                    storage.remove_from_disk(router_ids);
+                }
+
+                tracing::info!(
+                    target: LOG_TARGET,
+                    num_fast = %self.profile_storage.fast.read().len(),
+                    num_standard = %self.profile_storage.standard.read().len(),
+                    num_untracked = %self.profile_storage.untracked.read().len(),
+                    "profile storage updated",
+                );
+
+                let profiles = self.profile_storage.profiles.read().clone();
+                let mut inner = self.profile_storage.discovered_routers.write();
+
+                let routers = profiles
+                    .into_iter()
+                    .map(|(router_id, profile)| {
+                        (
+                            base64_encode(router_id.to_vec()),
+                            inner.remove(&router_id),
+                            profile,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                if !routers.is_empty() {
+                    tracing::info!(
+                        target: LOG_TARGET,
+                        num_routers = ?routers.len(),
+                        "taking backup of profile storage",
+                    );
+
+                    storage.save_to_disk(routers);
+                }
+            }
+
+            last_backup = R::now();
         }
     }
 }
@@ -926,7 +1247,7 @@ mod tests {
             })
             .unzip();
 
-        let profiles = ProfileStorage::<MockRuntime>::new(&infos, &Vec::new());
+        let profiles = ProfileStorage::<MockRuntime>::new(&infos, &Vec::new(), None);
 
         assert_eq!(profiles.routers.read().len(), 5);
         assert_eq!(profiles.profiles.read().len(), 5);
@@ -956,6 +1277,7 @@ mod tests {
                 (
                     router_id,
                     Profile {
+                        is_connected: false,
                         last_activity: Duration::from_secs((i as u64 + 1) * 10000),
                         last_declined: None,
                         last_dial_failure: None,
@@ -975,7 +1297,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let profiles = ProfileStorage::<MockRuntime>::new(&infos, &profiles);
+        let profiles = ProfileStorage::<MockRuntime>::new(&infos, &profiles, None);
 
         assert_eq!(profiles.routers.read().len(), 5);
         assert_eq!(profiles.profiles.read().len(), 5);
@@ -1009,6 +1331,7 @@ mod tests {
                 (
                     router_id,
                     Profile {
+                        is_connected: false,
                         last_activity: Duration::from_secs((i as u64 + 1) * 10000),
                         last_declined: None,
                         last_dial_failure: None,
@@ -1028,7 +1351,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let profiles = ProfileStorage::<MockRuntime>::new(&Vec::new(), &profiles);
+        let profiles = ProfileStorage::<MockRuntime>::new(&Vec::new(), &profiles, None);
 
         assert!(profiles.routers.read().is_empty());
         assert!(profiles.profiles.read().is_empty());
@@ -1036,7 +1359,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_profile_if_it_doesnt_exist() {
-        let profiles = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new());
+        let profiles = ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None);
         let router_id = RouterId::random();
 
         assert!(profiles.routers.read().is_empty());
@@ -1049,5 +1372,6 @@ mod tests {
             reader.profiles.get(&router_id).unwrap().num_connection,
             1usize
         );
+        assert!(reader.profiles.get(&router_id).unwrap().is_connected);
     }
 }

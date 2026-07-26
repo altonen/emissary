@@ -234,7 +234,7 @@ mod tests {
 
     #[tokio::test]
     async fn response_channel_closed() {
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         let (hops, _noise_contexts): (Vec<(Bytes, StaticPublicKey)>, Vec<NoiseContext>) = (0..3)
             .map(|i| make_router(if i % 2 == 0 { true } else { false }))
             .into_iter()
@@ -286,7 +286,7 @@ mod tests {
 
     #[tokio::test]
     async fn tunnel_build_timeouts() {
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         let (hops, _noise_contexts): (Vec<(Bytes, StaticPublicKey)>, Vec<NoiseContext>) = (0..3)
             .map(|i| make_router(if i % 2 == 0 { true } else { false }))
             .into_iter()
@@ -338,7 +338,7 @@ mod tests {
 
     #[tokio::test]
     async fn tunnel_build_dial_failure() {
-        let profile_storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let profile_storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         let (hops, _noise_contexts): (Vec<(Bytes, StaticPublicKey)>, Vec<NoiseContext>) = (0..3)
             .map(|i| make_router(if i % 2 == 0 { true } else { false }))
             .into_iter()

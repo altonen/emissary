@@ -1464,7 +1464,7 @@ mod tests {
                     bob.signing_key.clone(),
                 )
                 .with_profile_storage({
-                    let storage = ProfileStorage::new(&[], &[]);
+                    let storage = ProfileStorage::new(&[], &[], None);
                     storage.discover_router(
                         alice.router_info.clone(),
                         Bytes::from(alice.serialized.clone()),
@@ -1556,7 +1556,7 @@ mod tests {
                     bob.signing_key.clone(),
                 )
                 .with_profile_storage({
-                    let storage = ProfileStorage::new(&[], &[]);
+                    let storage = ProfileStorage::new(&[], &[], None);
                     storage.discover_router(
                         alice.router_info.clone(),
                         Bytes::from(alice.serialized.clone()),
@@ -1757,7 +1757,7 @@ mod tests {
             [0xab; 32],
             RouterContextBuilder::default()
                 .with_profile_storage({
-                    let storage = ProfileStorage::new(&[], &[]);
+                    let storage = ProfileStorage::new(&[], &[], None);
                     storage.discover_router(
                         alice.router_info.clone(),
                         Bytes::from(alice.serialized.clone()),
@@ -1871,7 +1871,7 @@ mod tests {
                     charlie.signing_key.clone(),
                 )
                 .with_profile_storage({
-                    let storage = ProfileStorage::new(&[], &[]);
+                    let storage = ProfileStorage::new(&[], &[], None);
                     storage.discover_router(
                         alice.router_info.clone(),
                         Bytes::from(alice.serialized.clone()),

@@ -541,7 +541,7 @@ mod tests {
             true,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 router_info1.identity.id(),
                 Bytes::from(router_info1.serialize(&signing1)),
                 static1,
@@ -556,7 +556,7 @@ mod tests {
             true,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 router_info2.identity.id(),
                 Bytes::from(router_info2.serialize(&signing2)),
                 static2,
@@ -723,7 +723,7 @@ mod tests {
             true,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 router_info1.identity.id(),
                 Bytes::from(router_info1.serialize(&signing1)),
                 static1,
@@ -738,7 +738,7 @@ mod tests {
             true,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 router_info2.identity.id(),
                 Bytes::from(router_info2.serialize(&signing2)),
                 static2,
@@ -908,21 +908,21 @@ mod tests {
         let serialized3 = Bytes::from(router_info3.serialize(&signing3));
 
         let storage1 = {
-            let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+            let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
             storage.discover_router(router_info2.clone(), serialized2.clone());
             storage.discover_router(router_info3.clone(), serialized3.clone());
 
             storage
         };
         let storage2 = {
-            let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+            let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
             storage.discover_router(router_info3.clone(), serialized3.clone());
             storage.discover_router(router_info1.clone(), serialized1.clone());
 
             storage
         };
         let storage3 = {
-            let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+            let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
             storage.discover_router(router_info2.clone(), serialized2.clone());
             storage.discover_router(router_info1.clone(), serialized1.clone());
 
@@ -1195,7 +1195,7 @@ mod tests {
         let (event1_tx, event1_rx) = channel(64);
         let (event2_tx, _event2_rx) = channel(64);
 
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         storage.add_router(router_info2.clone());
         let mut transport1 = Ssu2Transport::<MockRuntime>::new(
             ctx1,
@@ -1217,7 +1217,7 @@ mod tests {
             true,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 router_info2.identity.id(),
                 Bytes::from(router_info2.serialize(&signing2)),
                 static2,
@@ -1370,7 +1370,7 @@ mod tests {
             false,
         );
         let (event3_tx, event3_rx) = channel(64);
-        let storage = ProfileStorage::<MockRuntime>::new(&[], &[]);
+        let storage = ProfileStorage::<MockRuntime>::new(&[], &[], None);
         storage.add_router(router_info2.clone());
 
         let mut transport3 = Ssu2Transport::<MockRuntime>::new(
@@ -1599,7 +1599,7 @@ mod tests {
             true,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 router_info1.identity.id(),
                 Bytes::from(router_info1.serialize(&signing1)),
                 static1,
@@ -1614,7 +1614,7 @@ mod tests {
             true,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 router_info2.identity.id(),
                 Bytes::from(router_info2.serialize(&signing2)),
                 static2,
@@ -1866,7 +1866,7 @@ mod tests {
             true,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 router_info1.identity.id(),
                 Bytes::from(router_info1.serialize(&signing1)),
                 static1,
@@ -1881,7 +1881,7 @@ mod tests {
             true,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 router_info2.identity.id(),
                 Bytes::from(router_info2.serialize(&signing2)),
                 static2,
@@ -1896,7 +1896,7 @@ mod tests {
             true,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 router_info3.identity.id(),
                 Bytes::from(router_info3.serialize(&signing3)),
                 static3,

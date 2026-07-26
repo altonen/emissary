@@ -225,7 +225,7 @@ pub(crate) mod builder {
                 .metrics_handle
                 .unwrap_or_else(|| <MockRuntime as Runtime>::register_metrics(vec![], None));
             let profile_storage =
-                self.profile_storage.unwrap_or_else(|| ProfileStorage::new(&[], &[]));
+                self.profile_storage.unwrap_or_else(|| ProfileStorage::new(&[], &[], None));
             let (router_info, static_key, signing_key) =
                 self.router_info.unwrap_or_else(|| RouterInfoBuilder::default().build());
             let event_handle = self.event_handle.unwrap_or_else(EventHandle::new_for_tests);

@@ -871,7 +871,7 @@ mod tests {
             EventManager::new(None, MockRuntime::register_metrics(vec![], None));
         let router_ctx = RouterContext::new(
             MockRuntime::register_metrics(vec![], None),
-            ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new()),
+            ProfileStorage::<MockRuntime>::new(&Vec::new(), &Vec::new(), None),
             router_info.identity.id(),
             Bytes::from(router_info.serialize(&signing_key)),
             static_key.clone(),

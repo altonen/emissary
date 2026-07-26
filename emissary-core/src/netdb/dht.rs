@@ -328,7 +328,7 @@ mod tests {
             routers,
             RouterContext::new(
                 MockRuntime::register_metrics(vec![], None),
-                ProfileStorage::new(&[], &[]),
+                ProfileStorage::new(&[], &[], None),
                 router_info.identity.id(),
                 Bytes::from(router_info.serialize(&signing_key)),
                 static_key,

@@ -1023,7 +1023,7 @@ mod tests {
             3usize,
             netdb_handle,
             noise_ctx,
-            ProfileStorage::new(&[], &[]),
+            ProfileStorage::new(&[], &[], None),
             false,
             Bytes::from(serialized),
         );
@@ -1198,7 +1198,7 @@ mod tests {
             3usize,
             netdb_handle,
             noise_ctx,
-            ProfileStorage::new(&[], &[]),
+            ProfileStorage::new(&[], &[], None),
             false,
             Bytes::from(serialized),
         );
@@ -1380,7 +1380,7 @@ mod tests {
             3usize,
             netdb_handle,
             noise_ctx,
-            ProfileStorage::new(&[], &[]),
+            ProfileStorage::new(&[], &[], None),
             false,
             Bytes::from(serialized),
         );
@@ -1564,7 +1564,7 @@ mod tests {
         let destination_id = lease_set.header.destination.id();
         let key = Bytes::from(destination_id.to_vec());
         let serialized = lease_set.serialize(&signing_key);
-        let profile_storage = ProfileStorage::new(&[], &[]);
+        let profile_storage = ProfileStorage::new(&[], &[], None);
         let mut manager = LeaseSetManager::<MockRuntime>::new(
             tunnels,
             destination_id,
@@ -1802,7 +1802,7 @@ mod tests {
         let destination_id = lease_set.header.destination.id();
         let key = Bytes::from(destination_id.to_vec());
         let serialized = lease_set.serialize(&signing_key);
-        let profile_storage = ProfileStorage::new(&[], &[]);
+        let profile_storage = ProfileStorage::new(&[], &[], None);
         let mut manager = LeaseSetManager::<MockRuntime>::new(
             tunnels,
             destination_id,
@@ -2056,7 +2056,7 @@ mod tests {
         let destination_id = lease_set.header.destination.id();
         let key = Bytes::from(destination_id.to_vec());
         let serialized = lease_set.serialize(&signing_key);
-        let profile_storage = ProfileStorage::new(&[], &[]);
+        let profile_storage = ProfileStorage::new(&[], &[], None);
         let mut manager = LeaseSetManager::<MockRuntime>::new(
             tunnels,
             destination_id,
@@ -2319,7 +2319,7 @@ mod tests {
         let destination_id = lease_set.header.destination.id();
         let key = Bytes::from(destination_id.to_vec());
         let serialized = lease_set.serialize(&signing_key);
-        let profile_storage = ProfileStorage::new(&[], &[]);
+        let profile_storage = ProfileStorage::new(&[], &[], None);
         let mut manager = LeaseSetManager::<MockRuntime>::new(
             tunnels,
             destination_id,
@@ -2573,7 +2573,7 @@ mod tests {
         let tunnels = lease_set.leases.clone();
         let destination_id = lease_set.header.destination.id();
         let serialized = lease_set.serialize(&signing_key);
-        let profile_storage = ProfileStorage::new(&[], &[]);
+        let profile_storage = ProfileStorage::new(&[], &[], None);
         let manager = LeaseSetManager::<MockRuntime>::new(
             tunnels,
             destination_id,
@@ -2656,7 +2656,7 @@ mod tests {
             3usize,
             netdb_handle,
             noise_ctx,
-            ProfileStorage::new(&[], &[]),
+            ProfileStorage::new(&[], &[], None),
             false,
             Bytes::from(serialized),
         );
@@ -2821,7 +2821,7 @@ mod tests {
         let tunnels = lease_set.leases.clone();
         let destination_id = lease_set.header.destination.id();
         let serialized = lease_set.serialize(&signing_key);
-        let profile_storage = ProfileStorage::new(&[], &[]);
+        let profile_storage = ProfileStorage::new(&[], &[], None);
         let mut manager = LeaseSetManager::<MockRuntime>::new(
             tunnels,
             destination_id,
@@ -2886,7 +2886,7 @@ mod tests {
         let destination_id = lease_set.header.destination.id();
         let key = Bytes::from(destination_id.to_vec());
         let serialized = lease_set.serialize(&signing_key);
-        let profile_storage = ProfileStorage::new(&[], &[]);
+        let profile_storage = ProfileStorage::new(&[], &[], None);
         let mut manager = LeaseSetManager::<MockRuntime>::new(
             tunnels.clone(),
             destination_id,

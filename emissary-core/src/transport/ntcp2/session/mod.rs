@@ -950,7 +950,7 @@ mod tests {
             local.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 local.router_info.identity.id(),
                 Bytes::from(local.router_info.serialize(&local.signing_key)),
                 local.static_key,
@@ -980,7 +980,7 @@ mod tests {
             remote.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 remote.router_info.identity.id(),
                 Bytes::from(remote.router_info.serialize(&remote.signing_key)),
                 remote.static_key,
@@ -1043,7 +1043,7 @@ mod tests {
             local.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 local.router_info.identity.id(),
                 Bytes::from(local.router_info.serialize(&local.signing_key)),
                 local.static_key,
@@ -1073,7 +1073,7 @@ mod tests {
             remote.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 remote.router_info.identity.id(),
                 Bytes::from(remote.router_info.serialize(&remote.signing_key)),
                 remote.static_key,
@@ -1134,7 +1134,7 @@ mod tests {
             local.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 local.router_info.identity.id(),
                 Bytes::from(local.router_info.serialize(&local.signing_key)),
                 local.static_key,
@@ -1165,7 +1165,7 @@ mod tests {
             remote.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 remote.router_info.identity.id(),
                 Bytes::from(remote.router_info.serialize(&remote.signing_key)),
                 remote.static_key,
@@ -1201,7 +1201,7 @@ mod tests {
             local.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 local.router_info.identity.id(),
                 Bytes::from(local.router_info.serialize(&local.signing_key)),
                 local.static_key,
@@ -1225,7 +1225,7 @@ mod tests {
             remote.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 remote.router_info.identity.id(),
                 Bytes::from(remote.router_info.serialize(&remote.signing_key)),
                 remote.static_key,
@@ -1260,7 +1260,7 @@ mod tests {
             local.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 local.router_info.identity.id(),
                 Bytes::from(local.router_info.serialize(&local.signing_key)),
                 local.static_key,
@@ -1324,7 +1324,7 @@ mod tests {
             local.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 local.router_info.identity.id(),
                 Bytes::from(local.router_info.serialize(&local.signing_key)),
                 local.static_key,
@@ -1355,7 +1355,7 @@ mod tests {
             remote.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 remote.router_info.identity.id(),
                 Bytes::from(remote.router_info.serialize(&remote.signing_key)),
                 remote.static_key,
@@ -1517,7 +1517,7 @@ mod tests {
             remote.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 remote.router_info.identity.id(),
                 Bytes::from(remote.router_info.serialize(&remote.signing_key)),
                 remote.static_key,
@@ -1553,7 +1553,7 @@ mod tests {
                     local.ntcp2_iv,
                     RouterContext::new(
                         MockRuntime::register_metrics(Vec::new(), None),
-                        ProfileStorage::<MockRuntime>::new(&[], &[]),
+                        ProfileStorage::<MockRuntime>::new(&[], &[], None),
                         local.router_info.identity.id(),
                         Bytes::from(local.router_info.serialize(&local.signing_key)),
                         local.static_key,
@@ -1620,7 +1620,7 @@ mod tests {
             remote.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 remote.router_info.identity.id(),
                 Bytes::from(remote.router_info.serialize(&remote.signing_key)),
                 remote.static_key,
@@ -1656,7 +1656,7 @@ mod tests {
                     local.ntcp2_iv,
                     RouterContext::new(
                         MockRuntime::register_metrics(Vec::new(), None),
-                        ProfileStorage::<MockRuntime>::new(&[], &[]),
+                        ProfileStorage::<MockRuntime>::new(&[], &[], None),
                         local.router_info.identity.id(),
                         Bytes::from(local.router_info.serialize(&local.signing_key)),
                         local.static_key,
@@ -1694,7 +1694,7 @@ mod tests {
             local.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 local.router_info.identity.id(),
                 Bytes::from(local.router_info.serialize(&local.signing_key)),
                 local.static_key,
@@ -1717,7 +1717,7 @@ mod tests {
             remote.ntcp2_iv,
             RouterContext::new(
                 MockRuntime::register_metrics(Vec::new(), None),
-                ProfileStorage::<MockRuntime>::new(&[], &[]),
+                ProfileStorage::<MockRuntime>::new(&[], &[], None),
                 remote.router_info.identity.id(),
                 Bytes::from(remote.router_info.serialize(&remote.signing_key)),
                 remote.static_key,
