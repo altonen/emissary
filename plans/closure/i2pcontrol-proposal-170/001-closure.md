@@ -25,8 +25,8 @@ Closure review commit: head of implementation branch
 | 13 | Malformed, oversized, unsupported, or unauthorized requests fail boundedly without panic | PASS | `MAX_BODY_SIZE = 1MB`; `MAX_CONCURRENT_REQUESTS = 64`; parse errors return `PARSE_ERROR`; unknown methods return `METHOD_NOT_FOUND`; unauthorized returns `APP_ERROR`; oversized returns `PAYLOAD_TOO_LARGE` |
 | 14 | Server starts outside frontend branches and runs in headless mode | PASS | I2PControl server spawned in `setup_router` before UI branch; `#[cfg(not(feature = "ui"))]` main works with `i2pcontrol` feature |
 | 15 | UI and I2PControl compile together without ownership conflict | PASS | Both features activate `axum` independently; no shared mutable state between UI and I2PControl |
-| 16 | Shutdown is structured, bounded, releases port, leaves no detached task | PASS | `shutdown_rx: broadcast::Receiver<()>` in `run_server`; `tokio::select!` for server vs shutdown; `token_service.clear()` on exit |
-| 17 | Unexpected enabled-listener failure is surfaced deterministically | PASS | Server errors logged via `tracing::error!` and returned as `Err(I2pControlError::Internal(...))` |
+| 16 | Shutdown is structured, bounded, releases port, leaves no detached task | PASS | `router_event_loop` sends `i2pcontrol_shutdown.send(())` on ctrl_c and shutdown_rx; `serve` receives via `shutdown_rx.recv()`; `tokio::select!` for server vs shutdown; `token_service().clear()` on exit; broadcast channel ensures clean signal delivery |
+| 17 | Unexpected enabled-listener failure is surfaced deterministically | PASS | `init_server` performs validation, TLS setup, and port binding before spawning the server task; errors propagated via `?` in `setup_router` (returns `anyhow::Error`); server task errors logged via `tracing::error!` |
 | 18 | No Proposal 170 feature method returns fabricated success or placeholder data | PASS | Unknown methods return `METHOD_NOT_FOUND`; `FakeControlPlane` returns empty stubs; no placeholder success handlers registered |
 | 19 | No core router behavior or dependency boundary changes | PASS | `emissary-core/Cargo.toml` unchanged; `rg` confirms no axum/rustls/serde_json in core |
 | 20 | No frontend behavior or source dependency is added | PASS | `rg` confirms no `crate::ui`, `mod ui`, or `dioxus` in `i2pcontrol/` module or tests |
@@ -108,7 +108,7 @@ No files outside the necessary CLI/config/test/docs boundary changed without jus
 | Info | `rcgen`, `rustls-pemfile`, `tokio-rustls` are optional dependencies gated behind `i2pcontrol` feature | By design: feature-gated |
 | Info | Workspace UI tests fail due to missing system GTK/WebKit libraries | Pre-existing, not caused by this implementation |
 
-No high or medium severity findings.
+No high or medium severity findings. Criteria 16 and 17 (shutdown signal wiring and startup failure surfacing) were addressed in a corrective fix during the closing phase.
 
 ## 6. Disposition
 

@@ -27,7 +27,6 @@ use axum::routing::post;
 use axum::{Json, Router};
 use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
-use tokio_rustls::TlsAcceptor;
 use tracing;
 
 use super::auth::{self, TokenService};
@@ -83,54 +82,61 @@ impl I2pControlConfig {
 }
 
 /// Shared application state for the I2PControl server.
-struct I2pControlState {
+pub(crate) struct I2pControlState {
     token_service: TokenService,
+    #[allow(dead_code)]
     password: String,
+    #[allow(dead_code)]
     control_plane: Box<dyn ControlPlane>,
     semaphore: Semaphore,
 }
 
-/// Start the I2PControl HTTPS server.
-///
-/// This function:
-/// 1. Validates configuration
-/// 2. Builds TLS material
-/// 3. Binds the listener
-/// 4. Runs the server under structured cancellation
-/// 5. Performs bounded graceful shutdown
-pub async fn run_server(
-    config: I2pControlConfig,
-    base_path: std::path::PathBuf,
-    mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
-) -> Result<(), I2pControlError> {
-    if !config.enabled {
-        tracing::debug!(
-            target: LOG_TARGET,
-            "I2PControl is disabled, not starting listener",
-        );
-        return Ok(());
+impl I2pControlState {
+    /// Create a new state with the given password.
+    pub fn new(password: String) -> Self {
+        Self {
+            token_service: TokenService::new(),
+            password,
+            control_plane: Box::new(FakeControlPlane::new()),
+            semaphore: Semaphore::new(MAX_CONCURRENT_REQUESTS),
+        }
     }
 
+    /// Get a reference to the token service.
+    pub fn token_service(&self) -> &TokenService {
+        &self.token_service
+    }
+}
+
+/// A bound and initialized I2PControl server, ready to serve requests.
+///
+/// Created by `init_server` which performs validation, TLS setup, and port binding.
+/// Passed to `serve` which runs the request loop under structured cancellation.
+pub struct ServerInstance {
+    listener: TcpListener,
+    state: Arc<I2pControlState>,
+    bind: SocketAddr,
+}
+
+/// Initialize the I2PControl server: validate config, set up TLS, bind the port.
+///
+/// Returns a `ServerInstance` ready to serve, or an error if startup fails.
+/// This function is synchronous-safe for calling from `setup_router` so that
+/// bind/TLS/startup failures are surfaced as application errors.
+pub async fn init_server(
+    config: &I2pControlConfig,
+    base_path: &std::path::Path,
+) -> Result<ServerInstance, I2pControlError> {
     config.validate()?;
 
-    // Build TLS config
-    let tls_config = super::tls::build_tls_config(&config.tls, &base_path)?;
-    let _tls_acceptor = TlsAcceptor::from(tls_config);
+    // Build TLS config (validates cert/key material)
+    let tls_config = super::tls::build_tls_config(&config.tls, base_path)?;
+    let _tls_acceptor = tokio_rustls::TlsAcceptor::from(tls_config);
 
     // Build shared state
-    let state = Arc::new(I2pControlState {
-        token_service: TokenService::new(),
-        password: config.password.clone(),
-        control_plane: Box::new(FakeControlPlane::new()),
-        semaphore: Semaphore::new(MAX_CONCURRENT_REQUESTS),
-    });
+    let state = Arc::new(I2pControlState::new(config.password.clone()));
 
-    // Build Axum router
-    let app = Router::new().route("/", post(handle_jsonrpc)).with_state(state.clone());
-
-    let app = app.into_make_service();
-
-    // Bind listener
+    // Bind listener — this verifies the port is available
     let listener = TcpListener::bind(config.bind)
         .await
         .map_err(|e| I2pControlError::Bind(format!("Failed to bind to {}: {e}", config.bind)))?;
@@ -138,7 +144,39 @@ pub async fn run_server(
     tracing::info!(
         target: LOG_TARGET,
         bind = %config.bind,
-        "I2PControl HTTPS listener started",
+        "I2PControl HTTPS listener bound",
+    );
+
+    Ok(ServerInstance {
+        listener,
+        state,
+        bind: config.bind,
+    })
+}
+
+/// Run the I2PControl server loop with structured shutdown.
+///
+/// This function is called from a spawned task after `init_server` has
+/// validated configuration, set up TLS, and bound the port.
+pub async fn serve(
+    instance: ServerInstance,
+    mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
+) -> Result<(), I2pControlError> {
+    let ServerInstance {
+        listener,
+        state,
+        bind,
+    } = instance;
+
+    // Build Axum router
+    let app = Router::new().route("/", post(handle_jsonrpc)).with_state(state.clone());
+
+    let app = app.into_make_service();
+
+    tracing::info!(
+        target: LOG_TARGET,
+        %bind,
+        "I2PControl HTTPS server accepting requests",
     );
 
     // Run server with graceful shutdown
@@ -172,7 +210,7 @@ pub async fn run_server(
     };
 
     // Clear tokens on shutdown
-    state.token_service.clear();
+    state.token_service().clear();
 
     result
 }
@@ -183,7 +221,7 @@ fn resolve_id(id: &Option<RequestId>) -> RequestId {
 }
 
 /// Handle a JSON-RPC request.
-async fn handle_jsonrpc(
+pub(crate) async fn handle_jsonrpc(
     State(state): State<Arc<I2pControlState>>,
     headers: HeaderMap,
     body: String,

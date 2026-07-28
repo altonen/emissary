@@ -341,42 +341,52 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
     );
 
     // Start I2PControl server if enabled (independent of UI mode)
+    //
+    // init_server performs validation, TLS setup, and port binding synchronously
+    // so that failures are surfaced as startup errors via setup_router.
     #[cfg(feature = "i2pcontrol")]
     let i2pcontrol_shutdown = {
-        let (i2pcontrol_shutdown_tx, i2pcontrol_shutdown_rx) = tokio::sync::broadcast::channel(1);
+        let (i2pcontrol_shutdown_tx, _) = tokio::sync::broadcast::channel(1);
         if let Some(ref i2pcontrol_config) = router_config.i2pcontrol {
             if i2pcontrol_config.enabled {
-                let base = base_path.clone();
                 let bind: std::net::SocketAddr = i2pcontrol_config
                     .bind
                     .parse()
                     .map_err(|e| anyhow!("Invalid I2PControl bind address: {e}"))?;
-                let password = i2pcontrol_config.password.clone();
-                let tls_cert = i2pcontrol_config.certificate.as_ref().map(std::path::PathBuf::from);
-                let tls_key = i2pcontrol_config.private_key.as_ref().map(std::path::PathBuf::from);
+                let server_config = i2pcontrol::server::I2pControlConfig {
+                    enabled: true,
+                    bind,
+                    password: i2pcontrol_config.password.clone(),
+                    tls: i2pcontrol::tls::TlsConfig {
+                        certificate: i2pcontrol_config
+                            .certificate
+                            .as_ref()
+                            .map(std::path::PathBuf::from),
+                        private_key: i2pcontrol_config
+                            .private_key
+                            .as_ref()
+                            .map(std::path::PathBuf::from),
+                    },
+                };
 
-                let rx = i2pcontrol_shutdown_rx;
+                let instance = i2pcontrol::server::init_server(&server_config, &base_path).await?;
+
+                let shutdown_tx = i2pcontrol_shutdown_tx.clone();
                 tokio::spawn(async move {
-                    let config = i2pcontrol::server::I2pControlConfig {
-                        enabled: true,
-                        bind,
-                        password,
-                        tls: i2pcontrol::tls::TlsConfig {
-                            certificate: tls_cert,
-                            private_key: tls_key,
-                        },
-                    };
-                    if let Err(e) = i2pcontrol::server::run_server(config, base, rx).await {
+                    if let Err(e) =
+                        i2pcontrol::server::serve(instance, shutdown_tx.subscribe()).await
+                    {
                         tracing::error!(
                             target: LOG_TARGET,
                             ?e,
-                            "I2PControl server failed",
+                            "I2PControl server exited with error",
                         );
                     }
                 });
+
                 tracing::info!(
                     target: LOG_TARGET,
-                    "I2PControl server spawned",
+                    "I2PControl server started",
                 );
             }
         }
@@ -404,6 +414,7 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
 ///  * `Router`'s event loop
 ///  * [`PortMapper`]'s event loop
 ///  * RX channel for receiving a shutdown signal from router UI
+#[cfg(not(feature = "i2pcontrol"))]
 async fn router_event_loop(
     mut router: Router<TokioRuntime>,
     mut port_mapper: PortMapper,
@@ -434,6 +445,45 @@ async fn router_event_loop(
     }
 }
 
+/// Run the event loop of `emissary-cli` with I2PControl shutdown support.
+///
+/// Sends the I2PControl shutdown signal when the application shuts down,
+/// ensuring the server receives structured cancellation and executes
+/// token cleanup.
+#[cfg(feature = "i2pcontrol")]
+async fn router_event_loop(
+    mut router: Router<TokioRuntime>,
+    mut port_mapper: PortMapper,
+    mut shutdown_rx: Receiver<()>,
+    i2pcontrol_shutdown: tokio::sync::broadcast::Sender<()>,
+) {
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                let _ = i2pcontrol_shutdown.send(());
+                port_mapper.shutdown().await;
+                router.shutdown();
+            }
+            _ = shutdown_rx.recv() => {
+                let _ = i2pcontrol_shutdown.send(());
+                port_mapper.shutdown().await;
+                router.shutdown();
+            }
+            address = port_mapper.next() => {
+                // the value must exist since the stream never terminates
+                router.add_external_address(address.expect("value"));
+            },
+            _ = &mut router => {
+                tracing::info!(
+                    target: LOG_TARGET,
+                    "emissary shut down",
+                );
+                break;
+            }
+        }
+    }
+}
+
 #[cfg(not(feature = "ui"))]
 fn main() -> anyhow::Result<()> {
     let runtime = tokio::runtime::Runtime::new()?;
@@ -442,9 +492,19 @@ fn main() -> anyhow::Result<()> {
     let RouterContext {
         port_mapper,
         router,
+        #[cfg(feature = "i2pcontrol")]
+        i2pcontrol_shutdown,
         ..
     } = runtime.block_on(setup_router::<TokioRuntime>(arguments))?;
 
+    #[cfg(feature = "i2pcontrol")]
+    runtime.block_on(router_event_loop(
+        router,
+        port_mapper,
+        shutdown_rx,
+        i2pcontrol_shutdown,
+    ));
+    #[cfg(not(feature = "i2pcontrol"))]
     runtime.block_on(router_event_loop(router, port_mapper, shutdown_rx));
 
     Ok(())
@@ -465,14 +525,26 @@ async fn main() -> anyhow::Result<()> {
         address_book_handle,
         router_id,
         #[cfg(feature = "i2pcontrol")]
-            i2pcontrol_shutdown: _i2pcontrol_shutdown,
+        i2pcontrol_shutdown,
     } = setup_router::<TokioRuntime>(arguments).await?;
 
     match router_ui_config {
         None => {
+            #[cfg(feature = "i2pcontrol")]
+            router_event_loop(router, port_mapper, shutdown_rx, i2pcontrol_shutdown).await;
+            #[cfg(not(feature = "i2pcontrol"))]
             router_event_loop(router, port_mapper, shutdown_rx).await;
         }
         Some(RouterUiConfig { native, .. }) => {
+            #[cfg(feature = "i2pcontrol")]
+            {
+                let ics = i2pcontrol_shutdown;
+                tokio::spawn(async move {
+                    router_event_loop(router, port_mapper, shutdown_rx, ics).await;
+                    std::process::exit(0);
+                });
+            }
+            #[cfg(not(feature = "i2pcontrol"))]
             tokio::spawn(async move {
                 router_event_loop(router, port_mapper, shutdown_rx).await;
                 std::process::exit(0);
