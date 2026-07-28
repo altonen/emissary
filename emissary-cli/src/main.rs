@@ -49,6 +49,8 @@ mod address_book;
 mod cli;
 mod config;
 mod error;
+#[cfg(feature = "i2pcontrol")]
+mod i2pcontrol;
 mod logger;
 mod proxy;
 mod tools;
@@ -94,6 +96,11 @@ struct RouterContext {
     /// Router UI config, if enabled.
     #[allow(unused)]
     router_ui_config: Option<RouterUiConfig>,
+
+    /// I2PControl shutdown sender.
+    #[cfg(feature = "i2pcontrol")]
+    #[allow(unused)]
+    i2pcontrol_shutdown: tokio::sync::broadcast::Sender<()>,
 }
 
 /// Parse `Arguments` and if no subcommand has been specified, return `Arguments`, allowing the
@@ -264,14 +271,15 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
                 )
                 .await
                 {
-                    Ok(proxy) =>
+                    Ok(proxy) => {
                         if let Err(error) = proxy.run().await {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 ?error,
                                 "http proxy exited",
                             );
-                        },
+                        }
+                    }
                     Err(error) => tracing::warn!(
                         target: LOG_TARGET,
                         ?error,
@@ -290,14 +298,15 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
             // start event loop of socks proxy
             tokio::spawn(async move {
                 match SocksProxy::new(config, address.port()).await {
-                    Ok(proxy) =>
+                    Ok(proxy) => {
                         if let Err(error) = proxy.run().await {
                             tracing::debug!(
                                 target: LOG_TARGET,
                                 ?error,
                                 "socks proxy exited",
                             );
-                        },
+                        }
+                    }
                     Err(error) => tracing::warn!(
                         target: LOG_TARGET,
                         ?error,
@@ -331,6 +340,49 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
         router.protocol_address_info().ssu2_port,
     );
 
+    // Start I2PControl server if enabled (independent of UI mode)
+    #[cfg(feature = "i2pcontrol")]
+    let i2pcontrol_shutdown = {
+        let (i2pcontrol_shutdown_tx, i2pcontrol_shutdown_rx) = tokio::sync::broadcast::channel(1);
+        if let Some(ref i2pcontrol_config) = router_config.i2pcontrol {
+            if i2pcontrol_config.enabled {
+                let base = base_path.clone();
+                let bind: std::net::SocketAddr = i2pcontrol_config
+                    .bind
+                    .parse()
+                    .map_err(|e| anyhow!("Invalid I2PControl bind address: {e}"))?;
+                let password = i2pcontrol_config.password.clone();
+                let tls_cert = i2pcontrol_config.certificate.as_ref().map(std::path::PathBuf::from);
+                let tls_key = i2pcontrol_config.private_key.as_ref().map(std::path::PathBuf::from);
+
+                let rx = i2pcontrol_shutdown_rx;
+                tokio::spawn(async move {
+                    let config = i2pcontrol::server::I2pControlConfig {
+                        enabled: true,
+                        bind,
+                        password,
+                        tls: i2pcontrol::tls::TlsConfig {
+                            certificate: tls_cert,
+                            private_key: tls_key,
+                        },
+                    };
+                    if let Err(e) = i2pcontrol::server::run_server(config, base, rx).await {
+                        tracing::error!(
+                            target: LOG_TARGET,
+                            ?e,
+                            "I2PControl server failed",
+                        );
+                    }
+                });
+                tracing::info!(
+                    target: LOG_TARGET,
+                    "I2PControl server spawned",
+                );
+            }
+        }
+        i2pcontrol_shutdown_tx
+    };
+
     Ok(RouterContext {
         address_book_handle,
         base_path,
@@ -340,6 +392,8 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
         router_id: router.router_id().clone(),
         router,
         router_ui_config,
+        #[cfg(feature = "i2pcontrol")]
+        i2pcontrol_shutdown,
     })
 }
 
@@ -410,7 +464,8 @@ async fn main() -> anyhow::Result<()> {
         base_path,
         address_book_handle,
         router_id,
-        ..
+        #[cfg(feature = "i2pcontrol")]
+            i2pcontrol_shutdown: _i2pcontrol_shutdown,
     } = setup_router::<TokioRuntime>(arguments).await?;
 
     match router_ui_config {

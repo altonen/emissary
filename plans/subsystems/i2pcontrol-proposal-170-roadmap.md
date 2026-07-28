@@ -448,7 +448,7 @@ The subsystem closes only when the exact completion definition in `plans/000-lon
 
 | Milestone | Status | Implementation plan | Closure record | Blockers |
 |---|---|---|---|---|
-| 001 | ready | `plans/implementation/i2pcontrol-proposal-170/001-contract-matrix-and-i2pcontrol-foundation.md` | — | — |
+| 001 | closing | `plans/implementation/i2pcontrol-proposal-170/001-contract-matrix-and-i2pcontrol-foundation.md` | `plans/closure/i2pcontrol-proposal-170/001-closure.md` | — |
 | 002 | not started | — | — | M001 closure |
 | 003 | not started | — | — | M002 closure |
 | 004 | not started | — | — | M002 closure |

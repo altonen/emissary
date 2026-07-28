@@ -25,20 +25,20 @@ Canonical direction:
 
 | Subsystem | Status | Roadmap | Current milestone | Dependencies or blockers |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | active | `plans/subsystems/i2pcontrol-proposal-170-roadmap.md` | M001 ready | No hard dependency; ADR-0001 records the contract/stub boundary |
+| I2PControl Proposal 170 | active | `plans/subsystems/i2pcontrol-proposal-170-roadmap.md` | M001 closing | No hard dependency; ADR-0001 records the contract/stub boundary |
 
 ## Dependency-ready implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | 001 — contract matrix and I2PControl foundation | ready | `plans/implementation/i2pcontrol-proposal-170/001-contract-matrix-and-i2pcontrol-foundation.md` | Canonical documents and ADR-0001 present; repository baseline recorded in the plan |
+
+No plans are currently dependency-ready.
 
 ## Active closure work
 
 | Subsystem | Milestone | Status | Implementation plan | Evidence commit | Closure record |
 |---|---|---|---|---|---|
-
-No closure work is active. M001 has not been implemented.
+| I2PControl Proposal 170 | 001 — contract matrix and I2PControl foundation | closing | `plans/implementation/i2pcontrol-proposal-170/001-contract-matrix-and-i2pcontrol-foundation.md` | head of implementation branch | `plans/closure/i2pcontrol-proposal-170/001-closure.md` |
 
 ## Blocked implementation plans
 
@@ -68,8 +68,7 @@ The following work is intentionally outside the active Proposal 170 handoff and 
 
 | Subsystem | Milestone | Closure record | Closed/reviewed at commit | Follow-up |
 |---|---|---|---|---|
-
-No Proposal 170 milestone has closed.
+| I2PControl Proposal 170 | 001 — contract matrix and I2PControl foundation | `plans/closure/i2pcontrol-proposal-170/001-closure.md` | closing (pending review) | M002 can be activated after strict closure |
 
 ## Registry maintenance rules
 

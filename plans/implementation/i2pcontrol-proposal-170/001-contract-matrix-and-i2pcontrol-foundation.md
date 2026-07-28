@@ -1,6 +1,6 @@
 # I2PControl Proposal 170 Milestone 001 — Contract Matrix and I2PControl Foundation
 
-Status: ready for handoff
+Status: closing
 
 Repository production baseline: `9b43484a21d5a1291c4881cdae62a36c527f8c0f` (`master`)
 

@@ -226,6 +226,40 @@ pub struct ClientTunnelOptions {
     pub i2cp: Option<I2cpOptions>,
 }
 
+/// I2PControl configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct I2pControlConfig {
+    /// Whether I2PControl is enabled.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Bind address (default: "127.0.0.1:7650").
+    #[serde(default = "default_i2pcontrol_bind")]
+    pub bind: String,
+    /// Authentication password.
+    #[serde(default)]
+    pub password: String,
+    /// Optional TLS certificate path.
+    pub certificate: Option<String>,
+    /// Optional TLS private key path.
+    pub private_key: Option<String>,
+}
+
+fn default_i2pcontrol_bind() -> String {
+    "127.0.0.1:7650".to_string()
+}
+
+impl Default for I2pControlConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bind: default_i2pcontrol_bind(),
+            password: String::new(),
+            certificate: None,
+            private_key: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmissaryConfig {
     #[serde(rename = "address-book")]
@@ -242,6 +276,8 @@ pub struct EmissaryConfig {
     #[serde(rename = "socks-proxy")]
     pub socks_proxy: Option<SocksProxyConfig>,
     pub i2cp: Option<I2cpConfig>,
+    /// I2PControl configuration.
+    pub i2pcontrol: Option<I2pControlConfig>,
     #[serde(default)]
     pub insecure_tunnels: bool,
     pub log: Option<String>,
@@ -306,6 +342,7 @@ impl EmissaryConfig {
                 port: 7654,
                 host: None,
             }),
+            i2pcontrol: None,
             metrics: Some(MetricsConfig { port: 7788 }),
             ntcp2: Some(Ntcp2Config {
                 port,
@@ -405,6 +442,10 @@ pub struct Config {
 
     /// I2CP config.
     pub i2cp_config: Option<emissary_core::I2cpConfig>,
+
+    /// I2PControl configuration.
+    #[allow(unused)]
+    pub i2pcontrol: Option<I2pControlConfig>,
 
     /// Are tunnels allowed to be insecure.
     pub insecure_tunnels: bool,
@@ -681,6 +722,7 @@ impl Config {
                 port: config.port,
                 host: config.host.unwrap_or(String::from("127.0.0.1")),
             }),
+            i2pcontrol: config.i2pcontrol,
             insecure_tunnels: config.insecure_tunnels,
             log: config.log,
             metrics: config

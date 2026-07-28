@@ -26,6 +26,11 @@ url = "2.5.4"
 scraper = { version = "0.21", optional = true }
 ego-tree = { version = "0.9", optional = true }
 
+# i2pcontrol dependencies
+rcgen = { version = "0.13", optional = true }
+rustls-pemfile = { version = "2", optional = true }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "logging", "tls12"], optional = true }
+
 # workspace dependencies
 anyhow = { workspace = true }
 parking_lot = { workspace = true }
@@ -47,5 +52,6 @@ fast-socks5 = { version = "1.0.0", features = ["socks4"] }
 
 [features]
 default = ["ui"]
-ui = ["dioxus/desktop", "dioxus/liveview", "dioxus-liveview","axum"]
+ui = ["dioxus/desktop", "dioxus/liveview", "dioxus-liveview", "axum"]
+i2pcontrol = ["axum", "axum/json", "serde_json", "rcgen", "rustls-pemfile", "tokio-rustls"]
 metrics = ["emissary-util/metrics"]
