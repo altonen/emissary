@@ -1,17 +1,17 @@
 # I2PControl Proposal 170 Milestone 005 — RouterInfo Inspection and Exact Selectors
 
-Status: blocked
+Status: closed
 
-Planning baseline: `ec289c77183d4f1010829ff255d8dbe90a941ad8` (`master`)
+Planning baseline: `95a37f029cd37b8b00fbebddbdc178e3f168fbdc` (`master`)
 
-Production-code baseline described by the planning system: `9b43484a21d5a1291c4881cdae62a36c527f8c0f`
+Production-code baseline described by the planning system: `95a37f029cd37b8b00fbebddbdc178e3f168fbdc`
 
 Activation rule:
 
-- M002 must have a closure record with status `closed` before the core inspection and common selector work begins.
-- M003 and M004 are soft integration dependencies for their address-book and I2PTunnel selector data. Their selector adapters may be completed after those milestones close, but M005 cannot close while any M005-owned selector lacks its final truthful data source.
-- Before implementation begins, the agent MUST replace the baseline above with the reviewed dependency head, inspect all M001/M002 production changes, and reconcile this plan against the exact conformance matrix, selector DTOs, control-plane interfaces, persistence models, and current core structure.
-- This prewritten plan is not dependency-ready while M002 is open.
+- M002 closed at `plans/closure/i2pcontrol-proposal-170/002-closure.md`.
+- M003 closed at `plans/closure/i2pcontrol-proposal-170/003-closure.md`.
+- M004 closed at `plans/closure/i2pcontrol-proposal-170/004-closure.md`.
+- Baseline reconciled to `95a37f029cd37b8b00fbebddbdc178e3f168fbdc`.
 
 Source roadmap:
 

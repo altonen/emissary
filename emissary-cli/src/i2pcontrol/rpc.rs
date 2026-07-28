@@ -347,18 +347,110 @@ pub struct AuthenticateResult {
 /// Proposal 170 RouterInfo selector keys.
 /// https://i2p.net/en/proposals/170-i2pcontrol-expansion/
 pub mod router_info_keys {
+    // --- UDP transport selectors ---
     pub const UDP_ACTIVE: &str = "i2p.router.udp.active";
+    pub const UDP_COOKIE_ACTIVE: &str = "i2p.router.udp.cookie.active";
+    pub const UDP_INTEGRATED_PEERS: &str = "i2p.router.udp.integratedPeers";
+    pub const UDP_FIREWALLED: &str = "i2p.router.udp.firewalled";
+    pub const UDP_HIDDEN: &str = "i2p.router.udp.hidden";
+    pub const UDP_COINFICIENT_PEERS: &str = "i2p.router.udp.coinficientPeers";
+    pub const UDP_CRITICAL_PEERS: &str = "i2p.router.udp.criticalPeers";
+    pub const UDP_FAST_PEERS: &str = "i2p.router.udp.fastPeers";
+    pub const UDP_HIGH_CAPACITY_PEERS: &str = "i2p.router.udp.highCapacityPeers";
+    pub const UDP_INTERLEAVED_PEERS: &str = "i2p.router.udp.interleavedPeers";
+    pub const UDP_LIT_PEERS: &str = "i2p.router.udp.litPeers";
+    pub const UDP_LOW_CAPACITY_PEERS: &str = "i2p.router.udp.lowCapacityPeers";
+    pub const UDP_ON_DEMAND_PEERS: &str = "i2p.router.udp.onDemandPeers";
+    pub const UDP_PEER_STATS: &str = "i2p.router.udp.peerStats";
+    pub const UDP_STANDARD_PEERS: &str = "i2p.router.udp.standardPeers";
+    pub const UDP_UNREACHABLE_PEERS: &str = "i2p.router.udp.unreachablePeers";
+    pub const UDP_TOTAL_PEERS: &str = "i2p.router.udp.totalPeers";
+    pub const UDP_CURRENT_PEERS: &str = "i2p.router.udp.currentPeers";
+
+    // --- General router selectors ---
     pub const VERSION: &str = "i2p.router.version";
     pub const UPTIME: &str = "i2p.router.uptime";
-    pub const IDENTITY: &str = "i2p.router.identity";
-    pub const NETDB_ACTIVE: &str = "i2p.router.netdb.active";
-    pub const NETDB_KNOWN_PROFILES: &str = "i2p.router.netdb.knownProfiles";
-    pub const NETDB_ACTIVE_PROFILES: &str = "i2p.router.netdb.activeProfiles";
-    pub const BW_INBOUND_1S: &str = "i2p.router.bw.inbound.1s";
-    pub const BW_OUTBOUND_1S: &str = "i2p.router.bw.outbound.1s";
-    pub const TCP_ACTIVE: &str = "i2p.router.tcp.active";
 
-    // Address-book selectors (owned by M003)
+    // --- NetDB selectors ---
+    pub const NETDB_ACTIVE: &str = "i2p.router.netdb.active";
+    pub const NETDB_ACTIVE_PROFILES: &str = "i2p.router.netdb.activeProfiles";
+    pub const NETDB_HIGHEST_VERSION: &str = "i2p.router.netdb.highestVersion";
+    pub const NETDB_KNOWN_PROFILES: &str = "i2p.router.netdb.knownProfiles";
+    pub const NETDB_NEW_PROFILES: &str = "i2p.router.netdb.newProfiles";
+    pub const NETDB_ACTIVE_ROUTERS: &str = "i2p.router.netdb.activeRouters";
+    pub const NETDB_ALREADY_EXPERIENCED_PEERS: &str = "i2p.router.netdb.alreadyExperiencedPeers";
+    pub const NETDB_BANLIST_SIZE: &str = "i2p.router.netdb.banlistSize";
+    pub const NETDB_EXPLORATORY_PEERS: &str = "i2p.router.netdb.exploratoryPeers";
+    pub const NETDB_FAST_PEERS: &str = "i2p.router.netdb.fastPeers";
+    pub const NETDB_HIGH_CAPACITY_PEERS: &str = "i2p.router.netdb.highCapacityPeers";
+    pub const NETDB_IS_BACKLOGGED: &str = "i2p.router.netdb.isBacklogged";
+    pub const NETDB_KNOWN_ACTIVE: &str = "i2p.router.netdb.knownActive";
+    pub const NETDB_KNOWN_IDLE: &str = "i2p.router.netdb.knownIdle";
+    pub const NETDB_KNOWN_USED: &str = "i2p.router.netdb.knownUsed";
+    pub const NETDB_KNOWN_VANILLA: &str = "i2p.router.netdb.knownVanilla";
+    pub const NETDB_KNOWN_VOLATILE: &str = "i2p.router.netdb.knownVolatile";
+    pub const NETDB_LAST_EXPLORED: &str = "i2p.router.netdb.lastExplored";
+    pub const NETDB_LAST_PROFILE_LOOKUP: &str = "i2p.router.netdb.lastProfileLookup";
+    pub const NETDB_LAST_ROUTER_LOOKUP: &str = "i2p.router.netdb.lastRouterLookup";
+    pub const NETDB_LAST_UNSAVED: &str = "i2p.router.netdb.lastUnsaved";
+    pub const NETDB_LEASE_SETS: &str = "i2p.router.netdb.leaseSets";
+    pub const NETDB_NEW_ACTIVE: &str = "i2p.router.netdb.newActive";
+    pub const NETDB_NEW_IDLE: &str = "i2p.router.netdb.newIdle";
+    pub const NETDB_OLD_ACTIVE: &str = "i2p.router.netdb.oldActive";
+    pub const NETDB_OLD_IDLE: &str = "i2p.router.netdb.oldIdle";
+    pub const NETDB_PEER_PROFILES: &str = "i2p.router.netdb.peerProfiles";
+    pub const NETDB_PLAINTEXT_PEERS: &str = "i2p.router.netdb.plaintextPeers";
+    pub const NETDB_RESERVE_ACTIVE: &str = "i2p.router.netdb.reserveActive";
+    pub const NETDB_RESERVE_ACTIVE_PEERS: &str = "i2p.router.netdb.reserveActivePeers";
+    pub const NETDB_RESERVE_HIGH_CAPACITY: &str = "i2p.router.netdb.reserveHighCapacity";
+    pub const NETDB_RESERVE_INTEGRATED: &str = "i2p.router.netdb.reserveIntegrated";
+    pub const NETDB_RESERVE_KNOWN: &str = "i2p.router.netdb.reserveKnown";
+    pub const NETDB_RESERVE_LOOKUP: &str = "i2p.router.netdb.reserveLookup";
+    pub const NETDB_RESERVE_PENDING: &str = "i2p.router.netdb.reservePending";
+    pub const NETDB_RESERVE_RESERVED: &str = "i2p.router.netdb.reserveReserved";
+    pub const NETDB_RESERVE_STANDARD: &str = "i2p.router.netdb.reserveStandard";
+    pub const NETDB_RESERVE_TIER2: &str = "i2p.router.netdb.reserveTier2";
+    pub const NETDB_RESERVE_USED: &str = "i2p.router.netdb.reserveUsed";
+    pub const NETDB_RESERVE_VOLATILE: &str = "i2p.router.netdb.reserveVolatile";
+    pub const NETDB_STANDARD_PEERS: &str = "i2p.router.netdb.standardPeers";
+    pub const NETDB_LOW_CAPACITY_PEERS: &str = "i2p.router.netdb.lowCapacityPeers";
+    pub const NETDB_TUNNELS: &str = "i2p.router.netdb.tunnels";
+    pub const NETDB_USED_PEERS: &str = "i2p.router.netdb.usedPeers";
+    pub const NETDB_VOLATILE_PEERS: &str = "i2p.router.netdb.volatilePeers";
+    pub const NETDB_ADDRESS_BOOKS: &str = "i2p.router.netdb.addressBooks";
+    pub const NETDB_ADDRESS_BOOK_ENTRIES: &str = "i2p.router.netdb.addressBookEntries";
+    pub const NETDB_ADDRESS_BOOK_SOURCES: &str = "i2p.router.netdb.addressBookSources";
+    pub const NETDB_ADDRESS_BOOK_SUBSCRIPTIONS: &str = "i2p.router.netdb.addressBookSubscriptions";
+    pub const NETDB_ADDRESS_BOOK_UPDATES: &str = "i2p.router.netdb.addressBookUpdates";
+
+    // --- Bandwidth selectors ---
+    pub const BW_INBOUND_1S: &str = "i2p.router.bw.inbound.1s";
+    pub const BW_INBOUND_15S: &str = "i2p.router.bw.inbound.15s";
+    pub const BW_INBOUND_1M: &str = "i2p.router.bw.inbound.1m";
+    pub const BW_INBOUND_1H: &str = "i2p.router.bw.inbound.1h";
+    pub const BW_INBOUND_1D: &str = "i2p.router.bw.inbound.1d";
+    pub const BW_INBOUND_TOTAL: &str = "i2p.router.bw.inbound.total";
+    pub const BW_OUTBOUND_1S: &str = "i2p.router.bw.outbound.1s";
+    pub const BW_OUTBOUND_15S: &str = "i2p.router.bw.outbound.15s";
+    pub const BW_OUTBOUND_1M: &str = "i2p.router.bw.outbound.1m";
+    pub const BW_OUTBOUND_1H: &str = "i2p.router.bw.outbound.1h";
+    pub const BW_OUTBOUND_1D: &str = "i2p.router.bw.outbound.1d";
+    pub const BW_OUTBOUND_TOTAL: &str = "i2p.router.bw.outbound.total";
+
+    // --- TCP transport selectors ---
+    pub const TCP_ACTIVE: &str = "i2p.router.tcp.active";
+    pub const TCP_INTEGRATED_PEERS: &str = "i2p.router.tcp.integratedPeers";
+    pub const TCP_FIREWALLED: &str = "i2p.router.tcp.firewalled";
+    pub const TCP_HOSTS: &str = "i2p.router.tcp.hosts";
+    pub const TCP_STATUS: &str = "i2p.router.tcp.status";
+    pub const TCP_VERSION: &str = "i2p.router.tcp.version";
+
+    // --- Identity and network selectors ---
+    pub const IDENTITY: &str = "i2p.router.identity";
+    pub const NET_BW_INBOUND: &str = "i2p.router.net.bw.inbound";
+    pub const NET_BW_OUTBOUND: &str = "i2p.router.net.bw.outbound";
+
+    // --- Address-book selectors (owned by M003) ---
     pub const ADDRESS_BOOK_PRIVATE: &str = "i2p.router.addressbook.private";
     pub const ADDRESS_BOOK_LOCAL: &str = "i2p.router.addressbook.local";
     pub const ADDRESS_BOOK_ROUTER: &str = "i2p.router.addressbook.router";
@@ -375,6 +467,209 @@ pub mod router_info_keys {
         ADDRESS_BOOK_SUBSCRIPTIONS,
         ADDRESS_BOOK_CONFIG,
     ];
+
+    /// All Proposal 170 RouterInfo selector keys.
+    pub const ALL: &[&str] = &[
+        // UDP
+        UDP_ACTIVE,
+        UDP_COOKIE_ACTIVE,
+        UDP_INTEGRATED_PEERS,
+        UDP_FIREWALLED,
+        UDP_HIDDEN,
+        UDP_COINFICIENT_PEERS,
+        UDP_CRITICAL_PEERS,
+        UDP_FAST_PEERS,
+        UDP_HIGH_CAPACITY_PEERS,
+        UDP_INTERLEAVED_PEERS,
+        UDP_LIT_PEERS,
+        UDP_LOW_CAPACITY_PEERS,
+        UDP_ON_DEMAND_PEERS,
+        UDP_PEER_STATS,
+        UDP_STANDARD_PEERS,
+        UDP_UNREACHABLE_PEERS,
+        UDP_TOTAL_PEERS,
+        UDP_CURRENT_PEERS,
+        // General
+        VERSION,
+        UPTIME,
+        // NetDB
+        NETDB_ACTIVE,
+        NETDB_ACTIVE_PROFILES,
+        NETDB_HIGHEST_VERSION,
+        NETDB_KNOWN_PROFILES,
+        NETDB_NEW_PROFILES,
+        NETDB_ACTIVE_ROUTERS,
+        NETDB_ALREADY_EXPERIENCED_PEERS,
+        NETDB_BANLIST_SIZE,
+        NETDB_EXPLORATORY_PEERS,
+        NETDB_FAST_PEERS,
+        NETDB_HIGH_CAPACITY_PEERS,
+        NETDB_IS_BACKLOGGED,
+        NETDB_KNOWN_ACTIVE,
+        NETDB_KNOWN_IDLE,
+        NETDB_KNOWN_USED,
+        NETDB_KNOWN_VANILLA,
+        NETDB_KNOWN_VOLATILE,
+        NETDB_LAST_EXPLORED,
+        NETDB_LAST_PROFILE_LOOKUP,
+        NETDB_LAST_ROUTER_LOOKUP,
+        NETDB_LAST_UNSAVED,
+        NETDB_LEASE_SETS,
+        NETDB_NEW_ACTIVE,
+        NETDB_NEW_IDLE,
+        NETDB_OLD_ACTIVE,
+        NETDB_OLD_IDLE,
+        NETDB_PEER_PROFILES,
+        NETDB_PLAINTEXT_PEERS,
+        NETDB_RESERVE_ACTIVE,
+        NETDB_RESERVE_ACTIVE_PEERS,
+        NETDB_RESERVE_HIGH_CAPACITY,
+        NETDB_RESERVE_INTEGRATED,
+        NETDB_RESERVE_KNOWN,
+        NETDB_RESERVE_LOOKUP,
+        NETDB_RESERVE_PENDING,
+        NETDB_RESERVE_RESERVED,
+        NETDB_RESERVE_STANDARD,
+        NETDB_RESERVE_TIER2,
+        NETDB_RESERVE_USED,
+        NETDB_RESERVE_VOLATILE,
+        NETDB_STANDARD_PEERS,
+        NETDB_LOW_CAPACITY_PEERS,
+        NETDB_TUNNELS,
+        NETDB_USED_PEERS,
+        NETDB_VOLATILE_PEERS,
+        NETDB_ADDRESS_BOOKS,
+        NETDB_ADDRESS_BOOK_ENTRIES,
+        NETDB_ADDRESS_BOOK_SOURCES,
+        NETDB_ADDRESS_BOOK_SUBSCRIPTIONS,
+        NETDB_ADDRESS_BOOK_UPDATES,
+        // Bandwidth
+        BW_INBOUND_1S,
+        BW_INBOUND_15S,
+        BW_INBOUND_1M,
+        BW_INBOUND_1H,
+        BW_INBOUND_1D,
+        BW_INBOUND_TOTAL,
+        BW_OUTBOUND_1S,
+        BW_OUTBOUND_15S,
+        BW_OUTBOUND_1M,
+        BW_OUTBOUND_1H,
+        BW_OUTBOUND_1D,
+        BW_OUTBOUND_TOTAL,
+        // TCP
+        TCP_ACTIVE,
+        TCP_INTEGRATED_PEERS,
+        TCP_FIREWALLED,
+        TCP_HOSTS,
+        TCP_STATUS,
+        TCP_VERSION,
+        // Identity/Network
+        IDENTITY,
+        NET_BW_INBOUND,
+        NET_BW_OUTBOUND,
+        // Address book
+        ADDRESS_BOOK_PRIVATE,
+        ADDRESS_BOOK_LOCAL,
+        ADDRESS_BOOK_ROUTER,
+        ADDRESS_BOOK_PUBLISHED,
+        ADDRESS_BOOK_SUBSCRIPTIONS,
+        ADDRESS_BOOK_CONFIG,
+    ];
+
+    /// All non-address-book selector keys (owned by M005).
+    pub const CORE_KEYS: &[&str] = &[
+        UDP_ACTIVE,
+        UDP_COOKIE_ACTIVE,
+        UDP_INTEGRATED_PEERS,
+        UDP_FIREWALLED,
+        UDP_HIDDEN,
+        UDP_COINFICIENT_PEERS,
+        UDP_CRITICAL_PEERS,
+        UDP_FAST_PEERS,
+        UDP_HIGH_CAPACITY_PEERS,
+        UDP_INTERLEAVED_PEERS,
+        UDP_LIT_PEERS,
+        UDP_LOW_CAPACITY_PEERS,
+        UDP_ON_DEMAND_PEERS,
+        UDP_PEER_STATS,
+        UDP_STANDARD_PEERS,
+        UDP_UNREACHABLE_PEERS,
+        UDP_TOTAL_PEERS,
+        UDP_CURRENT_PEERS,
+        VERSION,
+        UPTIME,
+        NETDB_ACTIVE,
+        NETDB_ACTIVE_PROFILES,
+        NETDB_HIGHEST_VERSION,
+        NETDB_KNOWN_PROFILES,
+        NETDB_NEW_PROFILES,
+        NETDB_ACTIVE_ROUTERS,
+        NETDB_ALREADY_EXPERIENCED_PEERS,
+        NETDB_BANLIST_SIZE,
+        NETDB_EXPLORATORY_PEERS,
+        NETDB_FAST_PEERS,
+        NETDB_HIGH_CAPACITY_PEERS,
+        NETDB_IS_BACKLOGGED,
+        NETDB_KNOWN_ACTIVE,
+        NETDB_KNOWN_IDLE,
+        NETDB_KNOWN_USED,
+        NETDB_KNOWN_VANILLA,
+        NETDB_KNOWN_VOLATILE,
+        NETDB_LAST_EXPLORED,
+        NETDB_LAST_PROFILE_LOOKUP,
+        NETDB_LAST_ROUTER_LOOKUP,
+        NETDB_LAST_UNSAVED,
+        NETDB_LEASE_SETS,
+        NETDB_NEW_ACTIVE,
+        NETDB_NEW_IDLE,
+        NETDB_OLD_ACTIVE,
+        NETDB_OLD_IDLE,
+        NETDB_PEER_PROFILES,
+        NETDB_PLAINTEXT_PEERS,
+        NETDB_RESERVE_ACTIVE,
+        NETDB_RESERVE_ACTIVE_PEERS,
+        NETDB_RESERVE_HIGH_CAPACITY,
+        NETDB_RESERVE_INTEGRATED,
+        NETDB_RESERVE_KNOWN,
+        NETDB_RESERVE_LOOKUP,
+        NETDB_RESERVE_PENDING,
+        NETDB_RESERVE_RESERVED,
+        NETDB_RESERVE_STANDARD,
+        NETDB_RESERVE_TIER2,
+        NETDB_RESERVE_USED,
+        NETDB_RESERVE_VOLATILE,
+        NETDB_STANDARD_PEERS,
+        NETDB_LOW_CAPACITY_PEERS,
+        NETDB_TUNNELS,
+        NETDB_USED_PEERS,
+        NETDB_VOLATILE_PEERS,
+        NETDB_ADDRESS_BOOKS,
+        NETDB_ADDRESS_BOOK_ENTRIES,
+        NETDB_ADDRESS_BOOK_SOURCES,
+        NETDB_ADDRESS_BOOK_SUBSCRIPTIONS,
+        NETDB_ADDRESS_BOOK_UPDATES,
+        BW_INBOUND_1S,
+        BW_INBOUND_15S,
+        BW_INBOUND_1M,
+        BW_INBOUND_1H,
+        BW_INBOUND_1D,
+        BW_INBOUND_TOTAL,
+        BW_OUTBOUND_1S,
+        BW_OUTBOUND_15S,
+        BW_OUTBOUND_1M,
+        BW_OUTBOUND_1H,
+        BW_OUTBOUND_1D,
+        BW_OUTBOUND_TOTAL,
+        TCP_ACTIVE,
+        TCP_INTEGRATED_PEERS,
+        TCP_FIREWALLED,
+        TCP_HOSTS,
+        TCP_STATUS,
+        TCP_VERSION,
+        IDENTITY,
+        NET_BW_INBOUND,
+        NET_BW_OUTBOUND,
+    ];
 }
 
 /// Test if a string is a valid tunnel type.
@@ -385,6 +680,11 @@ pub fn is_valid_tunnel_type(s: &str) -> bool {
 /// Test if a string is a valid address book name.
 pub fn is_valid_address_book(s: &str) -> bool {
     address_books::ALL.contains(&s)
+}
+
+/// Test if a string is a valid Proposal 170 RouterInfo selector key.
+pub fn is_valid_router_info_selector(s: &str) -> bool {
+    router_info_keys::ALL.contains(&s)
 }
 
 #[cfg(test)]
@@ -466,6 +766,37 @@ mod tests {
             assert!(is_valid_address_book(ab));
         }
         assert!(!is_valid_address_book("unknown"));
+    }
+
+    #[test]
+    fn router_info_selectors_complete() {
+        assert_eq!(router_info_keys::ALL.len(), 97);
+        for key in router_info_keys::ALL {
+            assert!(is_valid_router_info_selector(key));
+        }
+        assert!(!is_valid_router_info_selector("unknown.selector"));
+    }
+
+    #[test]
+    fn router_info_core_keys_excludes_address_book() {
+        for key in router_info_keys::CORE_KEYS {
+            assert!(
+                !router_info_keys::ADDRESS_BOOK_KEYS.contains(key),
+                "CORE_KEYS should not contain address-book key: {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn router_info_all_keys_is_superset_of_core_and_address_book() {
+        let all_set: std::collections::HashSet<&str> =
+            router_info_keys::ALL.iter().copied().collect();
+        for key in router_info_keys::CORE_KEYS {
+            assert!(all_set.contains(key), "ALL missing CORE_KEY: {key}");
+        }
+        for key in router_info_keys::ADDRESS_BOOK_KEYS {
+            assert!(all_set.contains(key), "ALL missing ADDRESS_BOOK_KEY: {key}");
+        }
     }
 
     #[test]

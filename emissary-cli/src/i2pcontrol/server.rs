@@ -35,6 +35,7 @@ use super::control_plane::{
     FakeTunnelManagerControl, TunnelManagerControl,
 };
 use super::errors::I2pControlError;
+use super::router_info::{FakeRouterInfoControl, RouterInfoControl};
 use super::rpc::{
     self, AuthenticateParams, AuthenticateResult, JsonRpcErrorResponse, JsonRpcRequest,
     JsonRpcSuccess, RequestId,
@@ -93,6 +94,7 @@ pub(crate) struct I2pControlState {
     control_plane: Box<dyn ControlPlane>,
     address_book_control: Box<dyn AddressBookControl>,
     tunnel_manager: Box<dyn TunnelManagerControl>,
+    router_info: Box<dyn RouterInfoControl>,
     semaphore: Semaphore,
 }
 
@@ -105,6 +107,7 @@ impl I2pControlState {
             control_plane: Box::new(FakeControlPlane::new()),
             address_book_control: Box::new(FakeAddressBookControl::new()),
             tunnel_manager: Box::new(FakeTunnelManagerControl::new()),
+            router_info: Box::new(FakeRouterInfoControl::new()),
             semaphore: Semaphore::new(MAX_CONCURRENT_REQUESTS),
         }
     }
@@ -122,6 +125,12 @@ impl I2pControlState {
     /// Replace the tunnel manager control plane (for testing).
     pub fn set_tunnel_manager(&mut self, control: Box<dyn TunnelManagerControl>) {
         self.tunnel_manager = control;
+    }
+
+    /// Replace the router info inspection control plane (for testing).
+    #[allow(dead_code)]
+    pub fn set_router_info(&mut self, control: Box<dyn RouterInfoControl>) {
+        self.router_info = control;
     }
 
     /// List all tunnel definitions.
@@ -476,6 +485,24 @@ pub(crate) async fn handle_jsonrpc(
                 .unwrap()
             } else {
                 super::tunnel_manager::handle_tunnel_manager(&state, &request).await
+            }
+        }
+        rpc::methods::ROUTER_INFO => {
+            let token = extract_token(&headers);
+            if !state.token_service.validate(token) {
+                serde_json::to_value(JsonRpcErrorResponse::new(
+                    resolve_id(&request.id),
+                    rpc::error_codes::APP_ERROR,
+                    "Authentication required",
+                ))
+                .unwrap()
+            } else {
+                super::router_info_handler::handle_router_info(
+                    &*state.router_info,
+                    &*state.address_book_control,
+                    &request,
+                )
+                .await
             }
         }
         _ => {

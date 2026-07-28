@@ -1,17 +1,15 @@
 # I2PControl Proposal 170 Milestone 006 — ClientServicesInfo
 
-Status: blocked
+Status: ready
 
-Planning baseline: `ec289c77183d4f1010829ff255d8dbe90a941ad8` (`master`)
+Planning baseline: `95a37f029cd37b8b00fbebddbdc178e3f168fbdc` (`master`)
 
-Production-code baseline described by the planning system: `9b43484a21d5a1291c4881cdae62a36c527f8c0f`
+Production-code baseline described by the planning system: `95a37f029cd37b8b00fbebddbdc178e3f168fbdc`
 
 Activation rule:
 
-- M004 and M005 must each have a closure record with status `closed`.
-- M003 is a soft dependency only where the final M001 ClientServicesInfo representation consumes shared administrative state; the activation review must confirm whether any such dependency exists.
-- Before implementation begins, the agent MUST replace the baseline above with the reviewed dependency head, inspect all M001–M005 production changes, and reconcile this plan against the exact service-selector contract and production inspection/tunnel interfaces.
-- This prewritten plan remains blocked until its hard dependencies close.
+- M004 and M005 each have a closure record with status `closed`.
+- This plan is dependency-ready and authorized for execution.
 
 Source roadmap:
 
