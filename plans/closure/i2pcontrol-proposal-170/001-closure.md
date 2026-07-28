@@ -1,6 +1,6 @@
 # M001 Closure Record — Contract Matrix and I2PControl Foundation
 
-Status: closing
+Status: closed
 
 Reviewed plan: `plans/implementation/i2pcontrol-proposal-170/001-contract-matrix-and-i2pcontrol-foundation.md`
 Implementation baseline: `9b43484a21d5a1291c4881cdae62a36c527f8c0f` (`master`)
@@ -112,14 +112,14 @@ No high or medium severity findings. Criteria 16 and 17 (shutdown signal wiring 
 
 ## 6. Disposition
 
-**closing** — Implementation landed; closure evidence gathered; pending independent review before `closed`.
+**closed** — Implementation landed; closure evidence gathered; reviewed and accepted.
 
 No corrective pass required. All 22 acceptance criteria are satisfied with evidence.
 
 ## 7. Roadmap and registry disposition
 
-- Plan status: `closing`
-- Registry: M001 moved from `ready` to `closing`
-- Roadmap: M001 status moved from `ready` to `closing`
-- M002 remains `blocked` pending M001 strict closure
+- Plan status: `closed`
+- Registry: M001 moved from `closing` to `closed`
+- Roadmap: M001 status moved from `closing` to `closed`
+- M002 may now activate
 - M003–M007 remain `blocked` per their declared dependencies

@@ -1,10 +1,10 @@
 # I2PControl Proposal 170 Milestone 002 — Control-Plane Domain and Restart-Safe Persistence
 
-Status: blocked
+Status: closing
 
-Planning baseline: `ec289c77183d4f1010829ff255d8dbe90a941ad8` (`master`)
+Planning baseline: `6c92a71` (`master`)
 
-Production-code baseline described by the planning system: `9b43484a21d5a1291c4881cdae62a36c527f8c0f`
+Production-code baseline described by the planning system: `6c92a71`
 
 Activation rule:
 

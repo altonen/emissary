@@ -16,12 +16,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-pub mod auth;
-pub mod backends;
-pub mod control_plane;
-pub mod domain;
-pub mod errors;
-pub mod rpc;
-pub mod server;
-pub mod stores;
-pub mod tls;
+pub mod address_book_store;
+pub mod generation_store;
+pub mod subscription_store;
+pub mod tunnel_store;

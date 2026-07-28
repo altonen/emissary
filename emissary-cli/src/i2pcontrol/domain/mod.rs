@@ -16,12 +16,19 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-pub mod auth;
-pub mod backends;
-pub mod control_plane;
-pub mod domain;
-pub mod errors;
-pub mod rpc;
-pub mod server;
-pub mod stores;
-pub mod tls;
+//! Proposal 170 administrative domain types.
+//!
+//! This module contains the canonical domain models for the Proposal 170
+//! control plane. These types are consumed by TunnelManager, AddressBook,
+//! and future method handlers.
+//!
+//! # Invariants
+//!
+//! - Exact external tunnel type, action, and address-book strings are preserved.
+//! - No aliases or case-insensitive parsing is introduced.
+//! - Sensitive option values are redacted in Debug/Display output.
+//! - Deterministic serialization uses BTreeMap ordering.
+
+pub mod address_book;
+pub mod revision;
+pub mod tunnel;

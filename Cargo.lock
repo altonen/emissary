@@ -1949,6 +1949,7 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "arboard",
+ "async-trait",
  "axum",
  "clap",
  "dioxus",
