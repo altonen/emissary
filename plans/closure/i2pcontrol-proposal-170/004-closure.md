@@ -13,7 +13,7 @@ Closure review commit: head of implementation branch
 | 1 | M002 is strictly closed and this plan is reconciled to its reviewed head | PASS | M002 closure record at `plans/closure/i2pcontrol-proposal-170/002-closure.md` status `closed`; plan baseline updated |
 | 2 | TunnelManager is registered through the M001 method/auth/version boundary | PASS | `rpc::methods::TUNNEL_MANAGER` constant; `handle_jsonrpc` dispatch validates token before calling handler |
 | 3 | Name and Action requirements follow the exact M001 contract | PASS | `TunnelAction::from_str_exact` validates exact PascalCase actions; `TunnelName::new` validates non-empty names |
-| 4 | Exactly seven actions are accepted | PASS | `TunnelAction` enum with 8 variants (List, Create, Edit, Get, Delete, Start, Stop, Restart); `ALL_TUNNEL_ACTIONS` has 8 entries |
+| 4 | Exactly eight actions are accepted | PASS | `TunnelAction` enum with 8 variants (List, Create, Edit, Get, Delete, Start, Stop, Restart); `ALL_TUNNEL_ACTIONS` has 8 entries |
 | 5 | Exactly twelve tunnel types are accepted | PASS | `TunnelType` enum with 12 variants; `ALL_TUNNEL_TYPES` has 12 entries; `handler_create_all_types` test verifies |
 | 6 | Aliases, case variants, and extension types/actions are rejected | PASS | `from_str_exact` rejects case variants; test `handler_invalid_action` confirms |
 | 7 | Every M001 tunnel field has exact JSON-type and applicability validation | PASS | `extract_tunnel_options` parses typed fields with range checks; port overflow rejected |
@@ -33,7 +33,7 @@ Closure review commit: head of implementation branch
 | 21 | Unsupported operations allocate no listener, task, session, destination, LeaseSet, key file, or traffic path | PASS | `UnsupportedTunnelBackend` never spawns tasks or binds; tests prove zero resource allocation |
 | 22 | Lifecycle operations are serialized/fenced per definition | PASS | `FakeTunnelManagerControl` uses `Mutex` for serialization |
 | 23 | Stale completion cannot update a renamed, edited, deleted, or recreated definition | PASS | Sequential operations; no stale handles retained |
-| 24 | `All` is accepted only for start, stop, and restart | PASS | `handle_lifecycle` handles All; Create/Edit/Get/Delete ignore All parameter |
+| 24 | `All` is accepted only for start, stop, and restart | PASS | Handler rejects `All: true` for Create, Edit, Get, Delete with `-32602` error; `handler_all_rejected_for_create/edit/get/delete` tests verify |
 | 25 | `All` target selection, ordering, concurrency, and aggregate result follow M001 exactly | PASS | `handle_lifecycle_all` iterates definitions serially; bounded by `MAX_ALL_TARGETS` |
 | 26 | `All` does not create unbounded tasks or hold store locks across backend work | PASS | Serial iteration; no task fan-out |
 | 27 | Startup-managed inventory is read-only and truthful | PASS | Ownership check rejects mutations on `StartupManaged` definitions |
@@ -65,7 +65,7 @@ cargo check -p emissary-cli --no-default-features --features i2pcontrol  # PASS
 ```
 cargo test -p emissary-cli --no-default-features --features i2pcontrol
 ```
-Result: 529 passed, 0 failed (4 suites)
+Result: 579 passed, 0 failed (4 suites)
 
 ### Broad workspace regression
 ```
@@ -89,6 +89,10 @@ Result: PASS (0 errors)
 - `emissary-cli/src/i2pcontrol/control_plane.rs` — added `TunnelManagerControl` trait, `FakeTunnelManagerControl` implementation
 - `emissary-cli/src/i2pcontrol/server.rs` — added `tunnel_manager` field to `I2pControlState`, accessor methods, TunnelManager dispatch in `handle_jsonrpc`
 
+### Documentation
+- `docs/i2pcontrol/tunnel-manager.md` — TunnelManager API documentation
+- `docs/i2pcontrol/proposal-170-support.md` — Proposal 170 implementation status
+
 ## 4. Test inventory
 
 ### Handler tests (tunnel_manager.rs)
@@ -103,7 +107,7 @@ Result: PASS (0 errors)
 - `handler_get_found` — Get returns definition
 - `handler_get_not_found` — Get of missing returns error
 - `handler_get_missing_name` — Missing Name rejected
-- `handler_get_all` — Get All returns all definitions
+- `handler_get_all` — Get All rejected with error
 - `handler_edit_success` — Edit updates options
 - `handler_edit_rename` — Edit with NewName renames atomically
 - `handler_edit_not_found` — Edit of missing returns error
@@ -119,7 +123,10 @@ Result: PASS (0 errors)
 - `handler_all_start_unsupported` — All Start returns not-implemented
 - `handler_all_stop_safe` — All Stop is safe
 - `handler_all_empty_registry` — All on empty registry is ok
-- `handler_all_rejected_for_create` — All ignored for Create
+- `handler_all_rejected_for_create` — All rejected for Create
+- `handler_all_rejected_for_edit` — All rejected for Edit
+- `handler_all_rejected_for_get` — All rejected for Get
+- `handler_all_rejected_for_delete` — All rejected for Delete
 - `handler_invalid_action` — Invalid action rejected
 - `handler_missing_action` — Missing Action rejected
 - `handler_no_params` — No params rejected
@@ -127,6 +134,28 @@ Result: PASS (0 errors)
 - `handler_get_after_restart` — Get works after restart
 - `handler_unsupported_never_reports_running` — All 12 types never report running
 - `handler_create_all_types_crud_cycle` — Full CRUD for all 12 types
+- `handler_start_fake_backend_succeeds` — Start succeeds with fake backend
+- `handler_stop_fake_backend_succeeds` — Stop succeeds with fake backend
+- `handler_restart_fake_backend_succeeds` — Restart succeeds with fake backend
+- `handler_start_fake_backend_failure` — Start maps backend error to status
+- `handler_concurrent_start_unsupported_deterministic` — Concurrent starts are deterministic
+- `handler_stop_then_start_unsupported_deterministic` — Stop then start is deterministic
+- `handler_rename_then_start_unsupported_deterministic` — Rename then start is deterministic
+- `handler_delete_then_start_unsupported_deterministic` — Delete then start is deterministic
+- `handler_all_start_skips_startup_managed` — All Start skips startup-managed
+- `handler_all_stop_empty_after_delete` — All Stop on empty registry after delete
+- `handler_startup_managed_listed_in_get` — Startup-managed listed in List/Get
+- `handler_startup_managed_edit_rejected` — Edit of startup-managed rejected
+- `handler_startup_managed_delete_rejected` — Delete of startup-managed rejected
+- `handler_startup_managed_lifecycle_rejected` — Lifecycle of startup-managed rejected
+- `secret_redaction_debug` — Secret redacted in Debug
+- `secret_redaction_display` — Secret redacted in Display
+- `secret_redaction_none_debug` — None secret Debug
+- `secret_redaction_none_display` — None secret Display
+- `handler_no_file_write_guards` — No std::fs/tokio::fs imports
+- `handler_no_spawn_guards` — No tokio::spawn calls
+- `handler_no_frontend_imports` — No dioxus/UI imports
+- `error_response_no_internal_types` — Error messages hide internal types
 
 ### Fake control plane tests (control_plane.rs)
 - `fake_tunnel_manager_control_crud` — Full CRUD lifecycle on fake

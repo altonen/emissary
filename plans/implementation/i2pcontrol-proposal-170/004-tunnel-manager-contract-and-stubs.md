@@ -104,7 +104,7 @@ At the production baseline:
 ## 4. Invariants that must not regress
 
 - Exact tunnel types remain the twelve values defined in the canonical terminology document.
-- Exact actions remain `create`, `edit`, `get`, `start`, `stop`, `restart`, and `delete`.
+- Exact actions remain `list`, `create`, `edit`, `get`, `start`, `stop`, `restart`, and `delete`.
 - Required `Name` and `Action` semantics follow the M001 matrix exactly.
 - `All` is accepted only for `start`, `stop`, and `restart`.
 - JSON-RPC/protocol errors remain distinct from valid TunnelManager textual operation statuses.
@@ -737,7 +737,7 @@ Also run M001 fixture validation, M002 persistence/failpoint tests, and any stat
 1. M002 is strictly closed and this plan is reconciled to its reviewed head.
 2. TunnelManager is registered through the M001 method/auth/version boundary.
 3. Name and Action requirements follow the exact M001 contract.
-4. Exactly seven actions are accepted.
+4. Exactly eight actions are accepted.
 5. Exactly twelve tunnel types are accepted.
 6. Aliases, case variants, and extension types/actions are rejected.
 7. Every M001 tunnel field has exact JSON-type and applicability validation.
