@@ -26,3 +26,4 @@ pub mod rpc;
 pub mod server;
 pub mod stores;
 pub mod tls;
+pub mod tunnel_manager;

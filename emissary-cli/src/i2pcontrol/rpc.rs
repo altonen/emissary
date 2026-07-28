@@ -345,6 +345,7 @@ pub struct AuthenticateResult {
 }
 
 /// Proposal 170 RouterInfo selector keys.
+/// https://i2p.net/en/proposals/170-i2pcontrol-expansion/
 pub mod router_info_keys {
     pub const UDP_ACTIVE: &str = "i2p.router.udp.active";
     pub const VERSION: &str = "i2p.router.version";

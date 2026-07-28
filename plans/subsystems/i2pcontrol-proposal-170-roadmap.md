@@ -450,8 +450,8 @@ The subsystem closes only when the exact completion definition in `plans/000-lon
 |---|---|---|---|---|
 | 001 | closed | `plans/implementation/i2pcontrol-proposal-170/001-contract-matrix-and-i2pcontrol-foundation.md` | `plans/closure/i2pcontrol-proposal-170/001-closure.md` | — |
 | 002 | closing | `plans/implementation/i2pcontrol-proposal-170/002-control-plane-domain-and-persistence.md` | `plans/closure/i2pcontrol-proposal-170/002-closure.md` | — |
-| 003 | not started | — | — | M002 closure |
-| 004 | not started | — | — | M002 closure |
+| 003 | closed | `plans/implementation/i2pcontrol-proposal-170/003-address-book-administrative-api.md` | `plans/closure/i2pcontrol-proposal-170/003-closure.md` | — |
+| 004 | closed | `plans/implementation/i2pcontrol-proposal-170/004-tunnel-manager-contract-and-stubs.md` | `plans/closure/i2pcontrol-proposal-170/004-closure.md` | — |
 | 005 | not started | — | — | M002 interface; later integration with M003/M004 |
 | 006 | not started | — | — | M004 and M005 closure |
 | 007 | not started | — | — | M003–M006 closure |

@@ -1,6 +1,6 @@
 # I2PControl Proposal 170 Milestone 004 — TunnelManager Contract and Explicit Stubs
 
-Status: blocked
+Status: closed
 
 Planning baseline: `ec289c77183d4f1010829ff255d8dbe90a941ad8` (`master`)
 

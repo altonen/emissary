@@ -32,6 +32,7 @@ use tracing;
 use super::auth::{self, TokenService};
 use super::control_plane::{
     AddressBookControl, ControlPlane, FakeAddressBookControl, FakeControlPlane,
+    FakeTunnelManagerControl, TunnelManagerControl,
 };
 use super::errors::I2pControlError;
 use super::rpc::{
@@ -91,6 +92,7 @@ pub(crate) struct I2pControlState {
     #[allow(dead_code)]
     control_plane: Box<dyn ControlPlane>,
     address_book_control: Box<dyn AddressBookControl>,
+    tunnel_manager: Box<dyn TunnelManagerControl>,
     semaphore: Semaphore,
 }
 
@@ -102,6 +104,7 @@ impl I2pControlState {
             password,
             control_plane: Box::new(FakeControlPlane::new()),
             address_book_control: Box::new(FakeAddressBookControl::new()),
+            tunnel_manager: Box::new(FakeTunnelManagerControl::new()),
             semaphore: Semaphore::new(MAX_CONCURRENT_REQUESTS),
         }
     }
@@ -114,6 +117,62 @@ impl I2pControlState {
     /// Replace the address book control plane (for testing).
     pub fn set_address_book_control(&mut self, control: Box<dyn AddressBookControl>) {
         self.address_book_control = control;
+    }
+
+    /// Replace the tunnel manager control plane (for testing).
+    pub fn set_tunnel_manager(&mut self, control: Box<dyn TunnelManagerControl>) {
+        self.tunnel_manager = control;
+    }
+
+    /// List all tunnel definitions.
+    pub async fn tunnel_list(&self) -> Vec<crate::i2pcontrol::domain::tunnel::TunnelDefinition> {
+        self.tunnel_manager.list().await.unwrap_or_default()
+    }
+
+    /// Get a tunnel definition by name.
+    pub async fn tunnel_get(
+        &self,
+        name: &str,
+    ) -> Option<crate::i2pcontrol::domain::tunnel::TunnelDefinition> {
+        self.tunnel_manager.get(name).await.ok().flatten()
+    }
+
+    /// Create a new tunnel definition.
+    pub async fn tunnel_create(
+        &self,
+        definition: crate::i2pcontrol::domain::tunnel::TunnelDefinition,
+    ) -> Result<(), String> {
+        self.tunnel_manager.create(definition).await
+    }
+
+    /// Update an existing tunnel definition.
+    pub async fn tunnel_update(
+        &self,
+        name: &str,
+        definition: crate::i2pcontrol::domain::tunnel::TunnelDefinition,
+        new_name: Option<crate::i2pcontrol::domain::tunnel::TunnelName>,
+    ) -> Result<bool, String> {
+        self.tunnel_manager.update(name, definition, new_name).await
+    }
+
+    /// Delete a tunnel definition.
+    pub async fn tunnel_delete(&self, name: &str) -> Result<bool, String> {
+        self.tunnel_manager.delete(name).await
+    }
+
+    /// Start a tunnel.
+    pub async fn tunnel_start(&self, name: &str) -> Result<String, String> {
+        self.tunnel_manager.start(name).await
+    }
+
+    /// Stop a tunnel.
+    pub async fn tunnel_stop(&self, name: &str) -> Result<String, String> {
+        self.tunnel_manager.stop(name).await
+    }
+
+    /// Restart a tunnel.
+    pub async fn tunnel_restart(&self, name: &str) -> Result<String, String> {
+        self.tunnel_manager.restart(name).await
     }
 
     /// List entries in the specified address book.
@@ -404,6 +463,19 @@ pub(crate) async fn handle_jsonrpc(
                 .unwrap()
             } else {
                 super::address_book::handle_set_config(&state, &request).await
+            }
+        }
+        rpc::methods::TUNNEL_MANAGER => {
+            let token = extract_token(&headers);
+            if !state.token_service.validate(token) {
+                serde_json::to_value(JsonRpcErrorResponse::new(
+                    resolve_id(&request.id),
+                    rpc::error_codes::APP_ERROR,
+                    "Authentication required",
+                ))
+                .unwrap()
+            } else {
+                super::tunnel_manager::handle_tunnel_manager(&state, &request).await
             }
         }
         _ => {

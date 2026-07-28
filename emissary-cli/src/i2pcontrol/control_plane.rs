@@ -20,9 +20,13 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 
+use crate::i2pcontrol::backends::registry::TunnelBackendRegistry;
+use crate::i2pcontrol::backends::{BackendError, TunnelBackend};
 use crate::i2pcontrol::domain::address_book::{
     AddressBookConfiguration, AddressBookEntry, AdministrativeAddressBookType, SubscriptionSet,
 };
+use crate::i2pcontrol::domain::tunnel::{TunnelDefinition, TunnelName, TunnelType};
+use crate::i2pcontrol::stores::fakes::TunnelStoreFake;
 
 /// Control plane interface for I2PControl method handlers.
 ///
@@ -271,6 +275,225 @@ impl AddressBookControl for FakeAddressBookControl {
         let mut store = self.inner.lock().map_err(|e| format!("Lock poisoned: {e}"))?;
         store.set_configuration(configuration);
         Ok(())
+    }
+}
+
+/// TunnelManager control plane interface.
+///
+/// Provides async operations for Proposal 170 tunnel definition CRUD and
+/// lifecycle dispatch. Implementations must use durable persistence and
+/// return success only after atomic commit.
+///
+/// # Invariants
+///
+/// - CRUD operations affect exactly one tunnel definition per call.
+/// - Lifecycle operations are serialized per definition.
+/// - No implementation writes to `router.toml`.
+/// - No implementation performs network or filesystem side effects beyond
+///   persistence of tunnel definitions.
+/// - Unsupported tunnel types return deterministic not-implemented errors.
+/// - Startup-managed definitions are read-only and reject mutations.
+#[async_trait]
+pub trait TunnelManagerControl: Send + Sync {
+    /// List all tunnel definitions.
+    async fn list(&self) -> Result<Vec<TunnelDefinition>, String>;
+
+    /// Get a tunnel definition by name.
+    async fn get(&self, name: &str) -> Result<Option<TunnelDefinition>, String>;
+
+    /// Create a new tunnel definition.
+    ///
+    /// Returns `Ok(())` on durable commit.
+    async fn create(&self, definition: TunnelDefinition) -> Result<(), String>;
+
+    /// Update an existing tunnel definition (edit and/or rename).
+    ///
+    /// Returns `Ok(true)` if updated, `Ok(false)` if not found.
+    async fn update(
+        &self,
+        name: &str,
+        definition: TunnelDefinition,
+        new_name: Option<TunnelName>,
+    ) -> Result<bool, String>;
+
+    /// Delete a tunnel definition by name.
+    ///
+    /// Returns `Ok(true)` if deleted, `Ok(false)` if not found.
+    async fn delete(&self, name: &str) -> Result<bool, String>;
+
+    /// Start a tunnel by name through the backend registry.
+    async fn start(&self, name: &str) -> Result<String, String>;
+
+    /// Stop a tunnel by name through the backend registry.
+    async fn stop(&self, name: &str) -> Result<String, String>;
+
+    /// Restart a tunnel by name through the backend registry.
+    async fn restart(&self, name: &str) -> Result<String, String>;
+
+    /// Look up the backend for a given tunnel type.
+    fn get_backend(&self, tunnel_type: TunnelType) -> Option<std::sync::Arc<dyn TunnelBackend>>;
+
+    /// Return the backend registry reference.
+    fn registry(&self) -> &TunnelBackendRegistry;
+}
+
+/// Fake tunnel manager control plane for testing.
+///
+/// Uses in-memory storage with the same semantics as the production adapter.
+pub struct FakeTunnelManagerControl {
+    store: std::sync::Mutex<TunnelStoreFake>,
+    registry: TunnelBackendRegistry,
+}
+
+impl FakeTunnelManagerControl {
+    /// Create a new fake with default (all-unsupported) registry.
+    pub fn new() -> Self {
+        Self {
+            store: std::sync::Mutex::new(TunnelStoreFake::new()),
+            registry: super::backends::registry::create_default_registry()
+                .expect("default registry is exhaustive"),
+        }
+    }
+
+    /// Create a new fake with a custom backend registry.
+    pub fn with_registry(registry: TunnelBackendRegistry) -> Self {
+        Self {
+            store: std::sync::Mutex::new(TunnelStoreFake::new()),
+            registry,
+        }
+    }
+}
+
+impl Default for FakeTunnelManagerControl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl TunnelManagerControl for FakeTunnelManagerControl {
+    async fn list(&self) -> Result<Vec<TunnelDefinition>, String> {
+        let store = self.store.lock().map_err(|e| format!("Lock poisoned: {e}"))?;
+        Ok(store.list().into_iter().cloned().collect())
+    }
+
+    async fn get(&self, name: &str) -> Result<Option<TunnelDefinition>, String> {
+        let store = self.store.lock().map_err(|e| format!("Lock poisoned: {e}"))?;
+        Ok(store.get(name).cloned())
+    }
+
+    async fn create(&self, definition: TunnelDefinition) -> Result<(), String> {
+        let mut store = self.store.lock().map_err(|e| format!("Lock poisoned: {e}"))?;
+        if store.contains(definition.name.as_str()) {
+            return Err(format!(
+                "error - tunnel '{}' already exists",
+                definition.name.as_str()
+            ));
+        }
+        store.upsert(definition);
+        Ok(())
+    }
+
+    async fn update(
+        &self,
+        name: &str,
+        definition: TunnelDefinition,
+        new_name: Option<TunnelName>,
+    ) -> Result<bool, String> {
+        let mut store = self.store.lock().map_err(|e| format!("Lock poisoned: {e}"))?;
+        if store.get(name).is_none() {
+            return Ok(false);
+        }
+        // If renaming, check new name doesn't collide
+        if let Some(ref nn) = new_name {
+            if nn.as_str() != name && store.contains(nn.as_str()) {
+                return Err(format!(
+                    "error - tunnel name '{}' already exists",
+                    nn.as_str()
+                ));
+            }
+        }
+        store.remove(name);
+        // When renaming, use the new name as the storage key
+        let mut def = definition;
+        if let Some(ref nn) = new_name {
+            def.name = nn.clone();
+        }
+        store.upsert(def);
+        Ok(true)
+    }
+
+    async fn delete(&self, name: &str) -> Result<bool, String> {
+        let mut store = self.store.lock().map_err(|e| format!("Lock poisoned: {e}"))?;
+        Ok(store.remove(name).is_some())
+    }
+
+    async fn start(&self, name: &str) -> Result<String, String> {
+        let def = {
+            let store = self.store.lock().map_err(|e| format!("Lock poisoned: {e}"))?;
+            store
+                .get(name)
+                .ok_or_else(|| format!("error - tunnel '{}' not found", name))?
+                .clone()
+        };
+
+        let backend = self.registry.get(def.tunnel_type);
+        match backend.start(&def).await {
+            Ok(()) => Ok(format!("ok - {} started", def.tunnel_type.as_str())),
+            Err(BackendError::NotImplemented { tunnel_type }) => {
+                Ok(format!("error - {} not implemented", tunnel_type.as_str()))
+            }
+            Err(e) => Ok(format!("error - {}", e)),
+        }
+    }
+
+    async fn stop(&self, name: &str) -> Result<String, String> {
+        let def = {
+            let store = self.store.lock().map_err(|e| format!("Lock poisoned: {e}"))?;
+            store
+                .get(name)
+                .ok_or_else(|| format!("error - tunnel '{}' not found", name))?
+                .clone()
+        };
+
+        let backend = self.registry.get(def.tunnel_type);
+        match backend.stop(&def).await {
+            Ok(()) => Ok("ok".to_string()),
+            Err(e) => Ok(format!("error - {}", e)),
+        }
+    }
+
+    async fn restart(&self, name: &str) -> Result<String, String> {
+        let def = {
+            let store = self.store.lock().map_err(|e| format!("Lock poisoned: {e}"))?;
+            store
+                .get(name)
+                .ok_or_else(|| format!("error - tunnel '{}' not found", name))?
+                .clone()
+        };
+
+        let backend = self.registry.get(def.tunnel_type);
+        // Restart = stop then start
+        let _ = backend.stop(&def).await;
+        match backend.start(&def).await {
+            Ok(()) => Ok(format!("ok - {} restarted", def.tunnel_type.as_str())),
+            Err(BackendError::NotImplemented { tunnel_type }) => {
+                Ok(format!("error - {} not implemented", tunnel_type.as_str()))
+            }
+            Err(e) => Ok(format!("error - {}", e)),
+        }
+    }
+
+    fn get_backend(&self, tunnel_type: TunnelType) -> Option<std::sync::Arc<dyn TunnelBackend>> {
+        if self.registry.contains(tunnel_type) {
+            Some(self.registry.get(tunnel_type))
+        } else {
+            None
+        }
+    }
+
+    fn registry(&self) -> &TunnelBackendRegistry {
+        &self.registry
     }
 }
 
