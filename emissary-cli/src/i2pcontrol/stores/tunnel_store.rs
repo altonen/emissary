@@ -80,7 +80,7 @@ impl TunnelStore {
     /// Add or replace a tunnel definition.
     pub async fn upsert(&mut self, definition: TunnelDefinition) -> StoreResult<StateRevision> {
         let name = definition.name.as_str().to_string();
-        let current = self.inner.current().cloned().unwrap_or_else(|| TunnelStorePayload::empty());
+        let current = self.inner.current().cloned().unwrap_or_else(TunnelStorePayload::empty);
         let mut tunnels = current.tunnels;
         tunnels.insert(name, definition);
         let payload = TunnelStorePayload { tunnels };

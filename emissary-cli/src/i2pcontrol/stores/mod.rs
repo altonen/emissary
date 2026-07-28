@@ -17,6 +17,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 pub mod address_book_store;
+pub mod fakes;
 pub mod generation_store;
 pub mod subscription_store;
 pub mod tunnel_store;

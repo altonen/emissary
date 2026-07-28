@@ -1,6 +1,6 @@
 # I2PControl for Emissary
 
-Status: M001 foundation implemented
+Status: M002 control-plane domain and restart-safe persistence implemented
 
 This document describes the I2PControl HTTPS JSON-RPC service foundation in Emissary.
 
@@ -105,6 +105,21 @@ Subsequent requests must include the token via the `X-I2PControl-Token` header.
 ## M001 support status
 
 **The I2PControl transport, authentication, and JSON-RPC foundation is implemented.**
+
+## M002 support status
+
+**The Proposal 170 control-plane domain types, backend interface, and restart-safe persistence are implemented.**
+
+M002 provides the administrative infrastructure consumed by later milestones:
+
+- **Domain types**: `TunnelType` (12 variants), `TunnelAction` (8 variants), `TunnelName`, `TunnelDefinition`, `TunnelOptions`, `TunnelOwnership`, `TunnelRuntimeState`, `StartIntent`, `OptionRedacted`
+- **Address book types**: `AdministrativeAddressBookType` (4 books), `AddressBookEntry`, `SubscriptionSet`, `AddressBookConfiguration`
+- **Backend interface**: `TunnelBackend` trait, `UnsupportedTunnelBackend`, `FakeTunnelBackend`, exhaustive registry
+- **Persistence**: `GenerationStore<T>` with versioned envelopes, atomic publication, corruption fallback, bounded retention
+- **Stores**: `TunnelStore`, `AddressBookStore`, `SubscriptionStore`
+- **Fakes**: In-memory fake stores for handler tests
+
+See [administrative-state.md](administrative-state.md), [tunnel-backends.md](tunnel-backends.md), and [security.md](security.md) for details.
 
 Proposal 170 feature methods remain under staged implementation and must not yet be described as complete. The following are NOT yet implemented:
 

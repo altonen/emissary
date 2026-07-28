@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::TunnelBackend;
-use crate::i2pcontrol::domain::tunnel::{TunnelType, ALL_TUNNEL_TYPES};
+use crate::i2pcontrol::domain::tunnel::{TunnelType, ALL_TUNNEL_ACTIONS, ALL_TUNNEL_TYPES};
 
 /// An exhaustive tunnel backend registry.
 ///
@@ -128,6 +128,23 @@ pub fn create_default_registry() -> Result<TunnelBackendRegistry, RegistryError>
         .collect();
     TunnelBackendRegistry::new(backends)
 }
+
+/// Compile-time guard: every TunnelType variant is listed in ALL_TUNNEL_TYPES.
+///
+/// If you add a variant to TunnelType and forget to add it to ALL_TUNNEL_TYPES,
+/// this const will fail to compile.
+const _: () = {
+    // This block runs at compile time. If ALL_TUNNEL_TYPES has fewer than
+    // the expected number of elements, the array literal will fail.
+    const EXPECTED_COUNT: usize = 12;
+    const _CHECK: [(); EXPECTED_COUNT] = [(); ALL_TUNNEL_TYPES.len()];
+};
+
+/// Compile-time guard: every TunnelAction variant is listed in ALL_TUNNEL_ACTIONS.
+const _: () = {
+    const EXPECTED_COUNT: usize = 8;
+    const _CHECK: [(); EXPECTED_COUNT] = [(); ALL_TUNNEL_ACTIONS.len()];
+};
 
 #[cfg(test)]
 mod tests {

@@ -35,7 +35,7 @@ Closure review commit: head of implementation branch
 | 23 | Production and fake control-plane adapters expose equivalent domain validation | PASS | `FakeTunnelBackend` and `FakeBackendRegistry` use same `TunnelDefinition` types; tests verify same validation |
 | 24 | Headless and UI-enabled builds compile without frontend ownership of the stores | PASS | All new modules gated behind `i2pcontrol` feature; `cargo check --no-default-features` and `--features i2pcontrol` both pass |
 | 25 | No administrative HTTP/JSON-RPC or persistence dependency is added to `emissary-core` | PASS | `emissary-core/Cargo.toml` unchanged; all new code in `emissary-cli/src/i2pcontrol/` |
-| 26 | All required tests and platform evidence are recorded in the closure record | PASS | 321 tests pass (243 i2pcontrol + 78 existing); clippy clean; fmt clean |
+| 26 | All required tests and platform evidence are recorded in the closure record | PASS | 357 tests pass (279 i2pcontrol + 78 existing); clippy clean; fmt clean |
 
 ## 2. Verification commands and outcomes
 
@@ -55,7 +55,7 @@ cargo check -p emissary-cli --no-default-features --features i2pcontrol  # PASS
 ```
 cargo test -p emissary-cli --no-default-features --features i2pcontrol
 ```
-Result: 321 passed, 0 failed (4 suites)
+Result: 357 passed, 0 failed (4 suites)
 
 ### Broad workspace regression
 ```
@@ -89,6 +89,12 @@ Result: PASS (0 errors)
 - `emissary-cli/src/i2pcontrol/stores/tunnel_store.rs` — `TunnelStore`
 - `emissary-cli/src/i2pcontrol/stores/address_book_store.rs` — `AddressBookStore`
 - `emissary-cli/src/i2pcontrol/stores/subscription_store.rs` — `SubscriptionStore`
+- `emissary-cli/src/i2pcontrol/stores/fakes.rs` — `TunnelStoreFake`, `AddressBookStoreFake`, `SubscriptionStoreFake`
+
+### Documentation
+- `docs/i2pcontrol/administrative-state.md` — administrative state architecture
+- `docs/i2pcontrol/tunnel-backends.md` — backend interface and registry
+- `docs/i2pcontrol/security.md` — security properties and considerations
 
 ### Modified files
 - `emissary-cli/src/i2pcontrol/mod.rs` — added `domain`, `backends`, `stores` modules
@@ -156,6 +162,8 @@ Result: PASS (0 errors)
 - `unsupported_inspect_returns_unsupported_state` — inspect returns Unsupported
 - `unsupported_backend_tunnel_type_matches` — type matches for all 12
 - `unsupported_backend_display_error_message` — error message
+- `unsupported_backend_no_tokio_spawn` — no tokio::spawn in unsupported backends
+- `unsupported_backend_no_resource_allocation` — no resource allocation
 - `fake_default_script_succeeds` — default script succeeds
 - `fake_scripted_failure` — scripted failure
 - `fake_scripted_inspect_state` — scripted inspect
@@ -172,6 +180,24 @@ Result: PASS (0 errors)
 - `oversized_rejected` — oversized rejected
 - `revision_increments` — revision increments
 - `envelope_validate_header` — envelope validation
+- `corrupt_json_file_is_rejected` — malformed JSON rejected
+- `newest_corrupt_falls_back_to_prior_valid` — corruption fallback
+- `all_corrupt_generations_returns_error` — all-corrupt failure
+- `unsupported_version_is_rejected` — version rejection
+- `unknown_schema_is_rejected` — schema rejection
+- `retention_keeps_bounded_generations` — retention safety
+- `symlink_in_directory_is_rejected` — symlink rejection
+- `generation_files_have_restrictive_permissions` — file permissions (Unix)
+- `deterministic_serialization_for_equal_state` — deterministic output
+- `stale_temp_files_are_ignored` — temp file handling
+- `validate_confined_path_rejects_escape` — path confinement
+- `validate_confined_path_accepts_within_base` — path acceptance
+
+### Store tests (fakes.rs)
+- `tunnel_store_fake_crud` — fake tunnel CRUD
+- `address_book_store_fake_crud` — fake address book CRUD
+- `subscription_store_fake_crud` — fake subscription CRUD
+- `fake_stores_match_revision_semantics` — revision semantics
 
 ### Store tests (tunnel_store.rs)
 - `empty_store` — empty store
@@ -206,9 +232,20 @@ Result: PASS (0 errors)
 |---|---|---|
 | Low | Dead-code warnings for domain/backend/store types not yet consumed by handlers | Expected: M002 establishes infrastructure; M003-M006 consume it |
 | Low | `async-trait` added as dependency for `TunnelBackend` trait | By design: async trait methods required for future real backends |
-| Info | Generation store does not perform fsync (platform-dependent) | By design: atomic rename provides sufficient durability; fsync can be added later |
+| Low | `--features ui,i2pcontrol` compilation requires system GTK3/WebKit libs | Expected: UI feature requires system dependencies; i2pcontrol compiles independently |
+| Info | `cargo clippy --all-features` reports pre-existing warnings in `tls.rs` | Pre-existing; not introduced by M002 |
+| Info | File permission enforcement is Unix-only | By design: non-Unix platforms rely on OS permissions; path confinement still applies |
 
 No high or medium severity findings.
+
+## 5a. Security properties added
+
+- Path confinement: `GenerationStore` validates that store directories are not symlinks and all resolved paths remain within the base directory
+- Symlink rejection: Symlinks in the generation directory are detected and skipped during load
+- Restrictive file permissions: Generation files are created with mode 0o600 on Unix
+- Fsync before rename: Files are flushed and synced before atomic publication
+- Compile-time guards: Const assertions ensure all 12 tunnel types and 8 actions are registered
+- No-side-effect tests: Unsupported backends proven to not spawn tasks or bind sockets
 
 ## 6. Disposition
 

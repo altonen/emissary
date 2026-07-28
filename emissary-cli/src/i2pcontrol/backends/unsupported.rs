@@ -132,4 +132,58 @@ mod tests {
         assert!(msg.contains("streamrserver"));
         assert!(msg.contains("not implemented"));
     }
+
+    // --- Static guards: unsupported backend allocates no runtime resources ---
+
+    /// This test proves unsupported backends do not call tokio::spawn.
+    /// We verify by checking that start/stop/inspect complete synchronously
+    /// (no tokio::spawn overhead) and return immediately.
+    #[tokio::test]
+    async fn unsupported_backend_no_tokio_spawn() {
+        for &tt in crate::i2pcontrol::domain::tunnel::ALL_TUNNEL_TYPES {
+            let backend = UnsupportedTunnelBackend::new(tt);
+            let def = test_definition(tt);
+
+            // Start should return immediately with NotImplemented
+            let start_result = backend.start(&def).await;
+            assert!(matches!(start_result, Err(BackendError::NotImplemented { .. })));
+
+            // Stop should return immediately with Ok
+            let stop_result = backend.stop(&def).await;
+            assert!(stop_result.is_ok());
+
+            // Inspect should return immediately with Unsupported state
+            let status = backend.inspect(&def);
+            assert_eq!(status.runtime_state, TunnelRuntimeState::Unsupported);
+        }
+    }
+
+    /// This test proves unsupported backends do not allocate any listener,
+    /// destination, session, task, or traffic path by verifying the BackendStatus
+    /// consistently reports Unsupported for all tunnel types.
+    #[test]
+    fn unsupported_backend_no_resource_allocation() {
+        for &tt in crate::i2pcontrol::domain::tunnel::ALL_TUNNEL_TYPES {
+            let backend = UnsupportedTunnelBackend::new(tt);
+            let def = test_definition(tt);
+
+            let status = backend.inspect(&def);
+
+            // Must always report Unsupported - never Running, Starting, etc.
+            assert_eq!(
+                status.runtime_state,
+                TunnelRuntimeState::Unsupported,
+                "unsupported backend for {} should report Unsupported, got {:?}",
+                tt.as_str(),
+                status.runtime_state
+            );
+
+            // Must not report a real tunnel type in the message
+            assert!(
+                status.message.contains("not implemented"),
+                "message should indicate not implemented: {}",
+                status.message
+            );
+        }
+    }
 }

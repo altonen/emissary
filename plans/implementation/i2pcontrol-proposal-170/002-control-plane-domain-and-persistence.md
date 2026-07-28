@@ -118,7 +118,7 @@ M001 is expected to establish a typed control-plane interface and test double. M
   - `httpbidirserver`
   - `ircserver`
   - `streamrserver`
-- Exact actions remain `create`, `edit`, `get`, `start`, `stop`, `restart`, and `delete`.
+- Exact actions remain `List`, `create`, `edit`, `get`, `start`, `stop`, `restart`, and `delete`.
 - Unknown external type or action values are rejected; aliases are not introduced.
 - Every declared tunnel type resolves to exactly one registered backend.
 - No persisted tunnel definition proves or implies that a runtime service exists.
@@ -534,7 +534,7 @@ Acceptance evidence:
 ### Focused unit tests
 
 - exact `TunnelType` parse/serialize for all twelve values;
-- exact `TunnelAction` parse/serialize for all seven values;
+- exact `TunnelAction` parse/serialize for all eight values;
 - rejection of case variants, aliases, empty values, and unknown values;
 - tunnel option canonical serialization;
 - deterministic map ordering;
