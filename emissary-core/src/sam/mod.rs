@@ -767,7 +767,7 @@ impl<R: Runtime> Future for SamServer<R> {
             match this.pending_sessions.poll_next_unpin(cx) {
                 Poll::Pending => break,
                 Poll::Ready(None) => return Poll::Ready(()),
-                Poll::Ready(Some(Ok(context))) =>
+                Poll::Ready(Some(Ok(context))) => {
                     match this.pending_sessions.remove(&context.session_id) {
                         Some(tx) => {
                             this.active_sessions.insert(
@@ -790,7 +790,8 @@ impl<R: Runtime> Future for SamServer<R> {
                                 this.active_destinations.remove(&destination_id);
                             }
                         }
-                    },
+                    }
+                }
                 Poll::Ready(Some(Err(error))) => tracing::warn!(
                     target: LOG_TARGET,
                     ?error,

@@ -256,8 +256,9 @@ pub enum PeerTestBlock {
 impl fmt::Debug for PeerTestBlock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::AliceRequest { .. } =>
-                f.debug_struct("PeerTestBlock::AliceRequest").finish_non_exhaustive(),
+            Self::AliceRequest { .. } => {
+                f.debug_struct("PeerTestBlock::AliceRequest").finish_non_exhaustive()
+            }
             Self::BobReject { reason, .. } => f
                 .debug_struct("PeerTestBlock::BobReject")
                 .field("reason", &reason)
@@ -294,8 +295,9 @@ impl PeerTestBlock {
             Self::BobReject { message, .. } => overhead + ROUTER_HASH_LEN + message.len(),
             Self::RequestCharlie { message, .. } => overhead + ROUTER_HASH_LEN + message.len(),
             Self::CharlieResponse { message, .. } => overhead + message.len(),
-            Self::RelayCharlieResponse { message, .. } =>
-                overhead + message.len() + ROUTER_HASH_LEN,
+            Self::RelayCharlieResponse { message, .. } => {
+                overhead + message.len() + ROUTER_HASH_LEN
+            }
         }
     }
 }
@@ -356,12 +358,13 @@ impl RelayBlock {
                 signature,
                 token,
                 rejection: _,
-            } =>
+            } => {
                 overhead
                     + 1 // code
                     + message.len()
                     + signature.len()
-                    + token.map_or(0, |_| TOKEN_LEN),
+                    + token.map_or(0, |_| TOKEN_LEN)
+            }
             Self::Intro {
                 message,
                 signature,

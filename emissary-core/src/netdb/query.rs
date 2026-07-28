@@ -251,8 +251,9 @@ impl<R: Runtime> fmt::Debug for QueryKind<R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::LeaseSet { .. } => f.debug_struct("QueryKind::LeaseSet").finish_non_exhaustive(),
-            Self::RouterInfo { .. } =>
-                f.debug_struct("QueryKind::RouterInfo").finish_non_exhaustive(),
+            Self::RouterInfo { .. } => {
+                f.debug_struct("QueryKind::RouterInfo").finish_non_exhaustive()
+            }
             Self::Exploration => f.debug_struct("QueryKind::Exploration").finish(),
             Self::Router => f.debug_struct("QueryKind::Router").finish(),
         }

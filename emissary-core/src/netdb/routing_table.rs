@@ -220,7 +220,7 @@ impl Iterator for ClosestBucketsIter {
                 self.state = ClosestBucketsIterState::ZoomIn(i);
                 Some(i)
             }
-            ClosestBucketsIterState::ZoomIn(i) =>
+            ClosestBucketsIterState::ZoomIn(i) => {
                 if let Some(i) = self.next_in(i) {
                     self.state = ClosestBucketsIterState::ZoomIn(i);
                     Some(i)
@@ -228,15 +228,17 @@ impl Iterator for ClosestBucketsIter {
                     let i = BucketIndex(0);
                     self.state = ClosestBucketsIterState::ZoomOut(i);
                     Some(i)
-                },
-            ClosestBucketsIterState::ZoomOut(i) =>
+                }
+            }
+            ClosestBucketsIterState::ZoomOut(i) => {
                 if let Some(i) = self.next_out(i) {
                     self.state = ClosestBucketsIterState::ZoomOut(i);
                     Some(i)
                 } else {
                     self.state = ClosestBucketsIterState::Done;
                     None
-                },
+                }
+            }
             ClosestBucketsIterState::Done => None,
         }
     }

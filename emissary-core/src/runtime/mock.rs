@@ -128,8 +128,9 @@ pub struct MockTcpListener(net::TcpListener);
 impl TcpListener<MockTcpStream> for MockTcpListener {
     async fn bind(address: SocketAddr) -> Option<Self> {
         let socket = match address {
-            SocketAddr::V4(_) =>
-                Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP)).ok()?,
+            SocketAddr::V4(_) => {
+                Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP)).ok()?
+            }
             SocketAddr::V6(_) => {
                 let socket = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP)).ok()?;
                 socket.set_only_v6(true).ok()?;

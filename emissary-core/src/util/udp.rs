@@ -145,8 +145,9 @@ impl<R: Runtime> UdpSocket<R> {
             let result =
                 match select(pin!(self.socket.recv_from(&mut buffer)), self.rx.recv()).await {
                     Either::Left((Some((size, address)), _)) => Either::Left((size, address)),
-                    Either::Right((Some(Datagram { datagram, target }), _)) =>
-                        Either::Right((datagram, target)),
+                    Either::Right((Some(Datagram { datagram, target }), _)) => {
+                        Either::Right((datagram, target))
+                    }
                     _ => return,
                 };
 
@@ -159,8 +160,9 @@ impl<R: Runtime> UdpSocket<R> {
                     })
                     .await
                     .ok(),
-                Either::Right((datagram, target)) =>
-                    self.socket.send_to(&datagram, target).await.map(|_| ()),
+                Either::Right((datagram, target)) => {
+                    self.socket.send_to(&datagram, target).await.map(|_| ())
+                }
             }
             .is_none()
             {

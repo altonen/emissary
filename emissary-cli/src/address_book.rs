@@ -513,7 +513,7 @@ impl AddressBookManager {
                 ?error,
                 "failed to create directory for destinations",
             ),
-            Ok(_) =>
+            Ok(_) => {
                 for (hostname, destination) in destinations {
                     if let Err(error) = tokio::fs::write(
                         self.address_book_path.join("destinations").join(format!("{hostname}.txt")),
@@ -528,7 +528,8 @@ impl AddressBookManager {
                             "failed to store destination to disk",
                         );
                     }
-                },
+                }
+            }
         }
     }
 }

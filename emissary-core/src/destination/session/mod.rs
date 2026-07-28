@@ -1082,11 +1082,12 @@ impl<R: Runtime> Stream for SessionManager<R> {
                 Poll::Ready(Some(destination_id)) => {
                     match self.publish_local_lease_set(&destination_id) {
                         None => continue,
-                        Some(message) =>
+                        Some(message) => {
                             return Poll::Ready(Some(SessionManagerEvent::SendMessage {
                                 destination_id,
                                 message,
-                            })),
+                            }))
+                        }
                     }
                 }
             }
@@ -1099,11 +1100,12 @@ impl<R: Runtime> Stream for SessionManager<R> {
                 Poll::Ready(Some(destination_id)) => {
                     match self.explicit_protocol_response_message(&destination_id) {
                         None => continue,
-                        Some(message) =>
+                        Some(message) => {
                             return Poll::Ready(Some(SessionManagerEvent::SendMessage {
                                 destination_id,
                                 message,
-                            })),
+                            }))
+                        }
                     }
                 }
             }

@@ -318,7 +318,9 @@ impl NextKeyKind {
             NextKeyKind::ForwardKey { public_key, .. }
             | NextKeyKind::ReverseKey { public_key, .. }
                 if public_key.is_some() =>
-                GARLIC_HEADER_LEN + 3usize + 32usize, // flag + key id + public key
+            {
+                GARLIC_HEADER_LEN + 3usize + 32usize
+            } // flag + key id + public key
             _ => GARLIC_HEADER_LEN + 3usize, // flag + key id
         }
     }
@@ -423,13 +425,15 @@ impl fmt::Debug for GarlicMessageBlock<'_> {
                 .field("expiration", &expiration)
                 .field("delivery_instructions", &delivery_instructions)
                 .finish_non_exhaustive(),
-            Self::Padding { .. } =>
-                f.debug_struct("GarlicMessageBlock::Padding").finish_non_exhaustive(),
+            Self::Padding { .. } => {
+                f.debug_struct("GarlicMessageBlock::Padding").finish_non_exhaustive()
+            }
             Self::Termination {} => f.debug_struct("GarlicMessageBlock::Termination").finish(),
             Self::Options {} => f.debug_struct("GarlicMessageBlock::Options").finish(),
             Self::MessageNumber {} => f.debug_struct("GarlicMessageBlock::MessageNumber").finish(),
-            Self::NextKey { kind } =>
-                f.debug_struct("GarlicMessageBlock::NextKey").field("kind", &kind).finish(),
+            Self::NextKey { kind } => {
+                f.debug_struct("GarlicMessageBlock::NextKey").field("kind", &kind).finish()
+            }
             Self::Ack { acks } => f
                 .debug_struct("GarlicMessageBlock::Ack")
                 .field("num_acks", &acks.len())

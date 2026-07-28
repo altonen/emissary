@@ -201,8 +201,9 @@ impl fmt::Debug for PendingSessionState {
             Self::AwaitingSessionConfirmed { .. } => f
                 .debug_struct("PendingSessionState::AwaitingSessionConfirmed")
                 .finish_non_exhaustive(),
-            Self::Poisoned =>
-                f.debug_struct("PendingSessionState::Poisoned").finish_non_exhaustive(),
+            Self::Poisoned => {
+                f.debug_struct("PendingSessionState::Poisoned").finish_non_exhaustive()
+            }
         }
     }
 }
@@ -977,8 +978,9 @@ impl<R: Runtime> InboundSsu2Session<R> {
         pkt: Vec<u8>,
     ) -> Result<Option<PendingSsu2SessionStatus<R>>, Ssu2Error> {
         match mem::replace(&mut self.state, PendingSessionState::Poisoned) {
-            PendingSessionState::AwaitingSessionRequest { token } =>
-                self.on_session_request(SessionRequestPayload::Packet { pkt, token }),
+            PendingSessionState::AwaitingSessionRequest { token } => {
+                self.on_session_request(SessionRequestPayload::Packet { pkt, token })
+            }
             PendingSessionState::AwaitingSessionConfirmed {
                 ephemeral_key,
                 fragments,
@@ -1076,7 +1078,7 @@ impl<R: Runtime> InboundSsu2Session<R> {
 
                     self.state = PendingSessionState::AwaitingSessionRequest { token };
                 }
-                PendingSessionState::HandleSessionRequest { payload } =>
+                PendingSessionState::HandleSessionRequest { payload } => {
                     match self.on_session_request(payload) {
                         Ok(None) => {}
                         Ok(Some(status)) => return status,
@@ -1098,7 +1100,8 @@ impl<R: Runtime> InboundSsu2Session<R> {
                                 reason: error.into(),
                             };
                         }
-                    },
+                    }
+                }
                 _ => unreachable!(),
             }
         }
@@ -1126,16 +1129,18 @@ impl<R: Runtime> Future for InboundSsu2Session<R> {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         loop {
             let pkt = match &mut self.rx {
-                None =>
+                None => {
                     return Poll::Ready(PendingSsu2SessionStatus::SocketClosed {
                         started: self.started,
-                    }),
+                    })
+                }
                 Some(rx) => match rx.poll_recv(cx) {
                     Poll::Pending => break,
-                    Poll::Ready(None) =>
+                    Poll::Ready(None) => {
                         return Poll::Ready(PendingSsu2SessionStatus::SocketClosed {
                             started: self.started,
-                        }),
+                        })
+                    }
                     Poll::Ready(Some(Packet { pkt, .. })) => pkt,
                 },
             };
@@ -1180,13 +1185,14 @@ impl<R: Runtime> Future for InboundSsu2Session<R> {
                     PacketKind::Multi(pkts) => self.write_buffer.extend(pkts),
                 }
             }
-            Poll::Ready(PacketRetransmitterEvent::Timeout) =>
+            Poll::Ready(PacketRetransmitterEvent::Timeout) => {
                 return Poll::Ready(PendingSsu2SessionStatus::Timeout {
                     connection_id: self.dst_id,
                     router_id: None,
                     started: self.started,
                     address: None,
-                }),
+                })
+            }
         }
 
         loop {
@@ -1200,10 +1206,11 @@ impl<R: Runtime> Future for InboundSsu2Session<R> {
                     self.write_buffer.push_front(pkt);
                     return Poll::Pending;
                 }
-                Poll::Ready(None) =>
+                Poll::Ready(None) => {
                     return Poll::Ready(PendingSsu2SessionStatus::SocketClosed {
                         started: self.started,
-                    }),
+                    })
+                }
                 Poll::Ready(Some(_)) => {}
             }
         }

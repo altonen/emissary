@@ -139,20 +139,25 @@ impl From<Ntcp2Error> for DialError {
         match value {
             Ntcp2Error::Chacha => Self::SessionTerminated(TerminationReason::AeadFailure),
             Ntcp2Error::NoAddress => Self::NoAddress,
-            Ntcp2Error::InvalidData =>
-                Self::SessionTerminated(TerminationReason::PayloadFormatError),
+            Ntcp2Error::InvalidData => {
+                Self::SessionTerminated(TerminationReason::PayloadFormatError)
+            }
             Ntcp2Error::InvalidState => Self::SessionTerminated(TerminationReason::Unspecified),
-            Ntcp2Error::InvalidRouterInfo =>
-                Self::SessionTerminated(TerminationReason::InvalidRouterInfo),
-            Ntcp2Error::UnexpectedMessage =>
-                Self::SessionTerminated(TerminationReason::Unspecified),
+            Ntcp2Error::InvalidRouterInfo => {
+                Self::SessionTerminated(TerminationReason::InvalidRouterInfo)
+            }
+            Ntcp2Error::UnexpectedMessage => {
+                Self::SessionTerminated(TerminationReason::Unspecified)
+            }
             Ntcp2Error::IoError => Self::SessionTerminated(TerminationReason::IoError),
             Ntcp2Error::ConnectFailure => Self::ConnectFailure,
             Ntcp2Error::ClockSkew => Self::SessionTerminated(TerminationReason::ClockSkew),
-            Ntcp2Error::InvalidVersion =>
-                Self::SessionTerminated(TerminationReason::IncompatibleVersion),
-            Ntcp2Error::InvalidOptions =>
-                Self::SessionTerminated(TerminationReason::IncompatibleOptions),
+            Ntcp2Error::InvalidVersion => {
+                Self::SessionTerminated(TerminationReason::IncompatibleVersion)
+            }
+            Ntcp2Error::InvalidOptions => {
+                Self::SessionTerminated(TerminationReason::IncompatibleOptions)
+            }
             Ntcp2Error::NetworkMismatch => Self::SessionTerminated(TerminationReason::WrongNetId),
         }
     }
@@ -235,10 +240,12 @@ pub enum PeerTestError {
 impl fmt::Display for PeerTestError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NonExistentPeerTestSession(id) =>
-                write!(f, "remote peer test session doesn't exist: {id}"),
-            Self::UnexpectedMessage(expected) =>
-                write!(f, "unexpected message, expected {expected}"),
+            Self::NonExistentPeerTestSession(id) => {
+                write!(f, "remote peer test session doesn't exist: {id}")
+            }
+            Self::UnexpectedMessage(expected) => {
+                write!(f, "unexpected message, expected {expected}")
+            }
             Self::InvalidSignature => write!(f, "invalid signature"),
             Self::InvalidAddress => write!(f, "invalid address"),
         }
@@ -838,8 +845,9 @@ impl<T> From<thingbuf::mpsc::errors::TrySendError<T>> for Ssu2Error {
     fn from(value: thingbuf::mpsc::errors::TrySendError<T>) -> Self {
         match value {
             thingbuf::mpsc::errors::TrySendError::Full(_) => Ssu2Error::Channel(ChannelError::Full),
-            thingbuf::mpsc::errors::TrySendError::Closed(_) =>
-                Ssu2Error::Channel(ChannelError::Closed),
+            thingbuf::mpsc::errors::TrySendError::Closed(_) => {
+                Ssu2Error::Channel(ChannelError::Closed)
+            }
             _ => unreachable!(),
         }
     }
@@ -848,10 +856,12 @@ impl<T> From<thingbuf::mpsc::errors::TrySendError<T>> for Ssu2Error {
 impl From<thingbuf::mpsc::errors::TrySendError<Message>> for RoutingError {
     fn from(value: thingbuf::mpsc::errors::TrySendError<Message>) -> Self {
         match value {
-            thingbuf::mpsc::errors::TrySendError::Full(message) =>
-                RoutingError::ChannelFull(message),
-            thingbuf::mpsc::errors::TrySendError::Closed(message) =>
-                RoutingError::ChannelClosed(message),
+            thingbuf::mpsc::errors::TrySendError::Full(message) => {
+                RoutingError::ChannelFull(message)
+            }
+            thingbuf::mpsc::errors::TrySendError::Closed(message) => {
+                RoutingError::ChannelClosed(message)
+            }
             _ => unreachable!(),
         }
     }

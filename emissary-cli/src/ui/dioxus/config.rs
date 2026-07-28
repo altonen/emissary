@@ -74,8 +74,9 @@ impl TryInto<Option<crate::config::Ntcp2Config>> for Ntcp2Config {
 
         Ok(Some(crate::config::Ntcp2Config {
             port: match self.port {
-                Some(port) =>
-                    port.parse::<u16>().map_err(|_| String::from("Invalid NTCP2 port"))?,
+                Some(port) => {
+                    port.parse::<u16>().map_err(|_| String::from("Invalid NTCP2 port"))?
+                }
                 None => 0,
             },
             ipv4_host: match self.ipv4_host.as_ref() {
@@ -493,8 +494,9 @@ impl TryInto<Option<crate::config::HttpProxyConfig>> for HttpProxyConfig {
 
         Ok(Some(crate::config::HttpProxyConfig {
             port: match self.port {
-                Some(port) =>
-                    port.parse::<u16>().map_err(|_| String::from("Invalid HTTP proxy port"))?,
+                Some(port) => {
+                    port.parse::<u16>().map_err(|_| String::from("Invalid HTTP proxy port"))?
+                }
                 None => 0,
             },
             host: {
@@ -568,8 +570,9 @@ impl TryInto<Option<crate::config::SocksProxyConfig>> for SocksProxyConfig {
 
         Ok(Some(crate::config::SocksProxyConfig {
             port: match self.port {
-                Some(port) =>
-                    port.parse::<u16>().map_err(|_| String::from("Invalid SOCKS proxy port"))?,
+                Some(port) => {
+                    port.parse::<u16>().map_err(|_| String::from("Invalid SOCKS proxy port"))?
+                }
                 None => 0,
             },
             host: {

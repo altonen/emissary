@@ -188,7 +188,7 @@ impl<R: Runtime> GarlicHandler<R> {
                                 payload: message_body.to_vec(),
                             },
                         }),
-                        CloveDeliveryInstructions::Router { hash } =>
+                        CloveDeliveryInstructions::Router { hash } => {
                             Some(DeliveryInstructions::Router {
                                 router: RouterId::from(hash),
                                 message: Message {
@@ -197,7 +197,8 @@ impl<R: Runtime> GarlicHandler<R> {
                                     expiration,
                                     payload: message_body.to_vec(),
                                 },
-                            }),
+                            })
+                        }
                         CloveDeliveryInstructions::Tunnel { hash, tunnel_id } => {
                             let message = MessageBuilder::standard()
                                 .with_message_type(message_type)

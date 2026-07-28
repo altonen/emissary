@@ -606,10 +606,12 @@ mod tests {
             Err(_) => panic!("timeout"),
             Ok(encryption) => match encryption {
                 EncryptionKind::X25519 => assert!(disable_pq && ml_kem.is_none()),
-                EncryptionKind::MlKem512X25519 =>
-                    assert!(!disable_pq && ml_kem.unwrap() == "3,4".to_string()),
-                EncryptionKind::MlKem768X25519 =>
-                    assert!(!disable_pq && ml_kem.unwrap() == "4,3".to_string()),
+                EncryptionKind::MlKem512X25519 => {
+                    assert!(!disable_pq && ml_kem.unwrap() == "3,4".to_string())
+                }
+                EncryptionKind::MlKem768X25519 => {
+                    assert!(!disable_pq && ml_kem.unwrap() == "4,3".to_string())
+                }
                 EncryptionKind::MlKem1024X25519 => unreachable!(),
             },
         }
@@ -1016,10 +1018,12 @@ mod tests {
             Err(_) => panic!("timeout"),
             Ok(encryption) => match encryption {
                 EncryptionKind::X25519 => assert!(disable_pq && ml_kem.is_none()),
-                EncryptionKind::MlKem512X25519 =>
-                    assert!(!disable_pq && ml_kem.unwrap() == "3,4".to_string()),
-                EncryptionKind::MlKem768X25519 =>
-                    assert!(!disable_pq && ml_kem.unwrap() == "4,3".to_string()),
+                EncryptionKind::MlKem512X25519 => {
+                    assert!(!disable_pq && ml_kem.unwrap() == "3,4".to_string())
+                }
+                EncryptionKind::MlKem768X25519 => {
+                    assert!(!disable_pq && ml_kem.unwrap() == "4,3".to_string())
+                }
                 EncryptionKind::MlKem1024X25519 => unreachable!(),
             },
         }
@@ -1443,10 +1447,12 @@ mod tests {
 
                     match encryption {
                         EncryptionKind::X25519 => assert!(disable_pq && ml_kem.is_none()),
-                        EncryptionKind::MlKem512X25519 =>
-                            assert!(!disable_pq && ml_kem.unwrap() == "3,4".to_string()),
-                        EncryptionKind::MlKem768X25519 =>
-                            assert!(!disable_pq && ml_kem.unwrap() == "4,3".to_string()),
+                        EncryptionKind::MlKem512X25519 => {
+                            assert!(!disable_pq && ml_kem.unwrap() == "3,4".to_string())
+                        }
+                        EncryptionKind::MlKem768X25519 => {
+                            assert!(!disable_pq && ml_kem.unwrap() == "4,3".to_string())
+                        }
                         EncryptionKind::MlKem1024X25519 => unreachable!(),
                     }
 
@@ -1663,10 +1669,12 @@ mod tests {
             Err(_) => panic!("timeout"),
             Ok(encryption) => match encryption {
                 EncryptionKind::X25519 => assert!(disable_pq && ml_kem.is_none()),
-                EncryptionKind::MlKem512X25519 =>
-                    assert!(!disable_pq && ml_kem.unwrap() == "3,4".to_string()),
-                EncryptionKind::MlKem768X25519 =>
-                    assert!(!disable_pq && ml_kem.unwrap() == "4,3".to_string()),
+                EncryptionKind::MlKem512X25519 => {
+                    assert!(!disable_pq && ml_kem.unwrap() == "3,4".to_string())
+                }
+                EncryptionKind::MlKem768X25519 => {
+                    assert!(!disable_pq && ml_kem.unwrap() == "4,3".to_string())
+                }
                 EncryptionKind::MlKem1024X25519 => unreachable!(),
             },
         }

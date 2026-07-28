@@ -226,7 +226,7 @@ impl AppState {
 
         match state.status {
             RouterStatus::ShuttingDown => ("Shutting Down", "#e34234"),
-            RouterStatus::Active =>
+            RouterStatus::Active => {
                 if state.num_routers < 10 {
                     ("Connecting", "#f59e0b")
                 } else {
@@ -242,7 +242,8 @@ impl AppState {
                     } else {
                         ("Active", "#22c55e")
                     }
-                },
+                }
+            }
         }
     }
 
@@ -345,22 +346,24 @@ impl AppState {
         let dest = dest.strip_suffix(".b32.i2p").unwrap_or(dest);
 
         match base32_decode(dest) {
-            Some(_) =>
+            Some(_) => {
                 if let Some(handle) = &self.address_book_handle {
                     handle.add_base32(
                         self.address_book.add_destination.hostname.clone(),
                         dest.to_string(),
                     );
-                },
+                }
+            }
             None => match base64_decode(dest) {
                 Some(decoded) => match Destination::parse(&decoded) {
-                    Ok(destination) =>
+                    Ok(destination) => {
                         if let Some(handle) = &self.address_book_handle {
                             handle.add_base64(
                                 self.address_book.add_destination.hostname.clone(),
                                 destination,
                             );
-                        },
+                        }
+                    }
                     Err(_) => return Err(String::from("Not a valid base64 destination")),
                 },
                 None => return Err(String::from("Not a valid base32/base64 destination")),
@@ -387,14 +390,15 @@ impl AppState {
         match &mut self.ui {
             UiKind::Native {
                 clipboard: Some(clipboard),
-            } =>
+            } => {
                 if let Err(error) = clipboard.set_text(value.to_string()) {
                     tracing::error!(
                         target: LOG_TARGET,
                         ?error,
                         "failed to copy address to clipboard",
                     );
-                },
+                }
+            }
             UiKind::Native { .. } => {}
             UiKind::Web => {
                 let escaped = value.replace('\\', "\\\\").replace('\'', "\\'");

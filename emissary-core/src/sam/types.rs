@@ -135,8 +135,9 @@ pub enum PendingSessionState<R: Runtime> {
 impl<R: Runtime> fmt::Debug for PendingSessionState<R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::AwaitingLeaseSet { .. } =>
-                f.debug_struct("PendingSessionState::AwaitingLeaseSet").finish_non_exhaustive(),
+            Self::AwaitingLeaseSet { .. } => {
+                f.debug_struct("PendingSessionState::AwaitingLeaseSet").finish_non_exhaustive()
+            }
             Self::AwaitingSession { stream_id } => f
                 .debug_struct("PendingSessionState::AwaitingSession")
                 .field("stream_id", &stream_id)
@@ -252,10 +253,12 @@ impl fmt::Debug for SamSessionKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Stream => f.debug_struct("SamSessionKind::Stream").finish(),
-            Self::Datagram { .. } =>
-                f.debug_struct("SamSessionKind::Datagram").finish_non_exhaustive(),
-            Self::Primary { .. } =>
-                f.debug_struct("SamSessionKind::Primary").finish_non_exhaustive(),
+            Self::Datagram { .. } => {
+                f.debug_struct("SamSessionKind::Datagram").finish_non_exhaustive()
+            }
+            Self::Primary { .. } => {
+                f.debug_struct("SamSessionKind::Primary").finish_non_exhaustive()
+            }
         }
     }
 }

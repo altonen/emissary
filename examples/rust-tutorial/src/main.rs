@@ -76,13 +76,14 @@ async fn main() -> anyhow::Result<()> {
         match Reseeder::reseed::<Runtime>(None, false).await {
             // if reseeding succeeded, store the router infos to disk so next time the
             // router starts, it doesn't have to reeseed
-            Ok(reseed_routers) =>
+            Ok(reseed_routers) => {
                 for info in reseed_routers {
                     storage
                         .store_router_info(info.name.to_string(), info.router_info.clone())
                         .await?;
                     routers.push(info.router_info);
-                },
+                }
+            }
 
             // the router cannot be started if reseeding failed and there are no routers
             Err(_) if routers.is_empty() => return Err(anyhow!("unable to start emissary")),

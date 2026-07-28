@@ -168,7 +168,7 @@ impl Storage {
             combined[32..].copy_from_slice(&iv);
 
             match tokio::fs::File::create(base_path.join("ntcp2.keys")).await {
-                Ok(mut file) =>
+                Ok(mut file) => {
                     if let Err(error) = file.write_all(combined.as_ref()).await {
                         tracing::error!(
                             target: LOG_TARGET,
@@ -176,7 +176,8 @@ impl Storage {
                             path = %base_path.join("ntcp2.keys").display(),
                             "failed to write ntcp2 keys to disk",
                         )
-                    },
+                    }
+                }
                 Err(error) => tracing::error!(
                     target: LOG_TARGET,
                     error = ?error.kind(),
@@ -201,7 +202,7 @@ impl Storage {
             combined[32..].copy_from_slice(&intro_key);
 
             match tokio::fs::File::create(base_path.join("ssu2.keys")).await {
-                Ok(mut file) =>
+                Ok(mut file) => {
                     if let Err(error) = file.write_all(combined.as_ref()).await {
                         tracing::error!(
                             target: LOG_TARGET,
@@ -209,7 +210,8 @@ impl Storage {
                             path = %base_path.join("ssu2.keys").display(),
                             "failed to write ssu2 keys to disk",
                         )
-                    },
+                    }
+                }
                 Err(error) => tracing::error!(
                     target: LOG_TARGET,
                     error = ?error.kind(),

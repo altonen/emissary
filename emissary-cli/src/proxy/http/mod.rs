@@ -460,8 +460,9 @@ mod tests {
             let mut headers = [httparse::EMPTY_HEADER; 64];
             match httparse::Response::new(&mut headers).parse(&buffer[..nread]) {
                 Err(error) => panic!("failed to parse response: {error:?}"),
-                Ok(response) if response.is_complete() =>
-                    return std::str::from_utf8(&buffer[..nread]).unwrap().to_owned(),
+                Ok(response) if response.is_complete() => {
+                    return std::str::from_utf8(&buffer[..nread]).unwrap().to_owned()
+                }
                 Ok(_) => {}
             }
         }

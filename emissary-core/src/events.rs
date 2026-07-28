@@ -590,7 +590,7 @@ impl<R: Runtime> Future for EventManager<R> {
                 Poll::Ready(Some(SubsystemEvent::ServerDestinationStarted { name, address })) => {
                     self.pending_server_updates.push((name, address));
                 }
-                Poll::Ready(Some(SubsystemEvent::FirewallStatus { status, ipv4 })) =>
+                Poll::Ready(Some(SubsystemEvent::FirewallStatus { status, ipv4 })) => {
                     self.firewall_statuses.push((
                         match status {
                             FirewallStatus::Unknown => "Testing".to_string(),
@@ -599,7 +599,8 @@ impl<R: Runtime> Future for EventManager<R> {
                             FirewallStatus::SymmetricNat => "Symmetric NAT".to_string(),
                         },
                         ipv4,
-                    )),
+                    ))
+                }
             }
         }
 

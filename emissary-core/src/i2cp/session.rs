@@ -425,7 +425,7 @@ impl<R: Runtime> Future for I2cpSession<R> {
             match self.destination.poll_next_unpin(cx) {
                 Poll::Pending => break,
                 Poll::Ready(None) => return Poll::Ready(()),
-                Poll::Ready(Some(DestinationEvent::Messages { messages })) =>
+                Poll::Ready(Some(DestinationEvent::Messages { messages })) => {
                     messages.into_iter().for_each(|message| {
                         tracing::trace!(
                             target: LOG_TARGET,
@@ -434,8 +434,9 @@ impl<R: Runtime> Future for I2cpSession<R> {
                         );
 
                         self.send_payload_message(message)
-                    }),
-                Poll::Ready(Some(DestinationEvent::LeaseSetFound { destination_id })) =>
+                    })
+                }
+                Poll::Ready(Some(DestinationEvent::LeaseSetFound { destination_id })) => {
                     match self.pending_connections.remove(&destination_id) {
                         Some(messages) => messages.into_iter().for_each(|message| {
                             if let Err(error) = self.destination.send_message(
@@ -476,7 +477,8 @@ impl<R: Runtime> Future for I2cpSession<R> {
                                 );
                             }
                         },
-                    },
+                    }
+                }
                 Poll::Ready(Some(DestinationEvent::LeaseSetNotFound {
                     destination_id,
                     error,

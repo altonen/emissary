@@ -361,8 +361,9 @@ impl<'a> TunnelData<'a> {
                             sequence_number,
                         },
                     ),
-                    fragment =>
-                        return Err(Err::Error(TunnelDataParseError::InvalidFragment(fragment))),
+                    fragment => {
+                        return Err(Err::Error(TunnelDataParseError::InvalidFragment(fragment)))
+                    }
                 };
 
                 return Ok((

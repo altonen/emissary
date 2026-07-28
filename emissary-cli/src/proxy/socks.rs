@@ -152,10 +152,11 @@ impl SocksProxy {
                         );
                         Err(error)
                     }
-                    Ok(mut i2p_stream) =>
+                    Ok(mut i2p_stream) => {
                         tokio::io::copy_bidirectional(&mut i2p_stream, &mut stream)
                             .await
-                            .map_err(From::from),
+                            .map_err(From::from)
+                    }
                 }
             });
 

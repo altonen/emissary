@@ -191,8 +191,9 @@ impl TcpListener<SmolTcpStream> for SmolTcpListener {
                 Ok(()) => match self.0.get_ref().accept() {
                     Ok((stream, address)) => match stream.set_nodelay(true) {
                         Ok(()) => match Async::new(stream) {
-                            Ok(async_stream) =>
-                                return Poll::Ready(Some((SmolTcpStream(async_stream), address))),
+                            Ok(async_stream) => {
+                                return Poll::Ready(Some((SmolTcpStream(async_stream), address)))
+                            }
                             Err(_) => return Poll::Ready(None),
                         },
                         Err(error) => {
@@ -265,8 +266,9 @@ impl UdpSocket for SmolUdpSocket {
     fn bind_with_mtu(address: SocketAddr, mtu: usize) -> impl Future<Output = Option<Self>> {
         async move {
             let socket = match address {
-                SocketAddr::V4(_) =>
-                    Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).ok()?,
+                SocketAddr::V4(_) => {
+                    Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).ok()?
+                }
                 SocketAddr::V6(_) => {
                     let socket =
                         Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP)).ok()?;

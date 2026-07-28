@@ -382,7 +382,7 @@ impl<R: Runtime> TransportManager<R> {
                 // discovered address was ipv4, check if ntcp2 can be modified
                 IpAddr::V4(host) => match (ipv4, ipv4_host, publish_ipv4) {
                     // ipv4 enabled and user didn't specify an external address for the router
-                    (true, None, true) =>
+                    (true, None, true) => {
                         if let Some(ntcp2) = self.local_router_info.ntcp2_ipv4_mut() {
                             tracing::trace!(
                                 target: LOG_TARGET,
@@ -390,7 +390,8 @@ impl<R: Runtime> TransportManager<R> {
                                 "creating published ntcp2 ipv4 address",
                             );
                             ntcp2.into_reachable_ntcp2(*iv, *port, IpAddr::V4(host));
-                        },
+                        }
+                    }
 
                     // ipv4 disabled for ntcp2, might be enabled for ssu2
                     (false, _, _) => tracing::trace!(
@@ -422,7 +423,7 @@ impl<R: Runtime> TransportManager<R> {
                     // ipv6 enabled and user didn't specify an external address for the router
                     //
                     // update the host in `RouterAddress`
-                    (true, None, true) =>
+                    (true, None, true) => {
                         if let Some(ntcp2) = self.local_router_info.ntcp2_ipv6_mut() {
                             tracing::trace!(
                                 target: LOG_TARGET,
@@ -430,7 +431,8 @@ impl<R: Runtime> TransportManager<R> {
                                 "creating published ntcp2 ipv6 address",
                             );
                             ntcp2.into_reachable_ntcp2(*iv, *port, IpAddr::V6(host));
-                        },
+                        }
+                    }
 
                     // ipv6 disabled for ntcp2, might be enabled for ssu2
                     (false, _, _) => tracing::trace!(
@@ -476,7 +478,7 @@ impl<R: Runtime> TransportManager<R> {
                 // discovered address was ipv4, check if ssu2 can be modified
                 IpAddr::V4(host) => match (ipv4, ipv4_host, publish_ipv4) {
                     // ipv4 enabled and user didn't specify an external address for the router
-                    (true, None, true) =>
+                    (true, None, true) => {
                         if let Some(ssu2) = self.local_router_info.ssu2_ipv4_mut() {
                             tracing::trace!(
                                 target: LOG_TARGET,
@@ -484,7 +486,8 @@ impl<R: Runtime> TransportManager<R> {
                                 "creating published ssu2 ipv4 address",
                             );
                             ssu2.into_reachable_ssu2(*port, IpAddr::V4(host));
-                        },
+                        }
+                    }
 
                     // ipv4 disabled for ssu2, might be enabled for ssu2
                     (false, _, _) => tracing::trace!(
@@ -516,7 +519,7 @@ impl<R: Runtime> TransportManager<R> {
                     // ipv6 enabled and user didn't specify an external address for the router
                     //
                     // update the host in `RouterAddress`
-                    (true, None, true) =>
+                    (true, None, true) => {
                         if let Some(ssu2) = self.local_router_info.ssu2_ipv6_mut() {
                             tracing::trace!(
                                 target: LOG_TARGET,
@@ -524,7 +527,8 @@ impl<R: Runtime> TransportManager<R> {
                                 "creating published ssu2 ipv6 address",
                             );
                             ssu2.into_reachable_ssu2(*port, IpAddr::V6(host));
-                        },
+                        }
+                    }
 
                     // ipv6 disabled for ssu2, might be enabled for ssu2
                     (false, _, _) => tracing::trace!(
@@ -856,11 +860,12 @@ impl<R: Runtime> TransportManager<R> {
                                 if introducer_router_info
                                     .select_transport_with_filter(|address| match address {
                                         RouterAddress::Ntcp2 { .. } => false,
-                                        address @ RouterAddress::Ssu2 { socket_address, .. } =>
+                                        address @ RouterAddress::Ssu2 { socket_address, .. } => {
                                             address.classify().is_some_and(|address| {
                                                 self.supported_transports.contains(&address)
                                                     && socket_address.is_some()
-                                            }),
+                                            })
+                                        }
                                     })
                                     .is_none()
                                 {
@@ -1312,20 +1317,27 @@ impl<R: Runtime> Future for TransportManager<R> {
                                     "kind",
                                     match (direction, encryption) {
                                         (Direction::Inbound, EncryptionKind::X25519) => "ib-x25519",
-                                        (Direction::Inbound, EncryptionKind::MlKem512X25519) =>
-                                            "ib-ml-kem-512",
-                                        (Direction::Inbound, EncryptionKind::MlKem768X25519) =>
-                                            "ib-ml-kem-768",
-                                        (Direction::Inbound, EncryptionKind::MlKem1024X25519) =>
-                                            "ib-ml-kem-1024",
-                                        (Direction::Outbound, EncryptionKind::X25519) =>
-                                            "ob-x25519",
-                                        (Direction::Outbound, EncryptionKind::MlKem512X25519) =>
-                                            "ob-ml-kem-512",
-                                        (Direction::Outbound, EncryptionKind::MlKem768X25519) =>
-                                            "ob-ml-kem-768",
-                                        (Direction::Outbound, EncryptionKind::MlKem1024X25519) =>
-                                            "ob-ml-kem-1024",
+                                        (Direction::Inbound, EncryptionKind::MlKem512X25519) => {
+                                            "ib-ml-kem-512"
+                                        }
+                                        (Direction::Inbound, EncryptionKind::MlKem768X25519) => {
+                                            "ib-ml-kem-768"
+                                        }
+                                        (Direction::Inbound, EncryptionKind::MlKem1024X25519) => {
+                                            "ib-ml-kem-1024"
+                                        }
+                                        (Direction::Outbound, EncryptionKind::X25519) => {
+                                            "ob-x25519"
+                                        }
+                                        (Direction::Outbound, EncryptionKind::MlKem512X25519) => {
+                                            "ob-ml-kem-512"
+                                        }
+                                        (Direction::Outbound, EncryptionKind::MlKem768X25519) => {
+                                            "ob-ml-kem-768"
+                                        }
+                                        (Direction::Outbound, EncryptionKind::MlKem1024X25519) => {
+                                            "ob-ml-kem-1024"
+                                        }
                                     },
                                 );
                             this.router_ctx.metrics_handle().counter(NUM_ACCEPTED).increment(1);
@@ -1374,10 +1386,12 @@ impl<R: Runtime> Future for TransportManager<R> {
                                 );
                                 debug_assert!(false);
                             }
-                            Some(true) =>
-                                this.router_ctx.metrics_handle().gauge(NUM_IPV4).decrement(1),
-                            Some(false) =>
-                                this.router_ctx.metrics_handle().gauge(NUM_IPV6).decrement(1),
+                            Some(true) => {
+                                this.router_ctx.metrics_handle().gauge(NUM_IPV4).decrement(1)
+                            }
+                            Some(false) => {
+                                this.router_ctx.metrics_handle().gauge(NUM_IPV6).decrement(1)
+                            }
                         }
                         this.router_ctx.profile_storage().connection_closed(&router_id);
                         this.router_ctx.metrics_handle().gauge(NUM_ACTIVE_CONNECTIONS).decrement(1);
@@ -1471,8 +1485,9 @@ impl<R: Runtime> Future for TransportManager<R> {
                         expires,
                         ipv4,
                     })) => this.on_introducer_added(router_id, relay_tag, expires, ipv4),
-                    Poll::Ready(Some(TransportEvent::IntroducerRemoved { router_id, ipv4 })) =>
-                        this.on_introducer_removed(&router_id, ipv4),
+                    Poll::Ready(Some(TransportEvent::IntroducerRemoved { router_id, ipv4 })) => {
+                        this.on_introducer_removed(&router_id, ipv4)
+                    }
                 }
             }
 
@@ -3335,8 +3350,9 @@ mod tests {
         // verify that the dial request is ignored
         match rx.try_recv() {
             Err(_) => {}
-            Ok(Command::Connect(router_id)) if router_id == remote_router_id =>
-                panic!("connected router dialed"),
+            Ok(Command::Connect(router_id)) if router_id == remote_router_id => {
+                panic!("connected router dialed")
+            }
             _ => panic!("unexpected event"),
         }
     }
@@ -3834,8 +3850,9 @@ mod tests {
         dial_tx.send(router_id.clone()).await.unwrap();
 
         match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
-            SubsystemEvent::ConnectionFailure { router_id: remote } =>
-                assert_eq!(remote, router_id),
+            SubsystemEvent::ConnectionFailure { router_id: remote } => {
+                assert_eq!(remote, router_id)
+            }
             _ => panic!("invalid event"),
         }
 
@@ -3904,8 +3921,9 @@ mod tests {
         dial_tx.send(router_id.clone()).await.unwrap();
 
         match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
-            SubsystemEvent::ConnectionFailure { router_id: remote } =>
-                assert_eq!(remote, router_id),
+            SubsystemEvent::ConnectionFailure { router_id: remote } => {
+                assert_eq!(remote, router_id)
+            }
             _ => panic!("invalid event"),
         }
 
@@ -3963,8 +3981,9 @@ mod tests {
         dial_tx.send(router_id.clone()).await.unwrap();
 
         match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
-            SubsystemEvent::ConnectionFailure { router_id: remote } =>
-                assert_eq!(remote, router_id),
+            SubsystemEvent::ConnectionFailure { router_id: remote } => {
+                assert_eq!(remote, router_id)
+            }
             _ => panic!("invalid event"),
         }
 
@@ -4088,8 +4107,9 @@ mod tests {
         dial_tx.send(router_id.clone()).await.unwrap();
 
         match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
-            SubsystemEvent::ConnectionFailure { router_id: remote } =>
-                assert_eq!(remote, router_id),
+            SubsystemEvent::ConnectionFailure { router_id: remote } => {
+                assert_eq!(remote, router_id)
+            }
             _ => panic!("invalid event"),
         }
 
@@ -4339,8 +4359,9 @@ mod tests {
         // dial failure for the introducer is reported by the transport (omitted for
         // `MockTransport`) so the channel only contains an event for the client
         match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
-            SubsystemEvent::ConnectionFailure { router_id: remote } =>
-                assert_eq!(remote, router_id),
+            SubsystemEvent::ConnectionFailure { router_id: remote } => {
+                assert_eq!(remote, router_id)
+            }
             _ => panic!("invalid event"),
         }
         assert!(subsys_rx.try_recv().is_err());
@@ -4644,8 +4665,9 @@ mod tests {
 
         // verify that subsystem manager is notified of the dial failure
         match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
-            SubsystemEvent::ConnectionFailure { router_id: remote } =>
-                assert_eq!(remote, router_id),
+            SubsystemEvent::ConnectionFailure { router_id: remote } => {
+                assert_eq!(remote, router_id)
+            }
             _ => panic!("invalid event"),
         }
         assert!(subsys_rx.try_recv().is_err());
@@ -4970,16 +4992,18 @@ mod tests {
 
         // verify that subsystem manager is notified of the client dial failure
         match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
-            SubsystemEvent::ConnectionFailure { router_id: remote } =>
-                assert_eq!(remote, router_id),
+            SubsystemEvent::ConnectionFailure { router_id: remote } => {
+                assert_eq!(remote, router_id)
+            }
             _ => panic!("invalid event"),
         }
 
         // since the dial failure originated from transport and not from transport, subsystem
         // manager is notified of the introducer dial failure directly
         match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
-            SubsystemEvent::ConnectionFailure { router_id: remote } =>
-                assert_eq!(remote, introducer_router_id),
+            SubsystemEvent::ConnectionFailure { router_id: remote } => {
+                assert_eq!(remote, introducer_router_id)
+            }
             _ => panic!("invalid event"),
         }
     }
@@ -5125,12 +5149,13 @@ mod tests {
         let future = {
             futures::future::poll_fn(|cx| loop {
                 match manager.poll_unpin(cx) {
-                    Poll::Pending =>
+                    Poll::Pending => {
                         if !manager.pending_queries.contains(&introducer_router_id) {
                             return Poll::Ready(());
                         } else {
                             return Poll::Pending;
-                        },
+                        }
+                    }
                     Poll::Ready(_) => panic!("manager returned"),
                 }
             })
@@ -5163,8 +5188,9 @@ mod tests {
 
         // verify that subsystem manager is notified of the client dial failure
         match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
-            SubsystemEvent::ConnectionFailure { router_id: remote } =>
-                assert_eq!(remote, router_id),
+            SubsystemEvent::ConnectionFailure { router_id: remote } => {
+                assert_eq!(remote, router_id)
+            }
             _ => panic!("invalid event"),
         }
     }
@@ -5312,12 +5338,13 @@ mod tests {
         let future = {
             futures::future::poll_fn(|cx| loop {
                 match manager.poll_unpin(cx) {
-                    Poll::Pending =>
+                    Poll::Pending => {
                         if !manager.pending_queries.contains(&introducer_router_id) {
                             return Poll::Ready(());
                         } else {
                             return Poll::Pending;
-                        },
+                        }
+                    }
                     Poll::Ready(_) => panic!("manager returned"),
                 }
             })
@@ -5379,11 +5406,12 @@ mod tests {
                 cx: &mut Context<'_>,
             ) -> Poll<Option<Self::Item>> {
                 match futures::ready!(self.event_rx.poll_recv(cx)).unwrap() {
-                    Event::Failure(router_id) =>
+                    Event::Failure(router_id) => {
                         Poll::Ready(Some(TransportEvent::ConnectionFailure {
                             router_id,
                             reason: DialError::Timeout,
-                        })),
+                        }))
+                    }
                 }
             }
         }
@@ -5447,10 +5475,11 @@ mod tests {
             RouterAddress::Ssu2 {
                 introducers: router_introducers,
                 ..
-            } =>
+            } => {
                 for (i, (introducer_router_id, _)) in introducers.iter().enumerate() {
                     router_introducers.push((introducer_router_id.clone(), 1337 + i as u32));
-                },
+                }
+            }
             _ => panic!("expected ssu2"),
         }
 
@@ -5542,8 +5571,9 @@ mod tests {
 
         // verify dial failure is reported for the client router
         match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
-            SubsystemEvent::ConnectionFailure { router_id: remote } =>
-                assert_eq!(remote, router_id),
+            SubsystemEvent::ConnectionFailure { router_id: remote } => {
+                assert_eq!(remote, router_id)
+            }
             _ => panic!("invalid event"),
         }
     }
@@ -5575,13 +5605,14 @@ mod tests {
                 cx: &mut Context<'_>,
             ) -> Poll<Option<Self::Item>> {
                 match futures::ready!(self.event_rx.poll_recv(cx)).unwrap() {
-                    Event::Success(router_id) =>
+                    Event::Success(router_id) => {
                         Poll::Ready(Some(TransportEvent::ConnectionEstablished {
                             address: "127.0.0.1:8888".parse().unwrap(),
                             encryption: EncryptionKind::X25519,
                             direction: Direction::Outbound,
                             router_id,
-                        })),
+                        }))
+                    }
                 }
             }
         }
@@ -5645,10 +5676,11 @@ mod tests {
             RouterAddress::Ssu2 {
                 introducers: router_introducers,
                 ..
-            } =>
+            } => {
                 for (i, (introducer_router_id, _)) in introducers.iter().enumerate() {
                     router_introducers.push((introducer_router_id.clone(), 1337 + i as u32));
-                },
+                }
+            }
             _ => panic!("expected ssu2"),
         }
 
@@ -5774,13 +5806,14 @@ mod tests {
                 cx: &mut Context<'_>,
             ) -> Poll<Option<Self::Item>> {
                 match futures::ready!(self.event_rx.poll_recv(cx)).unwrap() {
-                    Event::Success(router_id) =>
+                    Event::Success(router_id) => {
                         Poll::Ready(Some(TransportEvent::ConnectionEstablished {
                             address: "127.0.0.1:8888".parse().unwrap(),
                             encryption: EncryptionKind::X25519,
                             direction: Direction::Outbound,
                             router_id,
-                        })),
+                        }))
+                    }
                 }
             }
         }
@@ -5844,10 +5877,11 @@ mod tests {
             RouterAddress::Ssu2 {
                 introducers: router_introducers,
                 ..
-            } =>
+            } => {
                 for (i, (introducer_router_id, _)) in introducers.iter().enumerate() {
                     router_introducers.push((introducer_router_id.clone(), 1337 + i as u32));
-                },
+                }
+            }
             _ => panic!("expected ssu2"),
         }
 
@@ -6027,10 +6061,11 @@ mod tests {
             RouterAddress::Ssu2 {
                 introducers: router_introducers,
                 ..
-            } =>
+            } => {
                 for (i, (introducer_router_id, _)) in introducers.iter().enumerate() {
                     router_introducers.push((introducer_router_id.clone(), 1337 + i as u32));
-                },
+                }
+            }
             _ => panic!("expected ssu2"),
         }
 
@@ -6092,12 +6127,13 @@ mod tests {
             let future = {
                 futures::future::poll_fn(|cx| loop {
                     match manager.poll_unpin(cx) {
-                        Poll::Pending =>
+                        Poll::Pending => {
                             if !manager.pending_queries.contains(&introducer) {
                                 return Poll::Ready(());
                             } else {
                                 return Poll::Pending;
-                            },
+                            }
+                        }
                         Poll::Ready(_) => panic!("manager returned"),
                     }
                 })
@@ -6122,8 +6158,9 @@ mod tests {
 
             // verify dial failure is reported to the subsystem manager
             match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
-                SubsystemEvent::ConnectionFailure { router_id: remote } =>
-                    assert_eq!(remote, introducer),
+                SubsystemEvent::ConnectionFailure { router_id: remote } => {
+                    assert_eq!(remote, introducer)
+                }
                 _ => panic!("invalid event"),
             }
             introducers.remove(&introducer);
@@ -6144,12 +6181,13 @@ mod tests {
         let future = {
             futures::future::poll_fn(|cx| loop {
                 match manager.poll_unpin(cx) {
-                    Poll::Pending =>
+                    Poll::Pending => {
                         if !manager.pending_queries.contains(&introducer) {
                             return Poll::Ready(());
                         } else {
                             return Poll::Pending;
-                        },
+                        }
+                    }
                     Poll::Ready(_) => panic!("manager returned"),
                 }
             })
@@ -6164,14 +6202,16 @@ mod tests {
         assert!(!manager.pending_queries.contains(&router_id));
 
         match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
-            SubsystemEvent::ConnectionFailure { router_id: remote } =>
-                assert_eq!(remote, router_id),
+            SubsystemEvent::ConnectionFailure { router_id: remote } => {
+                assert_eq!(remote, router_id)
+            }
             _ => panic!("invalid event"),
         }
 
         match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
-            SubsystemEvent::ConnectionFailure { router_id: remote } =>
-                assert!(introducers.remove(&remote).is_some()),
+            SubsystemEvent::ConnectionFailure { router_id: remote } => {
+                assert!(introducers.remove(&remote).is_some())
+            }
             _ => panic!("invalid event"),
         }
     }
@@ -6203,11 +6243,12 @@ mod tests {
                 cx: &mut Context<'_>,
             ) -> Poll<Option<Self::Item>> {
                 match futures::ready!(self.event_rx.poll_recv(cx)).unwrap() {
-                    Event::Failure(router_id) =>
+                    Event::Failure(router_id) => {
                         Poll::Ready(Some(TransportEvent::ConnectionFailure {
                             router_id,
                             reason: DialError::Timeout,
-                        })),
+                        }))
+                    }
                 }
             }
         }
@@ -6271,10 +6312,11 @@ mod tests {
             RouterAddress::Ssu2 {
                 introducers: router_introducers,
                 ..
-            } =>
+            } => {
                 for (i, (introducer_router_id, _)) in introducers.iter().enumerate() {
                     router_introducers.push((introducer_router_id.clone(), 1337 + i as u32));
-                },
+                }
+            }
             _ => panic!("expected ssu2"),
         }
 
@@ -6340,12 +6382,13 @@ mod tests {
         let future = {
             futures::future::poll_fn(|cx| loop {
                 match manager.poll_unpin(cx) {
-                    Poll::Pending =>
+                    Poll::Pending => {
                         if manager.pending_queries.is_empty() {
                             return Poll::Ready(());
                         } else {
                             return Poll::Pending;
-                        },
+                        }
+                    }
                     Poll::Ready(_) => panic!("manager returned"),
                 }
             })
@@ -6380,8 +6423,9 @@ mod tests {
         assert!(manager.pending_connections.is_empty());
 
         match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
-            SubsystemEvent::ConnectionFailure { router_id: remote } =>
-                assert_eq!(remote, router_id),
+            SubsystemEvent::ConnectionFailure { router_id: remote } => {
+                assert_eq!(remote, router_id)
+            }
             _ => panic!("invalid event"),
         }
     }
@@ -6413,13 +6457,14 @@ mod tests {
                 cx: &mut Context<'_>,
             ) -> Poll<Option<Self::Item>> {
                 match futures::ready!(self.event_rx.poll_recv(cx)).unwrap() {
-                    Event::Success(router_id) =>
+                    Event::Success(router_id) => {
                         Poll::Ready(Some(TransportEvent::ConnectionEstablished {
                             address: "127.0.0.1:8888".parse().unwrap(),
                             encryption: EncryptionKind::X25519,
                             direction: Direction::Outbound,
                             router_id,
-                        })),
+                        }))
+                    }
                 }
             }
         }
@@ -6483,10 +6528,11 @@ mod tests {
             RouterAddress::Ssu2 {
                 introducers: router_introducers,
                 ..
-            } =>
+            } => {
                 for (i, (introducer_router_id, _)) in introducers.iter().enumerate() {
                     router_introducers.push((introducer_router_id.clone(), 1337 + i as u32));
-                },
+                }
+            }
             _ => panic!("expected ssu2"),
         }
 
@@ -6552,12 +6598,13 @@ mod tests {
         let future = {
             futures::future::poll_fn(|cx| loop {
                 match manager.poll_unpin(cx) {
-                    Poll::Pending =>
+                    Poll::Pending => {
                         if manager.pending_queries.is_empty() {
                             return Poll::Ready(());
                         } else {
                             return Poll::Pending;
-                        },
+                        }
+                    }
                     Poll::Ready(_) => panic!("manager returned"),
                 }
             })
@@ -7037,23 +7084,27 @@ mod tests {
                     } => {
                         if ipv4 {
                             match socket_address {
-                                Some(address) =>
+                                Some(address) => {
                                     address.is_ipv4()
                                         && options.get(&Str::from("host")).is_some()
-                                        && options.get(&Str::from("port")).is_some(),
-                                _ =>
+                                        && options.get(&Str::from("port")).is_some()
+                                }
+                                _ => {
                                     options.get(&Str::from("host")).is_none()
-                                        && options.get(&Str::from("port")).is_none(),
+                                        && options.get(&Str::from("port")).is_none()
+                                }
                             }
                         } else {
                             match socket_address {
-                                Some(address) =>
+                                Some(address) => {
                                     address.is_ipv6()
                                         && options.get(&Str::from("host")).is_some()
-                                        && options.get(&Str::from("port")).is_some(),
-                                _ =>
+                                        && options.get(&Str::from("port")).is_some()
+                                }
+                                _ => {
                                     options.get(&Str::from("host")).is_none()
-                                        && options.get(&Str::from("port")).is_none(),
+                                        && options.get(&Str::from("port")).is_none()
+                                }
                             }
                         }
                     }
@@ -7151,10 +7202,11 @@ mod tests {
             RouterAddress::Ssu2 {
                 introducers: router_introducers,
                 ..
-            } =>
+            } => {
                 for (i, (introducer_router_id, _)) in introducers.iter().enumerate() {
                     router_introducers.push((introducer_router_id.clone(), 1337 + i as u32));
-                },
+                }
+            }
             _ => panic!("expected ssu2"),
         }
 
@@ -7180,8 +7232,9 @@ mod tests {
         .await;
 
         match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
-            SubsystemEvent::ConnectionFailure { router_id: remote } =>
-                assert_eq!(remote, router_id),
+            SubsystemEvent::ConnectionFailure { router_id: remote } => {
+                assert_eq!(remote, router_id)
+            }
             _ => panic!("invalid event"),
         }
     }
@@ -7668,8 +7721,9 @@ mod tests {
 
         // verify that subsystem manager is notified of the dial failure
         match timeout!(subsys_rx.recv()).await.unwrap().unwrap() {
-            SubsystemEvent::ConnectionFailure { router_id: remote } =>
-                assert_eq!(remote, router_id),
+            SubsystemEvent::ConnectionFailure { router_id: remote } => {
+                assert_eq!(remote, router_id)
+            }
             _ => panic!("invalid event"),
         }
         assert!(subsys_rx.try_recv().is_err());

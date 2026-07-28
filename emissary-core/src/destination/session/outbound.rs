@@ -84,12 +84,15 @@ impl MlKemContext {
     /// Returns `None` if decapsulation fails.
     fn decapsulate(&self, ciphertext: &[u8]) -> Option<Vec<u8>> {
         match self {
-            Self::MlKem512X25519(decap_key) =>
-                decap_key.decapsulate_slice(ciphertext).ok().map(|key| key.0.to_vec()),
-            Self::MlKem768X25519(decap_key) =>
-                decap_key.decapsulate_slice(ciphertext).ok().map(|key| key.0.to_vec()),
-            Self::MlKem1024X25519(decap_key) =>
-                decap_key.decapsulate_slice(ciphertext).ok().map(|key| key.0.to_vec()),
+            Self::MlKem512X25519(decap_key) => {
+                decap_key.decapsulate_slice(ciphertext).ok().map(|key| key.0.to_vec())
+            }
+            Self::MlKem768X25519(decap_key) => {
+                decap_key.decapsulate_slice(ciphertext).ok().map(|key| key.0.to_vec())
+            }
+            Self::MlKem1024X25519(decap_key) => {
+                decap_key.decapsulate_slice(ciphertext).ok().map(|key| key.0.to_vec())
+            }
         }
     }
 }
