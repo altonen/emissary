@@ -139,7 +139,10 @@ impl AddressBookStoreFake {
         self.revision
     }
 
-    fn book(&self, book_type: AdministrativeAddressBookType) -> &BTreeMap<String, AddressBookEntry> {
+    fn book(
+        &self,
+        book_type: AdministrativeAddressBookType,
+    ) -> &BTreeMap<String, AddressBookEntry> {
         match book_type {
             AdministrativeAddressBookType::Private => &self.private,
             AdministrativeAddressBookType::Local => &self.local,
@@ -180,8 +183,7 @@ impl AddressBookStoreFake {
         book_type: AdministrativeAddressBookType,
         entry: AddressBookEntry,
     ) -> StateRevision {
-        self.book_mut(book_type)
-            .insert(entry.hostname.clone(), entry);
+        self.book_mut(book_type).insert(entry.hostname.clone(), entry);
         self.revision = self.revision.next();
         self.revision
     }
@@ -248,10 +250,7 @@ impl AddressBookStoreFake {
     }
 
     /// Set the address book configuration.
-    pub fn set_configuration(
-        &mut self,
-        configuration: AddressBookConfiguration,
-    ) -> StateRevision {
+    pub fn set_configuration(&mut self, configuration: AddressBookConfiguration) -> StateRevision {
         self.configuration = configuration;
         self.revision = self.revision.next();
         self.revision

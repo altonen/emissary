@@ -1,6 +1,6 @@
 # M002 Closure Record — Control-Plane Domain and Restart-Safe Persistence
 
-Status: closing
+Status: closed
 
 Reviewed plan: `plans/implementation/i2pcontrol-proposal-170/002-control-plane-domain-and-persistence.md`
 Implementation baseline: `6c92a71` (`master`)
@@ -249,16 +249,16 @@ No high or medium severity findings.
 
 ## 6. Disposition
 
-**closing** — Implementation landed; closure evidence gathered; pending independent review before `closed`.
+**closed** — Implementation landed; closure evidence gathered; reviewed and accepted.
 
 No corrective pass required. All 26 acceptance criteria are satisfied with evidence.
 
 ## 7. Roadmap and registry disposition
 
-- Plan status: `closing`
-- Registry: M002 moved from `in progress` to `closing`
-- Roadmap: M002 status moved from `in progress` to `closing`
-- M003 and M004 may now activate (their hard dependency M002 is closing)
+- Plan status: `closed`
+- Registry: M002 moved from `closing` to `closed`
+- Roadmap: M002 status moved from `closing` to `closed`
+- M003 and M004 may now activate (their hard dependency M002 is closed)
 - M005 may now activate its interface dependency
 - M006 remains blocked on M004 and M005 closure
 - M007 remains blocked on M003-M006 closure

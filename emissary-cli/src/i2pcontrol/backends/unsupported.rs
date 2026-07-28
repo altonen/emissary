@@ -146,7 +146,10 @@ mod tests {
 
             // Start should return immediately with NotImplemented
             let start_result = backend.start(&def).await;
-            assert!(matches!(start_result, Err(BackendError::NotImplemented { .. })));
+            assert!(matches!(
+                start_result,
+                Err(BackendError::NotImplemented { .. })
+            ));
 
             // Stop should return immediately with Ok
             let stop_result = backend.stop(&def).await;

@@ -1,6 +1,6 @@
 # I2PControl Proposal 170 Milestone 002 — Control-Plane Domain and Restart-Safe Persistence
 
-Status: closing
+Status: closed
 
 Planning baseline: `6c92a71` (`master`)
 

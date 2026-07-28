@@ -1,6 +1,6 @@
 # I2PControl for Emissary
 
-Status: M002 control-plane domain and restart-safe persistence implemented
+Status: M003 AddressBook administrative API implemented
 
 This document describes the I2PControl HTTPS JSON-RPC service foundation in Emissary.
 
@@ -123,8 +123,7 @@ See [administrative-state.md](administrative-state.md), [tunnel-backends.md](tun
 
 Proposal 170 feature methods remain under staged implementation and must not yet be described as complete. The following are NOT yet implemented:
 
-- `RouterInfo` selectors
-- `AddressBook` operations
+- `RouterInfo` selectors (address-book selectors implemented in M003; remaining selectors in M005)
 - `TunnelManager` operations
 - `ClientServicesInfo` selectors
 

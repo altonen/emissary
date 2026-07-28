@@ -356,6 +356,24 @@ pub mod router_info_keys {
     pub const BW_INBOUND_1S: &str = "i2p.router.bw.inbound.1s";
     pub const BW_OUTBOUND_1S: &str = "i2p.router.bw.outbound.1s";
     pub const TCP_ACTIVE: &str = "i2p.router.tcp.active";
+
+    // Address-book selectors (owned by M003)
+    pub const ADDRESS_BOOK_PRIVATE: &str = "i2p.router.addressbook.private";
+    pub const ADDRESS_BOOK_LOCAL: &str = "i2p.router.addressbook.local";
+    pub const ADDRESS_BOOK_ROUTER: &str = "i2p.router.addressbook.router";
+    pub const ADDRESS_BOOK_PUBLISHED: &str = "i2p.router.addressbook.published";
+    pub const ADDRESS_BOOK_SUBSCRIPTIONS: &str = "i2p.router.addressbook.subscriptions";
+    pub const ADDRESS_BOOK_CONFIG: &str = "i2p.router.addressbook.config";
+
+    /// All address-book selector keys.
+    pub const ADDRESS_BOOK_KEYS: &[&str] = &[
+        ADDRESS_BOOK_PRIVATE,
+        ADDRESS_BOOK_LOCAL,
+        ADDRESS_BOOK_ROUTER,
+        ADDRESS_BOOK_PUBLISHED,
+        ADDRESS_BOOK_SUBSCRIPTIONS,
+        ADDRESS_BOOK_CONFIG,
+    ];
 }
 
 /// Test if a string is a valid tunnel type.

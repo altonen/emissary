@@ -121,5 +121,5 @@ No corrective pass required. All 22 acceptance criteria are satisfied with evide
 - Plan status: `closed`
 - Registry: M001 moved from `closing` to `closed`
 - Roadmap: M001 status moved from `closing` to `closed`
-- M002 may now activate
+- M002 was activated and is now closed
 - M003–M007 remain `blocked` per their declared dependencies

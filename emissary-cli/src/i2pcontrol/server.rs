@@ -30,7 +30,9 @@ use tokio::sync::Semaphore;
 use tracing;
 
 use super::auth::{self, TokenService};
-use super::control_plane::{ControlPlane, FakeControlPlane};
+use super::control_plane::{
+    AddressBookControl, ControlPlane, FakeAddressBookControl, FakeControlPlane,
+};
 use super::errors::I2pControlError;
 use super::rpc::{
     self, AuthenticateParams, AuthenticateResult, JsonRpcErrorResponse, JsonRpcRequest,
@@ -88,6 +90,7 @@ pub(crate) struct I2pControlState {
     password: String,
     #[allow(dead_code)]
     control_plane: Box<dyn ControlPlane>,
+    address_book_control: Box<dyn AddressBookControl>,
     semaphore: Semaphore,
 }
 
@@ -98,6 +101,7 @@ impl I2pControlState {
             token_service: TokenService::new(),
             password,
             control_plane: Box::new(FakeControlPlane::new()),
+            address_book_control: Box::new(FakeAddressBookControl::new()),
             semaphore: Semaphore::new(MAX_CONCURRENT_REQUESTS),
         }
     }
@@ -105,6 +109,93 @@ impl I2pControlState {
     /// Get a reference to the token service.
     pub fn token_service(&self) -> &TokenService {
         &self.token_service
+    }
+
+    /// Replace the address book control plane (for testing).
+    pub fn set_address_book_control(&mut self, control: Box<dyn AddressBookControl>) {
+        self.address_book_control = control;
+    }
+
+    /// List entries in the specified address book.
+    pub async fn address_book_list(
+        &self,
+        book_type: crate::i2pcontrol::domain::address_book::AdministrativeAddressBookType,
+    ) -> Vec<crate::i2pcontrol::domain::address_book::AddressBookEntry> {
+        self.address_book_control.list(book_type).await.unwrap_or_default()
+    }
+
+    /// Look up an entry in the specified address book.
+    pub async fn address_book_lookup(
+        &self,
+        book_type: crate::i2pcontrol::domain::address_book::AdministrativeAddressBookType,
+        hostname: &str,
+    ) -> Option<crate::i2pcontrol::domain::address_book::AddressBookEntry> {
+        self.address_book_control.lookup(book_type, hostname).await.ok().flatten()
+    }
+
+    /// Add an entry to the specified address book.
+    pub async fn address_book_add(
+        &self,
+        book_type: crate::i2pcontrol::domain::address_book::AdministrativeAddressBookType,
+        entry: crate::i2pcontrol::domain::address_book::AddressBookEntry,
+    ) -> Result<(), String> {
+        self.address_book_control.add(book_type, entry).await
+    }
+
+    /// Update an entry in the specified address book.
+    pub async fn address_book_update(
+        &self,
+        book_type: crate::i2pcontrol::domain::address_book::AdministrativeAddressBookType,
+        entry: crate::i2pcontrol::domain::address_book::AddressBookEntry,
+    ) -> Result<bool, String> {
+        self.address_book_control.update(book_type, entry).await
+    }
+
+    /// Delete an entry from the specified address book.
+    pub async fn address_book_delete(
+        &self,
+        book_type: crate::i2pcontrol::domain::address_book::AdministrativeAddressBookType,
+        hostname: &str,
+    ) -> Result<bool, String> {
+        self.address_book_control.delete(book_type, hostname).await
+    }
+
+    /// Delete all entries from the specified address book.
+    pub async fn address_book_delete_all(
+        &self,
+        book_type: crate::i2pcontrol::domain::address_book::AdministrativeAddressBookType,
+    ) -> Result<bool, String> {
+        self.address_book_control.delete_all(book_type).await
+    }
+
+    /// Get the current subscription set.
+    pub async fn address_book_subscriptions(
+        &self,
+    ) -> crate::i2pcontrol::domain::address_book::SubscriptionSet {
+        self.address_book_control.subscriptions().await.unwrap_or_default()
+    }
+
+    /// Set the subscription set atomically.
+    pub async fn address_book_set_subscriptions(
+        &self,
+        subscriptions: crate::i2pcontrol::domain::address_book::SubscriptionSet,
+    ) -> Result<(), String> {
+        self.address_book_control.set_subscriptions(subscriptions).await
+    }
+
+    /// Get the address book configuration.
+    pub async fn address_book_configuration(
+        &self,
+    ) -> crate::i2pcontrol::domain::address_book::AddressBookConfiguration {
+        self.address_book_control.configuration().await.unwrap_or_default()
+    }
+
+    /// Set the address book configuration atomically.
+    pub async fn address_book_set_configuration(
+        &self,
+        configuration: crate::i2pcontrol::domain::address_book::AddressBookConfiguration,
+    ) -> Result<(), String> {
+        self.address_book_control.set_configuration(configuration).await
     }
 }
 
@@ -276,18 +367,57 @@ pub(crate) async fn handle_jsonrpc(
     // Dispatch the method
     let response = match request.method.as_str() {
         rpc::methods::AUTHENTICATE => handle_authenticate(&state, &request).await,
-        _ => {
-            // Unknown method — check token first for protected methods
+        rpc::methods::ADDRESS_BOOK => {
             let token = extract_token(&headers);
             if !state.token_service.validate(token) {
-                serde_json::to_value(&JsonRpcErrorResponse::new(
+                serde_json::to_value(JsonRpcErrorResponse::new(
                     resolve_id(&request.id),
                     rpc::error_codes::APP_ERROR,
                     "Authentication required",
                 ))
                 .unwrap()
             } else {
-                serde_json::to_value(&JsonRpcErrorResponse::new(
+                super::address_book::handle_address_book(&state, &request).await
+            }
+        }
+        rpc::methods::SET_SUBSCRIPTIONS => {
+            let token = extract_token(&headers);
+            if !state.token_service.validate(token) {
+                serde_json::to_value(JsonRpcErrorResponse::new(
+                    resolve_id(&request.id),
+                    rpc::error_codes::APP_ERROR,
+                    "Authentication required",
+                ))
+                .unwrap()
+            } else {
+                super::address_book::handle_set_subscriptions(&state, &request).await
+            }
+        }
+        rpc::methods::SET_CONFIG => {
+            let token = extract_token(&headers);
+            if !state.token_service.validate(token) {
+                serde_json::to_value(JsonRpcErrorResponse::new(
+                    resolve_id(&request.id),
+                    rpc::error_codes::APP_ERROR,
+                    "Authentication required",
+                ))
+                .unwrap()
+            } else {
+                super::address_book::handle_set_config(&state, &request).await
+            }
+        }
+        _ => {
+            // Unknown method — check token first for protected methods
+            let token = extract_token(&headers);
+            if !state.token_service.validate(token) {
+                serde_json::to_value(JsonRpcErrorResponse::new(
+                    resolve_id(&request.id),
+                    rpc::error_codes::APP_ERROR,
+                    "Authentication required",
+                ))
+                .unwrap()
+            } else {
+                serde_json::to_value(JsonRpcErrorResponse::new(
                     resolve_id(&request.id),
                     rpc::error_codes::METHOD_NOT_FOUND,
                     format!("Method '{}' not found", request.method),

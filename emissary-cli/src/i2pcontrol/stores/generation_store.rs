@@ -76,9 +76,13 @@ fn validate_confined_path(path: &Path, base: &Path) -> StoreResult<PathBuf> {
         .canonicalize()
         .map_err(|e| StoreError::Io(format!("failed to canonicalize {}: {}", path.display(), e)))?;
 
-    let base_canonical = base
-        .canonicalize()
-        .map_err(|e| StoreError::Io(format!("failed to canonicalize base {}: {}", base.display(), e)))?;
+    let base_canonical = base.canonicalize().map_err(|e| {
+        StoreError::Io(format!(
+            "failed to canonicalize base {}: {}",
+            base.display(),
+            e
+        ))
+    })?;
 
     // Check that the canonical path starts with the base
     if !canonical.starts_with(&base_canonical) {
@@ -99,8 +103,13 @@ fn validate_confined_path(path: &Path, base: &Path) -> StoreResult<PathBuf> {
 fn set_restrictive_permissions(path: &Path) -> StoreResult<()> {
     use std::os::unix::fs::PermissionsExt;
     let perms = std::fs::Permissions::from_mode(0o600);
-    std::fs::set_permissions(path, perms)
-        .map_err(|e| StoreError::Io(format!("failed to set permissions on {}: {}", path.display(), e)))
+    std::fs::set_permissions(path, perms).map_err(|e| {
+        StoreError::Io(format!(
+            "failed to set permissions on {}: {}",
+            path.display(),
+            e
+        ))
+    })
 }
 
 #[cfg(not(unix))]
@@ -392,7 +401,10 @@ where
             let path = entry.path();
             // Reject symlinks in the generation directory
             if path.is_symlink() {
-                tracing::warn!("rejecting symlink in generation directory: {}", path.display());
+                tracing::warn!(
+                    "rejecting symlink in generation directory: {}",
+                    path.display()
+                );
                 continue;
             }
             if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
@@ -471,7 +483,7 @@ where
         if let Ok(mut dir_entries) = tokio::fs::read_dir(&self.dir).await {
             while let Ok(Some(entry)) = dir_entries.next_entry().await {
                 let path = entry.path();
-            if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
+                if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
                     entries.push(path);
                 }
             }
@@ -638,9 +650,7 @@ mod tests {
         let dir = test_store_dir();
         // Write garbage JSON directly to a generation file
         let gen_path = dir.join("gen-00000000000000000001.json");
-        tokio::fs::write(&gen_path, b"not valid json {{{{")
-            .await
-            .unwrap();
+        tokio::fs::write(&gen_path, b"not valid json {{{{").await.unwrap();
 
         let mut store = GenerationStore::<TestPayload>::new(dir.clone(), 1024 * 1024);
         let result = store.load().await;
@@ -672,9 +682,7 @@ mod tests {
 
         // Write a corrupt generation at revision 2
         let corrupt_path = dir.join("gen-00000000000000000002.json");
-        tokio::fs::write(&corrupt_path, b"{{corrupt}}")
-            .await
-            .unwrap();
+        tokio::fs::write(&corrupt_path, b"{{corrupt}}").await.unwrap();
 
         // Load should fall back to revision 1
         let mut store2 = GenerationStore::<TestPayload>::new(dir.clone(), 1024 * 1024);
@@ -783,11 +791,7 @@ mod tests {
         let entries: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .is_some_and(|ext| ext == "json")
-            })
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
             .collect();
         assert!(
             entries.len() <= 6,
@@ -911,9 +915,7 @@ mod tests {
         drop(store);
 
         // Create a stale temp file (should be ignored by load)
-        tokio::fs::write(dir.join(".tmp-stale.json"), b"stale data")
-            .await
-            .unwrap();
+        tokio::fs::write(dir.join(".tmp-stale.json"), b"stale data").await.unwrap();
 
         // Load should succeed and ignore the temp file
         let mut store2 = GenerationStore::<TestPayload>::new(dir.clone(), 1024 * 1024);

@@ -25,20 +25,21 @@ Canonical direction:
 
 | Subsystem | Status | Roadmap | Current milestone | Dependencies or blockers |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | active | `plans/subsystems/i2pcontrol-proposal-170-roadmap.md` | M001 closing | No hard dependency; ADR-0001 records the contract/stub boundary |
+| I2PControl Proposal 170 | active | `plans/subsystems/i2pcontrol-proposal-170-roadmap.md` | M004 ready | M001–M003 closed |
 
 ## Dependency-ready implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies |
 |---|---|---|---|---|
-
-No plans are currently dependency-ready.
+| I2PControl Proposal 170 | 004 — TunnelManager contract and explicit stubs | ready | `plans/implementation/i2pcontrol-proposal-170/004-tunnel-manager-contract-and-stubs.md` | M001 closed; M002 closed |
+| I2PControl Proposal 170 | 005 — RouterInfo inspection and exact selectors | ready | `plans/implementation/i2pcontrol-proposal-170/005-router-info-inspection.md` | M001–M003 closed; M003 address-book selectors integrated |
 
 ## Active closure work
 
 | Subsystem | Milestone | Status | Implementation plan | Evidence commit | Closure record |
 |---|---|---|---|---|---|
-| I2PControl Proposal 170 | 001 — contract matrix and I2PControl foundation | closing | `plans/implementation/i2pcontrol-proposal-170/001-contract-matrix-and-i2pcontrol-foundation.md` | head of implementation branch | `plans/closure/i2pcontrol-proposal-170/001-closure.md` |
+
+No active closure work.
 
 ## Blocked implementation plans
 
@@ -46,10 +47,6 @@ These plans are intentionally prewritten for full-workstream handoff and depende
 
 | Subsystem | Milestone | Status | Implementation plan | Blocker |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | 002 — control-plane domain and persistence | blocked | `plans/implementation/i2pcontrol-proposal-170/002-control-plane-domain-and-persistence.md` | M001 strict closure and baseline reconciliation |
-| I2PControl Proposal 170 | 003 — AddressBook administrative API | blocked | `plans/implementation/i2pcontrol-proposal-170/003-address-book-administrative-api.md` | M002 strict closure and baseline reconciliation |
-| I2PControl Proposal 170 | 004 — TunnelManager contract and explicit stubs | blocked | `plans/implementation/i2pcontrol-proposal-170/004-tunnel-manager-contract-and-stubs.md` | M002 strict closure and baseline reconciliation |
-| I2PControl Proposal 170 | 005 — RouterInfo inspection and exact selectors | blocked | `plans/implementation/i2pcontrol-proposal-170/005-router-info-inspection.md` | M002 strict closure; M003/M004 production integration required before closure |
 | I2PControl Proposal 170 | 006 — ClientServicesInfo | blocked | `plans/implementation/i2pcontrol-proposal-170/006-client-services-info.md` | M004 and M005 strict closure |
 | I2PControl Proposal 170 | 007 — conformance, hardening, and strict closure | blocked | `plans/implementation/i2pcontrol-proposal-170/007-conformance-hardening-and-strict-closure.md` | M003–M006 strict closure and activation audit |
 
@@ -68,7 +65,9 @@ The following work is intentionally outside the active Proposal 170 handoff and 
 
 | Subsystem | Milestone | Closure record | Closed/reviewed at commit | Follow-up |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | 001 — contract matrix and I2PControl foundation | `plans/closure/i2pcontrol-proposal-170/001-closure.md` | closing (pending review) | M002 can be activated after strict closure |
+| I2PControl Proposal 170 | 001 — contract matrix and I2PControl foundation | `plans/closure/i2pcontrol-proposal-170/001-closure.md` | `9b43484a21d5a1291c4881cdae62a36c527f8c0f` | M002 activated and closed |
+| I2PControl Proposal 170 | 002 — control-plane domain and persistence | `plans/closure/i2pcontrol-proposal-170/002-closure.md` | `6c92a71` | M003 and M004 activated |
+| I2PControl Proposal 170 | 003 — AddressBook administrative API | `plans/closure/i2pcontrol-proposal-170/003-closure.md` | `9d2f646` | M004 and M005 activated |
 
 ## Registry maintenance rules
 

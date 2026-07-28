@@ -129,17 +129,23 @@ fixture/test ID. It is the single source of truth for contract completeness.
 
 | Contract item | Request key/type | Required/optional/presence | Response key/type | Nullability | Validation/error behavior | Planned data source | Owner milestone | Fixture/test ID | Notes |
 |---|---|---|---|---|---|---|---|---|---|
-| AddressBook method | `method` = `"AddressBook"` | required | — | — | — | — | M003 | `fixture_address_book` | — |
-| `book` parameter | `params.book` | required | — | — | Must be one of: `private`, `local`, `router`, `published` | — | M003 | `fixture_ab_book` | Exact spellings |
-| `request` parameter | `params.request` | required | — | — | Must be one of: `List`, `Lookup`, `Add`, `Update`, `Delete` | — | M003 | `fixture_ab_request` | Exact spellings |
-| `name` parameter | `params.name` | required for Lookup/Add/Update/Delete | — | — | Non-empty destination name | — | M003 | `fixture_ab_name` | — |
-| `value` parameter | `params.value` | required for Add/Update | — | — | Valid I2P destination | — | M003 | `fixture_ab_value` | — |
-| `signature` parameter | `params.signature` | optional | — | — | Valid signature if present | — | M003 | `fixture_ab_signature` | — |
-| List result | `result` | on List | array of objects | non-null | — | Administrative store | M003 | `fixture_ab_list` | Each entry has `name` and `value` |
-| Lookup result | `result` | on Lookup | object or null | null if not found | — | Administrative store | M003 | `fixture_ab_lookup` | — |
-| Delete presence semantics | `name` param presence | presence-based | string | — | Presence of `name` param = delete request; absent = delete all in book | — | M003 | `fixture_ab_delete` | Key Proposal 170 semantics |
-| SetConfig | `method` = `"SetConfig"` | required | — | — | — | — | M003 | `fixture_set_config` | AddressBook configuration |
-| SetSubscriptions | `method` = `"SetSubscriptions"` | required | — | — | — | — | M003 | `fixture_set_subscriptions` | AddressBook subscriptions |
+| AddressBook method | `method` = `"AddressBook"` | required | — | — | — | — | M003 | `fixture_address_book` | Implemented |
+| `book` parameter | `params.book` | required | — | — | Must be one of: `private`, `local`, `router`, `published` | — | M003 | `fixture_ab_book` | Exact spellings; implemented |
+| `request` parameter | `params.request` | required | — | — | Must be one of: `List`, `Lookup`, `Add`, `Update`, `Delete` | — | M003 | `fixture_ab_request` | Exact spellings; implemented |
+| `name` parameter | `params.name` | required for Lookup/Add/Update/Delete | — | — | Non-empty destination name; validated for length/syntax | — | M003 | `fixture_ab_name` | Implemented |
+| `value` parameter | `params.value` | required for Add/Update | — | — | Valid I2P destination; validated for length/control chars | — | M003 | `fixture_ab_value` | Implemented |
+| `signature` parameter | `params.signature` | optional | — | — | Valid signature if present | — | M003 | `fixture_ab_signature` | Accepted but not validated (no signature verification in M003) |
+| List result | `result` | on List | array of objects | non-null | — | Administrative store | M003 | `fixture_ab_list` | Each entry has `name` and `value`; implemented |
+| Lookup result | `result` | on Lookup | object or null | null if not found | — | Administrative store | M003 | `fixture_ab_lookup` | Implemented |
+| Delete presence semantics | `name` param presence | presence-based | string | — | Presence of `name` param = delete specific entry; absence = delete all in book | — | M003 | `fixture_ab_delete` | Implemented |
+| SetConfig | `method` = `"SetConfig"` | required | — | — | — | — | M003 | `fixture_set_config` | Implemented |
+| SetSubscriptions | `method` = `"SetSubscriptions"` | required | — | — | — | — | M003 | `fixture_set_subscriptions` | Implemented |
+| `i2p.router.addressbook.private` | param presence | selector | array | non-null when returned | — | Administrative store | M003 | `fixture_ri_ab_private` | Implemented |
+| `i2p.router.addressbook.local` | param presence | selector | array | non-null when returned | — | Administrative store | M003 | `fixture_ri_ab_local` | Implemented |
+| `i2p.router.addressbook.router` | param presence | selector | array | non-null when returned | — | Administrative store | M003 | `fixture_ri_ab_router` | Implemented |
+| `i2p.router.addressbook.published` | param presence | selector | array | non-null when returned | — | Administrative store | M003 | `fixture_ri_ab_published` | Implemented |
+| `i2p.router.addressbook.subscriptions` | param presence | selector | array | non-null when returned | — | Administrative store | M003 | `fixture_ri_ab_subscriptions` | Implemented |
+| `i2p.router.addressbook.config` | param presence | selector | object | non-null when returned | — | Administrative store | M003 | `fixture_ri_ab_config` | Implemented |
 
 ### TunnelManager
 

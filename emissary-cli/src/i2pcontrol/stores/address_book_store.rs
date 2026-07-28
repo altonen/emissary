@@ -141,11 +141,8 @@ impl AddressBookStore {
         book_type: AdministrativeAddressBookType,
         entry: AddressBookEntry,
     ) -> StoreResult<StateRevision> {
-        let mut payload = self
-            .inner
-            .current()
-            .cloned()
-            .unwrap_or_else(AddressBookStorePayload::empty);
+        let mut payload =
+            self.inner.current().cloned().unwrap_or_else(AddressBookStorePayload::empty);
         payload.book_mut(book_type).insert(entry.hostname.clone(), entry);
         self.inner.publish(payload, |_| Ok(())).await
     }
@@ -216,11 +213,8 @@ impl AddressBookStore {
         &mut self,
         subscriptions: SubscriptionSet,
     ) -> StoreResult<StateRevision> {
-        let mut payload = self
-            .inner
-            .current()
-            .cloned()
-            .unwrap_or_else(AddressBookStorePayload::empty);
+        let mut payload =
+            self.inner.current().cloned().unwrap_or_else(AddressBookStorePayload::empty);
         payload.subscriptions = subscriptions;
         self.inner.publish(payload, |_| Ok(())).await
     }
@@ -235,11 +229,8 @@ impl AddressBookStore {
         &mut self,
         configuration: AddressBookConfiguration,
     ) -> StoreResult<StateRevision> {
-        let mut payload = self
-            .inner
-            .current()
-            .cloned()
-            .unwrap_or_else(AddressBookStorePayload::empty);
+        let mut payload =
+            self.inner.current().cloned().unwrap_or_else(AddressBookStorePayload::empty);
         payload.configuration = configuration;
         self.inner.publish(payload, |_| Ok(())).await
     }

@@ -1,16 +1,16 @@
 # I2PControl Proposal 170 Milestone 003 — AddressBook Administrative API
 
-Status: blocked
+Status: closed
 
-Planning baseline: `ec289c77183d4f1010829ff255d8dbe90a941ad8` (`master`)
+Planning baseline: `9d2f646611cfa0ee76d1b22190526aff8cd1a79d` (`master`)
 
-Production-code baseline described by the planning system: `9b43484a21d5a1291c4881cdae62a36c527f8c0f`
+Production-code baseline described by the planning system: `9d2f646611cfa0ee76d1b22190526aff8cd1a79d`
 
 Activation rule:
 
-- M002 must have a closure record with status `closed`.
-- Before implementation begins, the agent MUST replace the baseline above with the reviewed M002 closure head, inspect all M001/M002 production changes, and reconcile this plan against the closed conformance matrix, DTOs, control-plane interfaces, and persistence schema.
-- This prewritten plan is not dependency-ready while M002 is open.
+- M002 has a closure record with status `closed` at `plans/closure/i2pcontrol-proposal-170/002-closure.md`.
+- Before implementation begins, the agent has replaced the baseline above with the reviewed M002 closure head, inspected all M001/M002 production changes, and reconciled this plan against the closed conformance matrix, DTOs, control-plane interfaces, and persistence schema.
+- This plan is now dependency-ready and authorized for execution.
 
 Source roadmap:
 
