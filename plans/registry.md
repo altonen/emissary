@@ -40,16 +40,22 @@ Canonical direction:
 
 No closure work is active. M001 has not been implemented.
 
-## Blocked work
+## Blocked implementation plans
+
+These plans are intentionally prewritten for full-workstream handoff and dependency visibility. They are not authorized for execution until their activation rules are satisfied and the registry moves them to `ready`.
 
 | Subsystem | Milestone | Status | Implementation plan | Blocker |
 |---|---|---|---|---|
-
-No registered implementation plan is blocked.
+| I2PControl Proposal 170 | 002 — control-plane domain and persistence | blocked | `plans/implementation/i2pcontrol-proposal-170/002-control-plane-domain-and-persistence.md` | M001 strict closure and baseline reconciliation |
+| I2PControl Proposal 170 | 003 — AddressBook administrative API | blocked | `plans/implementation/i2pcontrol-proposal-170/003-address-book-administrative-api.md` | M002 strict closure and baseline reconciliation |
+| I2PControl Proposal 170 | 004 — TunnelManager contract and explicit stubs | blocked | `plans/implementation/i2pcontrol-proposal-170/004-tunnel-manager-contract-and-stubs.md` | M002 strict closure and baseline reconciliation |
+| I2PControl Proposal 170 | 005 — RouterInfo inspection and exact selectors | blocked | `plans/implementation/i2pcontrol-proposal-170/005-router-info-inspection.md` | M002 strict closure; M003/M004 production integration required before closure |
+| I2PControl Proposal 170 | 006 — ClientServicesInfo | blocked | `plans/implementation/i2pcontrol-proposal-170/006-client-services-info.md` | M004 and M005 strict closure |
+| I2PControl Proposal 170 | 007 — conformance, hardening, and strict closure | blocked | `plans/implementation/i2pcontrol-proposal-170/007-conformance-hardening-and-strict-closure.md` | M003–M006 strict closure and activation audit |
 
 ## Deferred unregistered work
 
-The following work is intentionally outside the active Proposal 170 handoff and MUST NOT be pulled into M001:
+The following work is intentionally outside the active Proposal 170 handoff and MUST NOT be pulled into any registered milestone:
 
 - real runtime implementations for missing tunnel types;
 - lifecycle migration of existing startup-managed tunnels;
@@ -69,12 +75,14 @@ No Proposal 170 milestone has closed.
 
 1. Add a subsystem roadmap only when it is active enough to reason about.
 2. Register an implementation plan as ready only after dependency and handoff review.
-3. Move it to active when implementation starts.
-4. Move it to closing when production work lands and independent closure review begins.
-5. Mark it closed only when the linked closure record says closed and no unresolved high- or medium-severity finding remains.
-6. Use conditionally closed when named evidence or correctness findings prevent strict closure.
-7. Record blockers precisely and link the document that owns resolution.
-8. Move closed rows out of active sections after recording them under recently closed work.
-9. Preserve traceability when archiving.
-10. Do not copy detailed milestone requirements into this registry.
-11. When one milestone closes, create and register only the next dependency-ready handoff.
+3. Prewritten future plans remain blocked until their explicit activation rule is satisfied.
+4. Before activating a prewritten plan, update its repository baseline and reconcile it against dependency closure evidence and current code.
+5. Move a ready plan to active when implementation starts.
+6. Move it to closing when production work lands and independent closure review begins.
+7. Mark it closed only when the linked closure record says closed and no unresolved high- or medium-severity finding remains.
+8. Use conditionally closed only when named external or operational evidence prevents strict closure without concealing an implementation defect.
+9. Record blockers precisely and link the document that owns resolution.
+10. Move closed rows out of active sections after recording them under recently closed work.
+11. Preserve traceability when archiving.
+12. Do not copy detailed milestone requirements into this registry.
+13. When one milestone closes, activate only the next dependency-ready handoff or explicitly approved parallel set.
