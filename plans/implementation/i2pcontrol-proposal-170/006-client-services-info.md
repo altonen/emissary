@@ -1,6 +1,6 @@
 # I2PControl Proposal 170 Milestone 006 — ClientServicesInfo
 
-Status: ready
+Status: closing
 
 Planning baseline: `95a37f029cd37b8b00fbebddbdc178e3f168fbdc` (`master`)
 

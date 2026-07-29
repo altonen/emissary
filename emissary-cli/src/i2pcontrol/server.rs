@@ -44,6 +44,7 @@ use super::rpc::{
     self, AuthenticateParams, AuthenticateResult, JsonRpcErrorResponse, JsonRpcRequest,
     JsonRpcSuccess, RequestId,
 };
+use super::service_registry::{ServiceRegistry, ServiceSnapshot};
 use super::tls::TlsConfig;
 
 use emissary_core::crypto::base64_encode;
@@ -116,6 +117,8 @@ pub(crate) struct I2pControlState {
     rolling_window: Arc<super::observability::RollingWindow>,
     /// Shared log ring for I2PControl snapshot/clear.
     log_ring: Arc<super::observability::LogRing>,
+    /// Passive client-service registry for ClientServicesInfo.
+    service_registry: ServiceRegistry,
 }
 
 impl I2pControlState {
@@ -139,6 +142,7 @@ impl I2pControlState {
             metrics_snapshot,
             rolling_window,
             log_ring,
+            service_registry: ServiceRegistry::new(),
         }
     }
 
@@ -146,6 +150,24 @@ impl I2pControlState {
     /// info adapter for I2PControl log snapshot/clear).
     pub fn log_ring_arc(&self) -> Arc<super::observability::LogRing> {
         Arc::clone(&self.log_ring)
+    }
+
+    /// Get a reference to the service registry.
+    #[allow(dead_code)]
+    pub fn service_registry(&self) -> &ServiceRegistry {
+        &self.service_registry
+    }
+
+    /// Take a snapshot from the service registry.
+    #[allow(dead_code)]
+    pub fn service_snapshot(&self) -> ServiceSnapshot {
+        self.service_registry.snapshot()
+    }
+
+    /// Replace the service registry (for testing or composition).
+    #[allow(dead_code)]
+    pub fn set_service_registry(&mut self, registry: ServiceRegistry) {
+        self.service_registry = registry;
     }
 
     /// Get a reference to the token service.
@@ -796,6 +818,19 @@ pub(crate) async fn handle_jsonrpc(
                 .unwrap()
             } else {
                 super::router_info_handler::handle_router_info(&state, &request).await
+            }
+        }
+        rpc::methods::CLIENT_SERVICES_INFO => {
+            let token = extract_token(&headers);
+            if !state.token_service.validate(token) {
+                serde_json::to_value(JsonRpcErrorResponse::new(
+                    resolve_id(&request.id),
+                    rpc::error_codes::APP_ERROR,
+                    "Authentication required",
+                ))
+                .unwrap()
+            } else {
+                super::client_services::handle_client_services_info(&state, &request).await
             }
         }
         _ => {

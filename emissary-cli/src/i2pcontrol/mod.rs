@@ -19,6 +19,7 @@
 pub mod address_book;
 pub mod auth;
 pub mod backends;
+pub mod client_services;
 pub mod control_plane;
 pub mod domain;
 pub mod errors;
@@ -28,6 +29,7 @@ pub mod router_info;
 pub mod router_info_handler;
 pub mod rpc;
 pub mod server;
+pub mod service_registry;
 pub mod stores;
 pub mod tls;
 pub mod tunnel_manager;
