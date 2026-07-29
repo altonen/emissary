@@ -370,6 +370,18 @@ impl<R: Runtime> TransportManager<R> {
         &self.event_handle
     }
 
+    /// Get bounded list of currently connected peer IDs.
+    ///
+    /// Returns at most `limit` peer IDs. Used by inspection snapshots
+    /// without exposing the internal `routers` HashMap.
+    pub fn connected_peer_ids(&self, limit: usize) -> Vec<String> {
+        self.routers
+            .keys()
+            .take(limit)
+            .map(|id| id.to_base64().to_owned())
+            .collect()
+    }
+
     /// Update local router's external addresses to `address`, if published.
     fn update_router_addresses(&mut self, address: IpAddr) {
         match &self.ntcp2_config {

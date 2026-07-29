@@ -56,6 +56,7 @@ mod constants;
 mod destination;
 mod error;
 mod i2cp;
+pub mod inspection;
 mod netdb;
 mod profile;
 mod sam;

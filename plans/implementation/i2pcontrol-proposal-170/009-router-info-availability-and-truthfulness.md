@@ -1,6 +1,6 @@
 # I2PControl Proposal 170 Milestone 009 — RouterInfo Availability and Truthfulness
 
-Status: blocked
+Status: closed
 
 Planning baseline: `b35d9ad7295f6d7d8795a741c7942a5ff7a97f52` (`master` before corrective planning commits)
 

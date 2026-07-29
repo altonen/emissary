@@ -470,6 +470,7 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
                     local_router_info.clone(),
                 )
                 .with_event_metrics(metrics)
+                .with_core_snapshot(router.inspection_snapshot(10_000))
                 .with_share_ratio(share_ratio)
                 .with_configured_bandwidth(bw_in, bw_out)
                 .with_service_registry(registry_for_i2pcontrol);

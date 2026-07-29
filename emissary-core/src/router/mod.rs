@@ -135,6 +135,9 @@ pub struct Router<R: Runtime> {
     /// Local router ID.
     router_id: RouterId,
 
+    /// Router context — shared read-only state for inspection and subsystem access.
+    router_ctx: RouterContext<R>,
+
     /// Shutdown context.
     shutdown_context: ShutdownContext<R>,
 
@@ -349,6 +352,9 @@ impl<R: Runtime> Router<R> {
             (tunnel_manager_handle, tunnel_pool_handle)
         };
 
+        // clone router context for storage in Router before NetDb consumes it
+        let router_ctx_for_snapshot = router_ctx.clone();
+
         // initialize and start netdb
         let netdb_handle = {
             let (netdb, netdb_handle) = NetDb::<R>::new(
@@ -424,6 +430,7 @@ impl<R: Runtime> Router<R> {
                 address_info,
                 event_manager,
                 router_id,
+                router_ctx: router_ctx_for_snapshot,
                 shutdown_context,
                 shutdown_count: 0usize,
                 transport_manager: transport_manager_builder.build(),
@@ -473,6 +480,103 @@ impl<R: Runtime> Router<R> {
     /// mutating router state.
     pub fn event_handle(&self) -> &EventHandle<R> {
         self.transport_manager.event_handle()
+    }
+
+    /// Get reference to [`RouterContext`].
+    ///
+    /// Exposes profile storage, event handle, and router identity
+    /// for inspection adapters without transferring ownership.
+    pub fn router_context(&self) -> &RouterContext<R> {
+        &self.router_ctx
+    }
+
+    /// Build a pre-computed [`CoreSnapshot`] for inspection adapters.
+    ///
+    /// Locks are held only long enough to copy bounded data. The returned
+    /// snapshot is non-generic, immutable, and contains no private key
+    /// material, no mutable handles, and no subsystem authority.
+    ///
+    /// Per-pool tunnel breakdowns and NetDB storage counts are not
+    /// available through current inspection surfaces and are omitted.
+    /// Selectors backed by those sources remain explicit unsupported
+    /// inspection errors in the CLI adapter.
+    pub fn inspection_snapshot(&self, connected_peer_limit: usize) -> crate::inspection::CoreSnapshot {
+        use crate::inspection::{CoreSnapshot, NetDbSnapshot, TransportSnapshot, TunnelSnapshot};
+
+        let router_id_b64 = self.router_id.to_base64().to_owned();
+        let router_info_bytes = self.router_ctx.router_info().to_vec();
+
+        let event = self.transport_manager.event_handle();
+
+        let transport = TransportSnapshot {
+            udp_active: event.connected_routers() > 0,
+            udp_firewalled: event.ipv4_firewall_status() == crate::FirewallStatus::Firewalled
+                || event.ipv6_firewall_status() == crate::FirewallStatus::Firewalled,
+            tcp_active: event.connected_routers() > 0,
+            connected_peer_count: event.connected_routers(),
+            connected_peer_ids: self.transport_manager.connected_peer_ids(connected_peer_limit),
+            ipv4_firewall_status: match event.ipv4_firewall_status() {
+                crate::FirewallStatus::Ok => "ok",
+                crate::FirewallStatus::Firewalled => "firewalled",
+                crate::FirewallStatus::SymmetricNat => "symmetric_nat",
+                crate::FirewallStatus::Unknown => "unknown",
+            }
+            .to_owned(),
+            ipv6_firewall_status: match event.ipv6_firewall_status() {
+                crate::FirewallStatus::Ok => "ok",
+                crate::FirewallStatus::Firewalled => "firewalled",
+                crate::FirewallStatus::SymmetricNat => "symmetric_nat",
+                crate::FirewallStatus::Unknown => "unknown",
+            }
+            .to_owned(),
+        };
+
+        let tunnels = TunnelSnapshot {
+            active_participating: event.transit_tunnel_count(),
+            exploratory_inbound: 0,
+            exploratory_outbound: 0,
+            client_inbound: 0,
+            client_outbound: 0,
+            queue_depth: 0,
+        };
+
+        let profile = self.router_ctx.profile_storage();
+        let known_peer_count = profile.num_routers();
+        let known_router_ids: alloc::vec::Vec<String> = profile
+            .get_router_ids(crate::profile::Bucket::Any, |_, _, _| true)
+            .into_iter()
+            .take(connected_peer_limit)
+            .map(|id| id.to_base64().to_owned())
+            .collect();
+
+        // Build bounded peer RouterInfo lookup map from known router IDs.
+        let mut peer_router_infos = alloc::collections::BTreeMap::new();
+        for id_str in &known_router_ids {
+            if let Some(raw_id) = crate::crypto::base64_decode(id_str) {
+                let router_id = RouterId::from(raw_id);
+                if let Some(raw_ri) = profile.get_raw(&router_id) {
+                    peer_router_infos.insert(id_str.clone(), raw_ri);
+                }
+            }
+        }
+
+        let netdb = NetDbSnapshot {
+            active: false,
+            router_info_count: 0,
+            lease_set_count: 0,
+            known_router_ids,
+            known_peer_count,
+            active_peer_count: event.connected_routers(),
+            peer_router_infos,
+        };
+
+        CoreSnapshot {
+            router_id_b64,
+            router_info_bytes,
+            transport,
+            tunnels,
+            netdb,
+        }
     }
 
     /// Add external address for [`Router`].

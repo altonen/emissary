@@ -210,6 +210,7 @@ fn make_production_router_info() -> ProductionRouterInfoControl {
         metrics,
         log_ring,
         tunnel_mgr,
+        None,
     )
 }
 

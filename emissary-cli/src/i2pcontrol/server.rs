@@ -524,6 +524,11 @@ pub struct ServerInitContext {
     ///
     /// When `None`, a default zeroed source is used.
     pub event_metrics: Option<Arc<dyn EventMetrics>>,
+    /// Pre-computed core inspection snapshot from `Router::inspection_snapshot()`.
+    ///
+    /// Carries actual transport, tunnel, and peer state from canonical core
+    /// owners. When `None`, inspection groups return unavailable errors.
+    pub core_snapshot: Option<emissary_core::inspection::CoreSnapshot>,
     /// Share ratio from the active configuration.
     pub share_ratio: f64,
     /// Configured inbound bandwidth limit in bytes/second.
@@ -546,6 +551,7 @@ impl ServerInitContext {
             router_id,
             router_info_bytes,
             event_metrics: None,
+            core_snapshot: None,
             share_ratio: 0.0,
             configured_bandwidth_in: 0,
             configured_bandwidth_out: 0,
@@ -556,6 +562,12 @@ impl ServerInitContext {
     /// Set the event metrics source.
     pub fn with_event_metrics(mut self, metrics: Arc<dyn EventMetrics>) -> Self {
         self.event_metrics = Some(metrics);
+        self
+    }
+
+    /// Set the pre-computed core inspection snapshot.
+    pub fn with_core_snapshot(mut self, snapshot: emissary_core::inspection::CoreSnapshot) -> Self {
+        self.core_snapshot = Some(snapshot);
         self
     }
 
@@ -660,6 +672,7 @@ pub async fn init_server(
         metrics,
         log_ring,
         tunnels_shared,
+        ctx.core_snapshot,
     ));
 
     // --- Install the pre-built service registry from the composition root ---

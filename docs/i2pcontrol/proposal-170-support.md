@@ -1,6 +1,6 @@
 # Proposal 170 Support Status
 
-Status: M009 implemented (RouterInfo availability and truthfulness closed)
+Status: M010 implemented (bounded core router inspection)
 
 > **Note:** Strict Proposal 170 closure is reopened until M008–M012 close. Prior M005–M007
 > closure records are not accepted as current strict closure after the corrective review.
@@ -85,19 +85,21 @@ Real backend implementations will be added in future milestones.
 |---|---|---|
 | Identity/static | Implemented | Startup-retained values |
 | Router news | Implemented | Empty string (no news subsystem) |
-| Clock skew | Unavailable | Protocol-permitted null; M010 |
+| Clock skew | Implemented | Protocol-permitted null (no clock skew estimate) |
 | Network status | Implemented | EventMetrics firewall status |
 | Share ratio | Implemented | Retained configuration |
 | Configured BW | Implemented | Retained configuration |
-| UDP transport (active, firewalled) | Implemented | EventMetrics firewall status |
-| UDP transport (peers, stats) | Unavailable | M010 |
-| TCP transport | Unavailable | M010 |
-| NetDB | Unavailable | M010 |
+| UDP transport (active, firewalled, currentPeers, totalPeers) | Implemented | Core inspection snapshot |
+| UDP transport (peers, stats, cookie, hidden) | Unavailable | No Emissary equivalent for Java-I2P peer categories |
+| TCP transport (active) | Implemented | Core inspection snapshot |
+| TCP transport (hosts, status, version, firewalled, peers) | Unavailable | No Emissary equivalent |
+| NetDB | Unavailable | NetDB task is spawned; no inspection interface |
 | Bandwidth (all intervals) | Implemented | MetricsSnapshot + RollingWindow |
-| Tunnels (participating, configured) | Implemented | MetricsSnapshot + TunnelManager |
-| Tunnels (exploratory, client, queue) | Unavailable | M010 |
+| Tunnels (participating, configured) | Implemented | Core inspection snapshot + TunnelManager |
+| Tunnels (exploratory, client, queue) | Unavailable | Tunnel pool tasks are spawned; no inspection interface |
 | I2PTunnel | Implemented | TunnelManager administrative store |
-| Peers | Unavailable | M010 |
+| Peers (known, active, RouterInfo lookup) | Implemented | Core inspection snapshot (bounded) |
+| Peers (banned, limits, activeStats) | Unavailable | No canonical ban owner or per-peer transport stats |
 | Logs | Implemented | LogRing with redaction |
 | Address book | Implemented | M003 adapter |
 
@@ -146,3 +148,4 @@ and integration evidence.
 | M007 | Corrective pass required | Conformance and strict closure |
 | M008 | Closed | Production composition and durable-state integrity |
 | M009 | Closed | RouterInfo availability and truthfulness |
+| M010 | Implemented | Bounded core router inspection |

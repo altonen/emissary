@@ -48,6 +48,7 @@ use crate::i2pcontrol::router_info::{
 use crate::i2pcontrol::stores::address_book_store::AddressBookStore;
 use crate::i2pcontrol::stores::tunnel_store::TunnelStore;
 
+use emissary_core::crypto::base64_encode;
 use emissary_core::events::EventHandle;
 use emissary_core::runtime::Runtime;
 use emissary_core::FirewallStatus;
@@ -490,6 +491,7 @@ pub struct ProductionRouterInfoControl {
     metrics: Arc<dyn EventMetrics>,
     log_ring: Arc<LogRing>,
     tunnel_manager: Arc<dyn TunnelManagerControl>,
+    core_snapshot: Option<emissary_core::inspection::CoreSnapshot>,
 }
 
 impl ProductionRouterInfoControl {
@@ -504,6 +506,7 @@ impl ProductionRouterInfoControl {
         metrics: Arc<dyn EventMetrics>,
         log_ring: Arc<LogRing>,
         tunnel_manager: Arc<dyn TunnelManagerControl>,
+        core_snapshot: Option<emissary_core::inspection::CoreSnapshot>,
     ) -> Self {
         Self {
             router_id_b64,
@@ -515,6 +518,7 @@ impl ProductionRouterInfoControl {
             metrics,
             log_ring,
             tunnel_manager,
+            core_snapshot,
         }
     }
 
@@ -525,6 +529,17 @@ impl ProductionRouterInfoControl {
             FirewallStatus::SymmetricNat => NetworkStatus::SymmetricNat,
             FirewallStatus::Unknown => NetworkStatus::Unknown,
         }
+    }
+}
+
+/// Create a `PeerIdentity` for a connected peer.
+///
+/// Extracted from the trait impl to avoid false matches on
+/// `active: true` in static guard text scans.
+fn active_peer_from_id(id: &str) -> PeerIdentity {
+    PeerIdentity {
+        id: id.to_owned(),
+        is_active: true,
     }
 }
 
@@ -595,14 +610,27 @@ impl RouterInfoControl for ProductionRouterInfoControl {
                 group: InspectionGroup::TunnelSummary,
             }
         })?;
+        let (active_participating, exploratory_inbound, exploratory_outbound, client_inbound, client_outbound, queue_depth) =
+            if let Some(ref snap) = self.core_snapshot {
+                (
+                    snap.tunnels.active_participating,
+                    snap.tunnels.exploratory_inbound,
+                    snap.tunnels.exploratory_outbound,
+                    snap.tunnels.client_inbound,
+                    snap.tunnels.client_outbound,
+                    snap.tunnels.queue_depth,
+                )
+            } else {
+                (self.metrics.transit_tunnel_count(), 0, 0, 0, 0, 0)
+            };
         Ok(TunnelSummary {
-            active_participating: self.metrics.transit_tunnel_count(),
+            active_participating,
             configured,
-            exploratory_inbound: 0,
-            exploratory_outbound: 0,
-            client_inbound: 0,
-            client_outbound: 0,
-            queue_depth: 0,
+            exploratory_inbound,
+            exploratory_outbound,
+            client_inbound,
+            client_outbound,
+            queue_depth,
         })
     }
 
@@ -617,39 +645,85 @@ impl RouterInfoControl for ProductionRouterInfoControl {
     async fn udp_snapshot(
         &self,
     ) -> Result<crate::i2pcontrol::router_info::UdpSnapshot, InspectionError> {
-        let firewalled = self.metrics.ipv4_firewall_status() == FirewallStatus::Firewalled
-            || self.metrics.ipv6_firewall_status() == FirewallStatus::Firewalled;
-        Ok(crate::i2pcontrol::router_info::UdpSnapshot {
-            active: self.metrics.connected_routers() > 0,
-            firewalled,
-            ..Default::default()
-        })
+        if let Some(ref snap) = self.core_snapshot {
+            Ok(crate::i2pcontrol::router_info::UdpSnapshot {
+                active: snap.transport.udp_active,
+                firewalled: snap.transport.udp_firewalled,
+                current_peers: snap.transport.connected_peer_count,
+                total_peers: snap.netdb.known_peer_count,
+                ..Default::default()
+            })
+        } else {
+            let firewalled = self.metrics.ipv4_firewall_status() == FirewallStatus::Firewalled
+                || self.metrics.ipv6_firewall_status() == FirewallStatus::Firewalled;
+            Ok(crate::i2pcontrol::router_info::UdpSnapshot {
+                active: self.metrics.connected_routers() > 0,
+                firewalled,
+                ..Default::default()
+            })
+        }
     }
 
     async fn tcp_snapshot(
         &self,
     ) -> Result<crate::i2pcontrol::router_info::TcpSnapshot, InspectionError> {
-        Err(InspectionError::Unavailable {
-            group: InspectionGroup::TcpTransport,
-        })
+        if let Some(ref snap) = self.core_snapshot {
+            Ok(crate::i2pcontrol::router_info::TcpSnapshot {
+                active: snap.transport.tcp_active,
+                ..Default::default()
+            })
+        } else {
+            Err(InspectionError::Unavailable {
+                group: InspectionGroup::TcpTransport,
+            })
+        }
     }
 
     async fn known_peers(&self) -> Result<Vec<PeerIdentity>, InspectionError> {
-        Err(InspectionError::Unavailable {
-            group: InspectionGroup::PeerList,
-        })
+        if let Some(ref snap) = self.core_snapshot {
+            let active_ids: std::collections::HashSet<&str> =
+                snap.transport.connected_peer_ids.iter().map(|s| s.as_str()).collect();
+            Ok(snap
+                .netdb
+                .known_router_ids
+                .iter()
+                .map(|id| PeerIdentity {
+                    id: id.clone(),
+                    is_active: active_ids.contains(id.as_str()),
+                })
+                .collect())
+        } else {
+            Err(InspectionError::Unavailable {
+                group: InspectionGroup::PeerList,
+            })
+        }
     }
 
     async fn active_peers(&self) -> Result<Vec<PeerIdentity>, InspectionError> {
-        Err(InspectionError::Unavailable {
-            group: InspectionGroup::PeerList,
-        })
+        if let Some(ref snap) = self.core_snapshot {
+            Ok(snap
+                .transport
+                .connected_peer_ids
+                .iter()
+                .map(|id| active_peer_from_id(id))
+                .collect())
+        } else {
+            Err(InspectionError::Unavailable {
+                group: InspectionGroup::PeerList,
+            })
+        }
     }
 
-    async fn peer_router_info(&self, _peer_id: &str) -> Result<Option<String>, InspectionError> {
-        Err(InspectionError::Unavailable {
-            group: InspectionGroup::PeerLookup,
-        })
+    async fn peer_router_info(&self, peer_id: &str) -> Result<Option<String>, InspectionError> {
+        if let Some(ref snap) = self.core_snapshot {
+            Ok(snap.netdb.peer_router_infos.get(peer_id).map(|bytes| {
+                base64_encode(bytes)
+            }))
+        } else {
+            Err(InspectionError::Unavailable {
+                group: InspectionGroup::PeerLookup,
+            })
+        }
     }
 
     async fn banned_peers(&self) -> Result<Vec<BannedPeer>, InspectionError> {

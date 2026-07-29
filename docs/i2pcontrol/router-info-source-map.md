@@ -1,6 +1,6 @@
 # RouterInfo Selector Source Map
 
-Status: M009 implemented (RouterInfo availability and truthfulness)
+Status: M010 implemented (bounded core router inspection)
 
 This document is the single source of truth for every Proposal 170 RouterInfo
 selector's wire key, output type, nullability, semantic definition, canonical
@@ -44,35 +44,35 @@ Emissary source, snapshot group, bounds, availability, and M010 work-package.
 
 | Wire key | JSON type | Nullability | Source | Bound | Current availability | Unavailable behavior | M010 owner |
 |---|---|---|---|---|---|---|---|
-| `i2p.router.udp.active` | boolean | non-null | `event-metric` | — | implemented (connected-routers-derived) | error | — |
-| `i2p.router.udp.cookie.active` | boolean | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.udp.integratedPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.udp.firewalled` | boolean | non-null | `event-metric` | — | implemented (firewall-derived) | error | — |
-| `i2p.router.udp.hidden` | boolean | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.udp.coinficientPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.udp.criticalPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.udp.fastPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.udp.highCapacityPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.udp.interleavedPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.udp.litPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.udp.lowCapacityPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.udp.onDemandPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.udp.peerStats` | object | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.udp.standardPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.udp.unreachablePeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.udp.totalPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.udp.currentPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
+| `i2p.router.udp.active` | boolean | non-null | `core-inspection` | — | implemented (transport snapshot) | error | — |
+| `i2p.router.udp.cookie.active` | boolean | non-null | `unsupported-inspection` | — | unavailable | error | — |
+| `i2p.router.udp.integratedPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | — |
+| `i2p.router.udp.firewalled` | boolean | non-null | `core-inspection` | — | implemented (transport snapshot) | error | — |
+| `i2p.router.udp.hidden` | boolean | non-null | `unsupported-inspection` | — | unavailable | error | — |
+| `i2p.router.udp.coinficientPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | — |
+| `i2p.router.udp.criticalPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | — |
+| `i2p.router.udp.fastPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | — |
+| `i2p.router.udp.highCapacityPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | — |
+| `i2p.router.udp.interleavedPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | — |
+| `i2p.router.udp.litPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | — |
+| `i2p.router.udp.lowCapacityPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | — |
+| `i2p.router.udp.onDemandPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | — |
+| `i2p.router.udp.peerStats` | object | non-null | `unsupported-inspection` | — | unavailable | error | — |
+| `i2p.router.udp.standardPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | — |
+| `i2p.router.udp.unreachablePeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | — |
+| `i2p.router.udp.totalPeers` | integer | non-null | `core-inspection` | — | implemented (profile count) | error | — |
+| `i2p.router.udp.currentPeers` | integer | non-null | `core-inspection` | — | implemented (connected count) | error | — |
 
 ### TCP transport group
 
 | Wire key | JSON type | Nullability | Source | Bound | Current availability | Unavailable behavior | M010 owner |
 |---|---|---|---|---|---|---|---|
-| `i2p.router.tcp.active` | boolean | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.tcp.integratedPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.tcp.firewalled` | boolean | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.tcp.hosts` | string | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.tcp.status` | string | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.tcp.version` | string | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
+| `i2p.router.tcp.active` | boolean | non-null | `core-inspection` | — | implemented (transport snapshot) | error | — |
+| `i2p.router.tcp.integratedPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | — |
+| `i2p.router.tcp.firewalled` | boolean | non-null | `unsupported-inspection` | — | unavailable | error | — |
+| `i2p.router.tcp.hosts` | string | non-null | `unsupported-inspection` | — | unavailable | error | — |
+| `i2p.router.tcp.status` | string | non-null | `unsupported-inspection` | — | unavailable | error | — |
+| `i2p.router.tcp.version` | string | non-null | `unsupported-inspection` | — | unavailable | error | — |
 
 ### NetDB group
 
@@ -150,13 +150,13 @@ Emissary source, snapshot group, bounds, availability, and M010 work-package.
 
 | Wire key | JSON type | Nullability | Source | Bound | Current availability | Unavailable behavior | M010 owner |
 |---|---|---|---|---|---|---|---|
-| `i2p.router.tunnels.participating` | integer | non-null | `event-metric` | — | implemented | — | — |
-| `i2p.router.tunnels.exploratoryIn` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.tunnels.exploratoryOut` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.tunnels.clientIn` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.tunnels.clientOut` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
+| `i2p.router.tunnels.participating` | integer | non-null | `core-inspection` | — | implemented (transport snapshot) | error | — |
+| `i2p.router.tunnels.exploratoryIn` | integer | non-null | `unsupported-inspection` | — | unavailable (tunnel pool task not inspectable) | error | — |
+| `i2p.router.tunnels.exploratoryOut` | integer | non-null | `unsupported-inspection` | — | unavailable (tunnel pool task not inspectable) | error | — |
+| `i2p.router.tunnels.clientIn` | integer | non-null | `unsupported-inspection` | — | unavailable (tunnel pool task not inspectable) | error | — |
+| `i2p.router.tunnels.clientOut` | integer | non-null | `unsupported-inspection` | — | unavailable (tunnel pool task not inspectable) | error | — |
 | `i2p.router.tunnels.configured` | integer | non-null | `administrative-store` | — | implemented | error | — |
-| `i2p.router.tunnels.queue` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
+| `i2p.router.tunnels.queue` | integer | non-null | `unsupported-inspection` | — | unavailable (tunnel pool task not inspectable) | error | — |
 
 ### I2PTunnel group
 
@@ -168,25 +168,25 @@ Emissary source, snapshot group, bounds, availability, and M010 work-package.
 
 | Wire key | JSON type | Nullability | Source | Bound | Current availability | Unavailable behavior | M010 owner |
 |---|---|---|---|---|---|---|---|
-| `i2p.router.peers.knownCount` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.peers.known` | array | non-null | `unsupported-inspection` | 10,000 | unavailable | error | M010 |
-| `i2p.router.peers.activeCount` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.peers.active` | array | non-null | `unsupported-inspection` | 10,000 | unavailable | error | M010 |
-| `i2p.router.peers.banned` | array | non-null | `unsupported-inspection` | 10,000 | unavailable | error | M010 |
-| `i2p.router.peers.bannedCount` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
+| `i2p.router.peers.knownCount` | integer | non-null | `core-inspection` | — | implemented (profile count) | error | — |
+| `i2p.router.peers.known` | array | non-null | `core-inspection` | 10,000 | implemented (bounded profile IDs) | error | — |
+| `i2p.router.peers.activeCount` | integer | non-null | `core-inspection` | — | implemented (connected count) | error | — |
+| `i2p.router.peers.active` | array | non-null | `core-inspection` | 10,000 | implemented (bounded connected IDs) | error | — |
+| `i2p.router.peers.banned` | array | non-null | `unsupported-inspection` | 10,000 | unavailable (no canonical ban owner) | error | — |
+| `i2p.router.peers.bannedCount` | integer | non-null | `unsupported-inspection` | — | unavailable (no canonical ban owner) | error | — |
 
 ### Peer lookup group
 
 | Wire key | JSON type | Nullability | Source | Bound | Current availability | Unavailable behavior | M010 owner |
 |---|---|---|---|---|---|---|---|
-| `i2p.router.peers.routerInfo` | string/null | nullable | `unsupported-inspection` | 4 MB | unavailable | error | M010 |
+| `i2p.router.peers.routerInfo` | string/null | nullable | `core-inspection` | 4 MB | implemented (bounded peer RI lookup) | error | — |
 
 ### Peer stats group
 
 | Wire key | JSON type | Nullability | Source | Bound | Current availability | Unavailable behavior | M010 owner |
 |---|---|---|---|---|---|---|---|
-| `i2p.router.peers.limits` | object | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
-| `i2p.router.peers.activeStats` | array | non-null | `unsupported-inspection` | 10,000 | unavailable | error | M010 |
+| `i2p.router.peers.limits` | object | non-null | `unsupported-inspection` | — | unavailable (no canonical limit owner) | error | — |
+| `i2p.router.peers.activeStats` | array | non-null | `unsupported-inspection` | 10,000 | unavailable (no per-peer transport stats) | error | — |
 
 ### Log group
 

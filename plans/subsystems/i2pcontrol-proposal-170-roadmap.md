@@ -494,8 +494,8 @@ The subsystem closes only when M013 independently confirms the exact completion 
 | 006 | corrective pass required | `plans/implementation/i2pcontrol-proposal-170/006-client-services-info.md` | M011 | Startup-stale tunnel inventory and empty SAM sessions |
 | 007 | corrective pass required / superseded | `plans/implementation/i2pcontrol-proposal-170/007-conformance-hardening-and-strict-closure.md` | M012–M013 | Invalid security evidence and non-independent closure |
 | 008 | closed | `plans/implementation/i2pcontrol-proposal-170/008-production-composition-and-durable-state-integrity.md` | `plans/closure/i2pcontrol-proposal-170/008-closure.md` | — |
-| 009 | ready | `plans/implementation/i2pcontrol-proposal-170/009-router-info-availability-and-truthfulness.md` | pending | M008 closed |
-| 010 | blocked | `plans/implementation/i2pcontrol-proposal-170/010-bounded-core-router-inspection.md` | pending | M009 strict closure |
-| 011 | blocked | `plans/implementation/i2pcontrol-proposal-170/011-client-services-live-state.md` | pending | M008 and M009 strict closure |
-| 012 | blocked | `plans/implementation/i2pcontrol-proposal-170/012-real-tls-and-request-resource-hardening.md` | pending | M008/M009 interfaces stable; activate after M009 |
+| 009 | closed | `plans/implementation/i2pcontrol-proposal-170/009-router-info-availability-and-truthfulness.md` | `plans/closure/i2pcontrol-proposal-170/009-closure.md` | — |
+| 010 | closed | `plans/implementation/i2pcontrol-proposal-170/010-bounded-core-router-inspection.md` | `plans/closure/i2pcontrol-proposal-170/010-closure.md` | — |
+| 011 | ready | `plans/implementation/i2pcontrol-proposal-170/011-client-services-live-state.md` | pending | M010 closed |
+| 012 | ready | `plans/implementation/i2pcontrol-proposal-170/012-real-tls-and-request-resource-hardening.md` | pending | M008/M009/M010 interfaces stable |
 | 013 | blocked | `plans/implementation/i2pcontrol-proposal-170/013-production-conformance-and-independent-reclosure.md` | pending | M010, M011, M012 strict closure and M001–M004 revalidation |
