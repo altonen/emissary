@@ -1,12 +1,15 @@
 # I2PControl Proposal 170 Roadmap
 
-Status: active
+Status: active corrective work
+
+Current corrective planning baseline: `b35d9ad7295f6d7d8795a741c7942a5ff7a97f52` (`master` before corrective planning commits)
 
 Canonical references:
 
 - `plans/000-long-term-specification.md`
 - `plans/001-terminology-and-domain-model.md`
 - `plans/002-long-term-roadmap.md`
+- `plans/003-planning-process.md`
 
 Related ADRs:
 
@@ -21,151 +24,76 @@ External contract:
 
 This subsystem owns the exact Proposal 170 administrative API contract for Emissary:
 
-- I2PControl listener, authentication, JSON-RPC dispatch, and protocol DTOs;
+- I2PControl listener, TLS, authentication, JSON-RPC dispatch, and protocol DTOs;
 - Proposal 170 RouterInfo selectors;
 - AddressBook administrative stores and operations;
 - TunnelManager configuration and lifecycle dispatch;
 - explicit unsupported tunnel backends;
 - ClientServicesInfo;
 - bounded inspection adapters and persistence required by those methods;
-- protocol and closure evidence.
+- protocol, security, and closure evidence.
 
 The subsystem consumes existing router identity, metrics, protocol listener state, address parsing, configured proxy/tunnel state, and narrowly scoped read-only core inspection.
 
-It does not own router algorithms, I2P wire protocols, missing tunnel data planes, frontend behavior, or runtime address-resolution policy.
+It does not own router algorithms, I2P wire protocols, missing tunnel data planes, frontend behavior, startup-managed tunnel lifecycle migration, or runtime address-resolution policy.
 
-## 2. Work classification
+## 2. Canonical invariants
 
-### Invariants
-
-- Proposal 170 wire names, types, methods, actions, and tunnel types remain exact.
-- Existing I2PControl JSON-RPC and authentication behavior remains compatible.
-- No frontend is required to run or observe the service.
-- No router, NetDB, transport, tunnel-selection, or congestion behavior changes.
+- Proposal 170 wire names, JSON types, methods, actions, selectors, and tunnel types remain exact.
+- Existing I2PControl authentication/version/JSON-RPC behavior remains compatible.
+- The service operates independently of every frontend.
+- Enabled production state contains no fake control implementation.
+- Production store failures are explicit and never become transient fake success.
+- Shared handlers and inspection adapters observe one canonical loaded service object.
+- Missing or failing values are not fabricated as zero, false, empty, absent, or default success.
 - Unsupported tunnel execution is explicit and never simulated.
-- Every declared tunnel type has a registered real or unsupported backend.
-- Missing values are not fabricated.
+- Every declared tunnel type has one registered real or unsupported backend.
+- Unsupported definitions never report active runtime capability.
 - Administrative address books do not silently change runtime resolution.
 - I2PControl does not consume a single-owner event stream required elsewhere.
+- Core inspection is bounded, read-only, neutral, and secret-free.
+- I2PControl is actually served over TLS; plaintext does not reach JSON-RPC.
+- Request, connection, collection, task, persistence, and response resource use is bounded.
+- No router, NetDB, transport, tunnel-selection, peer-selection, congestion, or service-lifecycle behavior is changed to satisfy inspection.
+
+## 3. Capabilities and infrastructure
 
 ### Capabilities
 
-- Authenticate and call Proposal 170 through an independent I2PControl listener.
-- Query all Proposal 170 RouterInfo selectors.
+- Authenticate and call Proposal 170 through an independent TLS I2PControl listener.
+- Query all Proposal 170 RouterInfo selectors from truthful sources or explicit protocol-compatible unavailable behavior.
 - Manage all four Proposal 170 administrative address books.
 - Create, edit, inspect, delete, and dispatch lifecycle actions for every declared tunnel type.
 - Receive deterministic not-implemented lifecycle results for stubbed tunnel types.
-- Query all ClientServicesInfo selectors.
+- Query all ClientServicesInfo selectors from current service state.
 
 ### Infrastructure
 
 - Exact request/response and error DTOs.
-- Method registry and control-plane interfaces.
+- Method registry and typed control-plane interfaces.
+- Explicit production/test composition boundaries.
 - Versioned persistent administrative state.
 - Exhaustive tunnel backend registry.
 - Bounded router/service inspection snapshots.
 - Shared metrics and tracing-backed log snapshots.
 - Matrix-driven conformance fixtures.
+- Real TLS listener and pre-buffer request limits.
 
-### Polish
-
-- Operator documentation and configuration examples.
-- Diagnostics and redaction.
-- Test-fixture generation and static protocol guards.
-- Resource-limit tuning after correctness closure.
-
-## 3. Non-goals
+## 4. Non-goals
 
 - Implementing missing client or server tunnel data planes.
 - Migrating existing startup managers into Proposal 170 lifecycle ownership.
 - Adding frontend controls or replacing frontend state paths.
 - Changing address-book runtime precedence.
-- Extending Proposal 170 with capability discovery, aliases, pagination, or richer status fields.
+- Extending Proposal 170 with capability discovery, aliases, pagination, partial results, or richer status fields.
+- Creating Java-I2P-specific internal classifications that have no meaningful Emissary equivalent.
 - Refactoring core subsystems beyond bounded read-only inspection.
 - Claiming runtime completeness for stubbed tunnel types.
+- Adding release or publishing automation.
 
-## 4. Current state
+## 5. Historical implementation sequence
 
-At repository baseline `9b43484a21d5a1291c4881cdae62a36c527f8c0f` on `master`:
-
-- the workspace contains `emissary-cli`, `emissary-core`, and `emissary-util`;
-- `emissary-cli` has no I2PControl module or dedicated control-plane service;
-- Axum and Serde JSON are optional dependencies, with Axum currently associated with UI/liveview functionality;
-- the application constructs router, address-book, proxy, protocol, and tunnel managers in `emissary-cli/src/main.rs`;
-- existing client and server tunnel managers create configured tasks at startup and do not expose a complete external create/edit/start/stop/restart/delete command interface;
-- existing address-book code exposes one logical runtime store rather than four Proposal 170 administrative books;
-- `Router` exposes only a limited public management surface relative to Proposal 170 inspection requirements;
-- event/status infrastructure contains several useful counters but the current event subscriber is not an independent multi-consumer Proposal 170 snapshot service;
-- tracing output does not provide a dedicated bounded readable/clearable I2PControl log buffer;
-- no Proposal 170 persistence schema or tunnel backend registry exists.
-
-These gaps justify a staged implementation. They do not justify broad router redesign.
-
-## 5. Target architecture
-
-The primary application-layer module is expected under:
-
-```text
-emissary-cli/src/i2pcontrol/
-    mod.rs
-    server.rs
-    auth.rs
-    rpc.rs
-    errors.rs
-    control_plane.rs
-    router_info.rs
-    address_book.rs
-    tunnel_manager.rs
-    client_services.rs
-    persistence.rs
-```
-
-Exact file placement MAY change with repository evidence, but ownership must remain equivalent.
-
-### 5.1 Request path
-
-```text
-HTTP listener
-    -> bounded JSON-RPC parser
-    -> authentication/version gate
-    -> exact method registry
-    -> typed Proposal 170 handler
-    -> ControlPlane interface
-    -> inspection/store/backend adapter
-    -> exact result or error serializer
-```
-
-### 5.2 Control-plane boundary
-
-The control plane provides typed interfaces for:
-
-- immutable router inspection;
-- shared metrics snapshots;
-- bounded logs and clear operation;
-- four address-book stores and configuration;
-- tunnel definitions, ownership, state, backend dispatch, and persistence;
-- client-service inspection.
-
-Handlers do not directly manipulate runtime task internals or files.
-
-### 5.3 Tunnel architecture
-
-A canonical tunnel definition preserves all Proposal 170 options. An exhaustive backend registry maps each exact tunnel type to:
-
-- a real adapter where existing runtime behavior can be safely and truthfully controlled; or
-- `UnsupportedTunnelBackend` where no real data plane exists.
-
-Unsupported runtime state remains internal. Public queries map it to an existing inactive state, while start/restart return deterministic `error - ... not implemented` operation statuses.
-
-### 5.4 Persistence
-
-Proposal 170 administrative state uses a dedicated versioned state area under the configured Emissary base path. It is validated, atomically replaced, restart-readable, and independent from existing startup manager configuration unless a later milestone defines a safe additive bridge.
-
-### 5.5 Core inspection
-
-Core additions are limited to bounded, read-only snapshot interfaces required for RouterInfo and ClientServicesInfo. They expose data, not subsystem authority.
-
-## 6. Dependency graph
+The original implementation was decomposed as:
 
 ```text
 M001 Contract matrix and I2PControl foundation
@@ -183,184 +111,297 @@ M002 Domain model and persistence
                                       M007 Conformance and closure
 ```
 
-- M001 -> M002: hard.
-- M002 -> M003: hard.
-- M002 -> M004: hard.
-- M002 -> M005: interface for DTOs/control-plane contracts; core inspection can begin after interfaces stabilize.
-- M004/M005 -> M006: hard for accurate service state.
-- M003/M004/M005/M006 -> M007: hard.
+M001–M004 remain historically closed unless later corrective evidence invalidates them.
 
-## 7. Milestones
+M005–M007 were marked closed, but an independent post-implementation review at baseline `b35d9ad7295f6d7d8795a741c7942a5ff7a97f52` found material defects that invalidate strict closure.
+
+## 6. Post-closure findings requiring corrective work
+
+### Production composition and persistence
+
+- Production state is constructed fake-first.
+- Store creation/load failures can log a warning and continue with fake controls.
+- RouterInfo constructs a second, unloaded TunnelManager control instead of sharing the loaded handler service.
+- Temporary fallback storage may be used in nominal production inspection.
+- State helpers suppress errors into empty/absent values.
+- `ProductionControlPlane` contains unconditional tunnel placeholders.
+
+### RouterInfo
+
+- Several production selector groups return hard-coded zero, false, empty, `None`, or default DTO state.
+- The original M005 closure explicitly documented medium-severity missing NetDB/peer sources and nevertheless declared the milestone closed.
+- The control trait cannot distinguish unavailable, failed, absent, and real zero/empty states.
+
+### ClientServicesInfo
+
+- I2PTunnel inventory is captured at startup and is stale after live TunnelManager mutations.
+- SAM session output is always empty.
+- Configured/starting proxies can report enabled before actual bind.
+- Missing observer/source state is indistinguishable from known disabled state.
+
+### TLS and request hardening
+
+- TLS configuration is built but discarded.
+- The raw TCP listener is served directly, so documentation and logs claiming HTTPS are unsupported.
+- Body size is checked after extraction into a complete `String`.
+- Connection/handshake/pre-handler buffering is not bounded by the handler semaphore.
+- Several adversarial tests assert only `is_ok() || is_err()` and therefore prove nothing.
+
+### Closure process
+
+- M007 implementation and “independent review” were attributed to the same agent.
+- Static/manifest counts were treated as capability evidence.
+- The registry was marked closed despite medium-severity findings and missing production evidence.
+
+## 7. Corrective dependency graph
+
+```text
+M008 Production composition and durable-state integrity
+    |
+    v
+M009 RouterInfo availability and truthfulness
+    |
+    +--------------------+--------------------+
+    |                    |                    |
+    v                    v                    v
+M010 Bounded core    M011 ClientServices  M012 Real TLS and
+router inspection    live state           request hardening
+    |                    |                    |
+    +--------------------+--------------------+
+                         |
+                         v
+              M013 Independent reclosure
+```
+
+Dependency classes:
+
+- M008 -> M009: hard.
+- M009 -> M010: hard.
+- M009 -> M011: hard, with M008 shared-control boundary also required.
+- M009 -> M012: interface; M012 must reconcile current state construction but may execute in parallel with M010/M011.
+- M010/M011/M012 -> M013: hard.
+- M001–M004 -> M013: historical closure revalidation.
+
+Only M008 is dependency-ready at registration time. Later plans remain blocked until their activation rules are satisfied.
+
+## 8. Original milestone summaries
 
 ### Milestone 001 — Contract matrix and I2PControl foundation
 
 Class: invariant / infrastructure
 
-Objective:
+Historical objective: create the exact contract inventory and frontend-independent authenticated JSON-RPC foundation.
 
-Create the exact conformance inventory and a frontend-independent, authenticated, bounded JSON-RPC service foundation.
-
-Dependencies:
-
-- no hard dependency;
-- ADR-0001 and canonical documents are stable interfaces.
-
-Deliverable boundary:
-
-- conformance matrix and fixtures;
-- independent Cargo feature/dependency ownership;
-- additive configuration;
-- authentication/token/version service;
-- JSON-RPC parser, result/error DTOs, dispatcher, and method registry;
-- typed control-plane interface and test double;
-- startup/shutdown integration and protocol/security tests.
-
-User or operator value:
-
-A production-shaped I2PControl endpoint and stable implementation boundary exist for Proposal 170 without frontend coupling.
-
-Exit conditions:
-
-- base protocol and auth tests pass through the real listener;
-- every Proposal 170 method/selector/tunnel type is present in the matrix and fixture inventory;
-- no feature method falsely reports completion;
-- later milestones can add handlers without replacing the server foundation.
-
-Deferred work:
-
-- AddressBook, TunnelManager, RouterInfo extension, and ClientServicesInfo semantics.
+Current disposition: historically closed; TLS-serving and request-bound defects are owned by M012 and must be reconciled before final closure.
 
 ### Milestone 002 — Control-plane domain and persistence
 
 Class: invariant / infrastructure
 
-Objective:
+Historical objective: canonical administrative models, backend traits, and restart-safe generation storage.
 
-Establish canonical administrative models and restart-safe storage before feature handlers depend on them.
-
-Dependencies:
-
-- M001 hard.
-
-Deliverable boundary:
-
-- exact tunnel/action/type/option domain;
-- ownership and internal runtime state;
-- backend traits and exhaustive registry;
-- administrative address-book domain;
-- versioned state schemas, atomic persistence, corruption handling, and fake adapters.
-
-Exit conditions:
-
-- all declared options round-trip without loss;
-- interrupted writes do not replace valid state;
-- every tunnel type resolves to a backend in tests;
-- no persisted record starts a missing runtime service.
+Current disposition: historically closed; fail-closed production composition and shared service ownership are owned by M008.
 
 ### Milestone 003 — AddressBook
 
 Class: capability
 
-Objective:
+Historical objective: four persistent administrative books, operations, subscriptions, configuration, and RouterInfo selectors without runtime resolver adoption.
 
-Implement all Proposal 170 AddressBook operations and RouterInfo address-book selectors as persistent administrative state.
-
-Dependencies:
-
-- M002 hard.
-
-Exit conditions:
-
-- all four books support exact list/lookup/add/update/delete behavior;
-- Delete uses parameter presence semantics;
-- SetConfig and SetSubscriptions persist and recover;
-- destination validation is deterministic;
-- runtime resolver behavior is unchanged.
+Current disposition: historically closed; M008/M013 must verify failures are not converted to fake/empty success.
 
 ### Milestone 004 — TunnelManager and explicit stubs
 
 Class: capability / infrastructure
 
-Objective:
+Historical objective: complete configuration/lifecycle API for every declared type with explicit unsupported backends.
 
-Complete the TunnelManager public contract for every declared type while keeping missing data-plane work deferred.
+Current disposition: historically closed; M008/M011/M013 must verify one shared store, live cross-method visibility, and inactive stubs.
 
-Dependencies:
-
-- M002 hard.
-
-Exit conditions:
-
-- every type supports parsing and configuration CRUD;
-- every type has a real or unsupported backend;
-- start/stop/restart and permitted `All` behavior are exact;
-- unsupported start/restart fail deterministically;
-- unsupported records never report active;
-- existing startup-managed runtime ownership is represented truthfully.
-
-### Milestone 005 — RouterInfo Proposal 170 inspection
+### Milestone 005 — RouterInfo inspection
 
 Class: capability / infrastructure
 
-Objective:
+Historical objective: every selector from truthful bounded snapshots.
 
-Implement every Proposal 170 RouterInfo selector from truthful bounded snapshots.
-
-Dependencies:
-
-- M002 interface;
-- M003/M004 soft for their selector data.
-
-Exit conditions:
-
-- only requested keys are returned;
-- exact types and nullability are enforced;
-- logs are bounded and independently clearable;
-- metrics are multi-consumer safe;
-- core inspection is read-only and bounded;
-- no placeholder state is fabricated.
+Current disposition: corrective pass required. M009 and M010 own closure.
 
 ### Milestone 006 — ClientServicesInfo
 
 Class: capability
 
-Objective:
+Historical objective: exact service selectors from actual listener/session/registry state.
 
-Implement all service selectors from actual listener/session/registry state.
+Current disposition: corrective pass required. M011 owns closure.
 
-Dependencies:
-
-- M004 and M005 hard;
-- M003 soft only if shared administrative reporting is required.
-
-Exit conditions:
-
-- I2PTunnel, HTTPProxy, SOCKS, SAM, BOB, and I2CP selectors are exact;
-- only requested sections appear;
-- stubbed tunnels do not appear active;
-- frontend presence does not alter results.
-
-### Milestone 007 — Conformance, hardening, and strict closure
+### Milestone 007 — Conformance and strict closure
 
 Class: invariant / polish
 
+Historical objective: independent proof of complete production conformance.
+
+Current disposition: corrective pass required. M013 supersedes this closure gate after M008–M012.
+
+## 9. Corrective milestones
+
+### Milestone 008 — Production composition and durable-state integrity
+
+Class: invariant / infrastructure corrective pass
+
 Objective:
 
-Close every conformance row and prove scope, compatibility, persistence, security, and lifecycle correctness.
+- separate production and test construction;
+- construct/load production stores once;
+- share one canonical service object across handlers/inspection;
+- fail closed on production initialization/load errors;
+- propagate query failures instead of suppressing them;
+- remove legacy production placeholders and temporary fallback stores.
 
-Dependencies:
-
-- M003, M004, M005, and M006 hard.
+Hard dependencies: none beyond stable M001–M004 interfaces.
 
 Exit conditions:
 
-- matrix-driven protocol evidence covers every field and type;
-- negative, concurrent, restart, corruption, cancellation, and resource-bound tests pass;
-- static guards prevent extension and frontend coupling;
-- documentation distinguishes contract and runtime completeness;
-- independent closure finds no unresolved high/medium defect.
+- enabled production state cannot contain fakes;
+- no production fallback-to-fake path;
+- shared tunnel object identity is proven;
+- store/query errors remain explicit;
+- restart and fail-closed production tests pass;
+- no high/medium finding remains in this boundary.
 
-## 8. Cross-cutting requirements
+Implementation plan:
+
+- `plans/implementation/i2pcontrol-proposal-170/008-production-composition-and-durable-state-integrity.md`
+
+### Milestone 009 — RouterInfo availability and truthfulness
+
+Class: invariant / capability corrective pass
+
+Objective:
+
+- create an exact selector source/availability map;
+- distinguish unavailable, failure, absence, and real zero/empty state;
+- make control interfaces fallible/nullable as required;
+- eliminate all fabricated production defaults;
+- establish stable grouped snapshot interfaces for M010.
+
+Hard dependency: M008 closed.
+
+Exit conditions:
+
+- every selector has one source and unavailable rule;
+- production defaults are removed;
+- requested unavailable non-null selectors return explicit compatible errors;
+- real zero/empty remains successful;
+- only requested keys appear;
+- no high/medium finding remains in the truthfulness boundary.
+
+Implementation plan:
+
+- `plans/implementation/i2pcontrol-proposal-170/009-router-info-availability-and-truthfulness.md`
+
+### Milestone 010 — Bounded core router inspection
+
+Class: capability / infrastructure corrective pass
+
+Objective:
+
+- add neutral bounded read-only core snapshots for transport, tunnels, NetDB, peers, bans, limits, and peer RouterInfo where Emissary has canonical state;
+- map them through M009 without changing protocol handlers;
+- retain explicit unavailable behavior for nonexistent/unsafe semantics rather than inventing values.
+
+Hard dependency: M009 closed.
+
+Exit conditions:
+
+- real nonzero/current core state is proven through production adapter and listener tests;
+- source loss produces errors rather than defaults;
+- lists are bounded and not truncated;
+- no private material or mutable authority escapes;
+- no router behavior changes;
+- M005 can pass independent reconsideration.
+
+Implementation plan:
+
+- `plans/implementation/i2pcontrol-proposal-170/010-bounded-core-router-inspection.md`
+
+### Milestone 011 — ClientServicesInfo live state
+
+Class: capability corrective pass
+
+Objective:
+
+- make I2PTunnel inventory current after every successful mutation;
+- report proxy/I2CP/SAM enabled only from actual active listener state;
+- add bounded current SAM session inspection;
+- distinguish unavailable source from disabled service;
+- preserve passive observation and exact BOB/stub behavior.
+
+Hard dependencies: M008 and M009 closed.
+
+Exit conditions:
+
+- cross-method tunnel mutations are immediately visible;
+- actual listener/session transitions are proven;
+- active SAM sessions are not hard-coded empty;
+- missing observers do not become disabled success;
+- no lifecycle authority or scope creep;
+- M006 can pass independent reconsideration.
+
+Implementation plan:
+
+- `plans/implementation/i2pcontrol-proposal-170/011-client-services-live-state.md`
+
+### Milestone 012 — Real TLS and request resource hardening
+
+Class: security / invariant corrective pass
+
+Objective:
+
+- use the TLS acceptor in the actual serving path;
+- reject plaintext before JSON-RPC;
+- enforce body/connection/handshake/request limits before unbounded work;
+- define parser policy;
+- replace tautological adversarial tests with exact production-listener evidence.
+
+Dependencies: M008/M009 interfaces stable; may run in parallel with M010/M011 after M009.
+
+Exit conditions:
+
+- real TLS client succeeds and plaintext fails;
+- body limits apply before full buffering;
+- slow handshake/body and concurrency are bounded;
+- permits/resources restore on every path;
+- no tautological security/resource test remains;
+- no high/medium security finding remains.
+
+Implementation plan:
+
+- `plans/implementation/i2pcontrol-proposal-170/012-real-tls-and-request-resource-hardening.md`
+
+### Milestone 013 — Production conformance and independent reclosure
+
+Class: invariant / verification / closure
+
+Objective:
+
+Independently review the frozen integration head and determine whether exact Proposal 170 completion is supportable through real TLS, production composition, durable stores, real/explicitly unavailable inspection, live service state, restart, concurrency, cancellation, corruption, and resource evidence.
+
+Hard dependencies: M010, M011, and M012 closed; M001–M004 revalidated.
+
+Exit conditions:
+
+- complete requirement-to-evidence matrix;
+- actual production-path tests for every method family;
+- all original post-closure defects have regression evidence;
+- reviewer is distinct from final implementation agent;
+- no unresolved high/medium finding;
+- roadmap/registry closure occurs only after the M013 closure record is accepted.
+
+Implementation plan:
+
+- `plans/implementation/i2pcontrol-proposal-170/013-production-conformance-and-independent-reclosure.md`
+
+## 10. Cross-cutting requirements
 
 ### Storage and migration
 
@@ -369,23 +410,26 @@ Exit conditions:
 - deterministic serialization;
 - invalid new state cannot replace valid old state;
 - unsupported and externally managed state remains explicit;
-- no unreviewed migration of existing startup configuration.
+- no unreviewed migration of existing startup configuration;
+- no production fallback to fake/transient storage.
 
 ### Protocol and compatibility
 
 - exact Proposal 170 and base I2PControl behavior;
 - no aliases, extension fields, extra statuses, or alternate envelopes;
 - request IDs and selector filtering preserved;
+- unavailable/error semantics use existing compatible envelopes;
 - fixtures record compatibility assumptions.
 
 ### Security and authorization
 
+- actual TLS serving;
 - secure tokens and credential comparison;
 - no token/private-key leakage;
 - loopback-safe defaults;
-- body, collection, nesting, and work limits;
+- connection, body, collection, nesting, task, and work limits;
 - confined persistence paths;
-- unauthorized requests fail before sensitive inspection or mutation.
+- unauthorized requests fail before protected inspection or mutation.
 
 ### Concurrency, cancellation, and recovery
 
@@ -393,65 +437,65 @@ Exit conditions:
 - concurrent mutation is serialized or conflict-safe;
 - partial writes recover deterministically;
 - snapshot collection is bounded and does not deadlock router tasks;
-- backend start/stop races cannot create duplicate or orphaned tasks;
-- unsupported backends allocate no runtime resource.
+- no cross-subsystem locks held together;
+- unsupported backends allocate no runtime resource;
+- stale service observers cannot overwrite current generations.
 
-### Observability and audit
+### Observability and evidence
 
-- bounded log retrieval;
-- sanitized operation failures;
-- useful startup/listener diagnostics;
+- bounded, sanitized log retrieval;
+- useful startup/listener diagnostics that describe actual behavior;
 - no frontend event consumption;
-- closure records contain actual command output and limitations.
+- closure records contain actual command output, failures, skipped commands, and limitations;
+- static guards supplement rather than replace behavioral tests;
+- no tautological assertions count as evidence.
 
-### Performance and resource use
+## 11. Verification strategy
 
-- request limits precede expensive deserialization or snapshot construction;
-- peer/RouterInfo/log result construction is bounded;
-- polling does not materially affect router progress;
-- persistence does not block async runtime workers with unbounded filesystem work.
+Verification proceeds at six levels:
 
-### Documentation and operations
+1. unit tests for DTOs, exact keys/types, auth, validation, availability, status mapping, and persistence;
+2. handler tests against explicitly configured test controls;
+3. production adapter tests against real/sentinel core owners and shared stores;
+4. real TLS listener integration tests with authenticated JSON-RPC requests;
+5. restart, corruption, concurrency, cancellation, source-loss, and resource-limit tests;
+6. matrix-driven end-to-end conformance and independent closure review.
 
-- configuration and authentication instructions;
-- exact support matrix;
-- explicit runtime-stub disclosure;
-- recovery behavior for invalid state;
-- no frontend documentation implying controls exist.
+Every closure must distinguish tests run from tests planned, skipped, failed, or unavailable.
 
-## 9. Verification strategy
+## 12. Risks and decision points
 
-Verification proceeds at five levels:
+- Some Proposal RouterInfo fields may describe Java-I2P-specific semantics with no meaningful Emissary equivalent. They must remain explicit compatible unavailable/error behavior unless an accepted ADR defines a truthful mapping.
+- Full peer/session collections may exceed safe bounds. Do not silently truncate or invent pagination.
+- Core inspection must not expose mutable subsystem authority or private material.
+- Actual TLS serving may require one narrowly feature-gated server dependency or lower-level Hyper integration; the choice must remain confined to `emissary-cli`.
+- ClientServicesInfo SAM schema must be reconciled against the external contract before exposing session details.
+- Existing startup-managed tunnels remain observable but not silently controllable.
 
-1. unit tests for DTOs, exact keys/types, auth, validation, status mapping, and persistence;
-2. handler tests against fake control-plane implementations;
-3. HTTP listener integration tests with real JSON-RPC requests;
-4. restart, corruption, concurrency, cancellation, and resource-limit tests;
-5. matrix-driven end-to-end conformance and independent closure review.
+## 13. Completion definition
 
-Every milestone closure must distinguish tests run from tests planned or unavailable.
+The subsystem closes only when M013 independently confirms the exact completion definition in `plans/000-long-term-specification.md` and verifies that:
 
-## 10. Risks and decision points
+- unsupported tunnel data planes remain explicit deferred work;
+- no frontend/runtime-resolver/router-behavior scope entered the workstream;
+- production state is truthful and fail-closed;
+- actual TLS and resource bounds are proven;
+- no high/medium defect remains.
 
-- Base I2PControl version/auth details may expose ambiguities requiring a compatibility-focused ADR.
-- Exact Proposal 170 RouterInfo fields may require several core inspection adapters; each must remain read-only and bounded.
-- Existing startup-managed tunnel state may not be fully observable; unobservable control must fail rather than fabricate.
-- Preserving all future tunnel options can tempt untyped storage. The domain should type known fields while retaining exact lossless representation.
-- Proposal 170 examples may conflict with established JSON-RPC envelopes; base protocol compatibility takes precedence and must be documented.
-- Binding/TLS defaults require careful compatibility and security review during M001.
+## 14. Milestone status
 
-## 11. Completion definition
-
-The subsystem closes only when the exact completion definition in `plans/000-long-term-specification.md` is demonstrably true and the closure record confirms no deferred tunnel implementation, frontend work, or router behavior change entered the workstream.
-
-## 12. Milestone status
-
-| Milestone | Status | Implementation plan | Closure record | Blockers |
+| Milestone | Status | Implementation plan | Closure record / corrective owner | Blockers |
 |---|---|---|---|---|
-| 001 | closed | `plans/implementation/i2pcontrol-proposal-170/001-contract-matrix-and-i2pcontrol-foundation.md` | `plans/closure/i2pcontrol-proposal-170/001-closure.md` | — |
-| 002 | closed | `plans/implementation/i2pcontrol-proposal-170/002-control-plane-domain-and-persistence.md` | `plans/closure/i2pcontrol-proposal-170/002-closure.md` | — |
-| 003 | closed | `plans/implementation/i2pcontrol-proposal-170/003-address-book-administrative-api.md` | `plans/closure/i2pcontrol-proposal-170/003-closure.md` | — |
-| 004 | closed | `plans/implementation/i2pcontrol-proposal-170/004-tunnel-manager-contract-and-stubs.md` | `plans/closure/i2pcontrol-proposal-170/004-closure.md` | — |
-| 005 | closed | `plans/implementation/i2pcontrol-proposal-170/005-router-info-inspection.md` | `plans/closure/i2pcontrol-proposal-170/005-closure.md` | — |
-| 006 | closed | `plans/implementation/i2pcontrol-proposal-170/006-client-services-info.md` | `plans/closure/i2pcontrol-proposal-170/006-closure.md` | — |
-| 007 | closed | `plans/implementation/i2pcontrol-proposal-170/007-conformance-hardening-and-strict-closure.md` | `plans/closure/i2pcontrol-proposal-170/007-closure.md` | — |
+| 001 | closed (historical; revalidate at M013) | `plans/implementation/i2pcontrol-proposal-170/001-contract-matrix-and-i2pcontrol-foundation.md` | `plans/closure/i2pcontrol-proposal-170/001-closure.md`; TLS correction M012 | — |
+| 002 | closed (historical; revalidate at M013) | `plans/implementation/i2pcontrol-proposal-170/002-control-plane-domain-and-persistence.md` | `plans/closure/i2pcontrol-proposal-170/002-closure.md`; composition correction M008 | — |
+| 003 | closed (historical; revalidate at M013) | `plans/implementation/i2pcontrol-proposal-170/003-address-book-administrative-api.md` | `plans/closure/i2pcontrol-proposal-170/003-closure.md` | — |
+| 004 | closed (historical; revalidate at M013) | `plans/implementation/i2pcontrol-proposal-170/004-tunnel-manager-contract-and-stubs.md` | `plans/closure/i2pcontrol-proposal-170/004-closure.md` | — |
+| 005 | corrective pass required | `plans/implementation/i2pcontrol-proposal-170/005-router-info-inspection.md` | M008–M010 | Fabricated/default production state and missing core inspection |
+| 006 | corrective pass required | `plans/implementation/i2pcontrol-proposal-170/006-client-services-info.md` | M011 | Startup-stale tunnel inventory and empty SAM sessions |
+| 007 | corrective pass required / superseded | `plans/implementation/i2pcontrol-proposal-170/007-conformance-hardening-and-strict-closure.md` | M012–M013 | Invalid security evidence and non-independent closure |
+| 008 | ready | `plans/implementation/i2pcontrol-proposal-170/008-production-composition-and-durable-state-integrity.md` | pending | — |
+| 009 | blocked | `plans/implementation/i2pcontrol-proposal-170/009-router-info-availability-and-truthfulness.md` | pending | M008 strict closure |
+| 010 | blocked | `plans/implementation/i2pcontrol-proposal-170/010-bounded-core-router-inspection.md` | pending | M009 strict closure |
+| 011 | blocked | `plans/implementation/i2pcontrol-proposal-170/011-client-services-live-state.md` | pending | M008 and M009 strict closure |
+| 012 | blocked | `plans/implementation/i2pcontrol-proposal-170/012-real-tls-and-request-resource-hardening.md` | pending | M008/M009 interfaces stable; activate after M009 |
+| 013 | blocked | `plans/implementation/i2pcontrol-proposal-170/013-production-conformance-and-independent-reclosure.md` | pending | M010, M011, M012 strict closure and M001–M004 revalidation |
