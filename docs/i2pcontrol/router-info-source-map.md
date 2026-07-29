@@ -38,7 +38,7 @@ Emissary source, snapshot group, bounds, availability, and M010 work-package.
 |---|---|---|---|---|---|---|---|
 | `i2p.router.net.bw.inbound` | string | non-null | `event-metric` | — | implemented | error | — |
 | `i2p.router.net.bw.outbound` | string | non-null | `event-metric` | — | implemented | error | — |
-| `i2p.router.clock.skew` | integer/null | nullable | `unsupported-inspection` | — | unavailable | null (protocol-permitted) | M010 |
+| `i2p.router.clock.skew` | integer/null | nullable | `retained` | — | implemented (no estimate) | null (protocol-permitted) | — |
 
 ### UDP transport group
 
@@ -151,12 +151,12 @@ Emissary source, snapshot group, bounds, availability, and M010 work-package.
 | Wire key | JSON type | Nullability | Source | Bound | Current availability | Unavailable behavior | M010 owner |
 |---|---|---|---|---|---|---|---|
 | `i2p.router.tunnels.participating` | integer | non-null | `event-metric` | — | implemented | — | — |
-| `i2p.router.tunnels.exploratoryIn` | integer | non-null | `unsupported-inspection` | — | unavailable (returns 0) | error | M010 |
-| `i2p.router.tunnels.exploratoryOut` | integer | non-null | `unsupported-inspection` | — | unavailable (returns 0) | error | M010 |
-| `i2p.router.tunnels.clientIn` | integer | non-null | `unsupported-inspection` | — | unavailable (returns 0) | error | M010 |
-| `i2p.router.tunnels.clientOut` | integer | non-null | `unsupported-inspection` | — | unavailable (returns 0) | error | M010 |
+| `i2p.router.tunnels.exploratoryIn` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
+| `i2p.router.tunnels.exploratoryOut` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
+| `i2p.router.tunnels.clientIn` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
+| `i2p.router.tunnels.clientOut` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
 | `i2p.router.tunnels.configured` | integer | non-null | `administrative-store` | — | implemented | error | — |
-| `i2p.router.tunnels.queue` | integer | non-null | `unsupported-inspection` | — | unavailable (returns 0) | error | M010 |
+| `i2p.router.tunnels.queue` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
 
 ### I2PTunnel group
 

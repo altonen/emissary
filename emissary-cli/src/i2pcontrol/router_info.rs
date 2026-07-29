@@ -610,6 +610,12 @@ impl FakeRouterInfoControl {
         inner.network = Ok(network);
     }
 
+    /// Set clock skew for tests.
+    pub fn set_clock_skew(&self, skew: ClockSkew) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.clock_skew = Ok(skew);
+    }
+
     /// Set transport bytes for tests.
     pub fn set_transport_bytes(&self, bytes: TransportBytes) {
         let mut inner = self.inner.lock().unwrap();

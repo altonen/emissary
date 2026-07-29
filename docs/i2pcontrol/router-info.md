@@ -18,19 +18,19 @@ All 121 Proposal 170 RouterInfo selectors are registered in `rpc.rs` and verifie
 |---|---|---|---|
 | Identity/static | `i2p.router.identity`, `i2p.router.version`, `i2p.router.uptime` | 3 | Startup-retained values |
 | Router news | `i2p.router.news` | 1 | Empty string (no news subsystem) |
-| Clock skew | `i2p.router.clock.skew` | 1 | Fake (requires core integration) |
-| Network status | `i2p.router.net.bw.*` | 2 | Fake (requires core integration) |
-| Share ratio | `i2p.router.shareRatio` | 1 | Fake (requires config integration) |
-| Configured BW | `i2p.router.configuredbw.*` | 2 | Fake (requires config integration) |
-| UDP transport | `i2p.router.udp.*` | 7 | Fake (requires core integration) |
-| TCP transport | `i2p.router.tcp.*` | 7 | Fake (requires core integration) |
-| NetDB | `i2p.router.netdb.*` | 10 | Fake (requires core integration) |
+| Clock skew | `i2p.router.clock.skew` | 1 | Retained (no estimate yet) |
+| Network status | `i2p.router.net.bw.*` | 2 | EventMetrics firewall status |
+| Share ratio | `i2p.router.shareRatio` | 1 | Retained configuration |
+| Configured BW | `i2p.router.configuredbw.*` | 2 | Retained configuration |
+| UDP transport | `i2p.router.udp.*` | 7 | EventMetrics (active, firewalled); unsupported-inspection (peer counts) |
+| TCP transport | `i2p.router.tcp.*` | 7 | unsupported-inspection |
+| NetDB | `i2p.router.netdb.*` | 10 | unsupported-inspection |
 | Bandwidth | `i2p.router.bw.*` | 14 | MetricsSnapshot + RollingWindow |
-| Tunnels | `i2p.router.tunnels.*` | 7 | Fake (requires core integration) |
-| I2PTunnel | `i2p.router.iptunnels` | 1 | Fake (requires M004 integration) |
-| Peers | `i2p.router.peers.*` | 10 | Fake (requires core integration) |
+| Tunnels | `i2p.router.tunnels.*` | 7 | MetricsSnapshot + TunnelManager (participating, configured); unsupported-inspection (exploratory, client, queue) |
+| I2PTunnel | `i2p.router.iptunnels` | 1 | TunnelManager administrative store |
+| Peers | `i2p.router.peers.*` | 10 | unsupported-inspection |
 | Logs | `i2p.router.log.*` | 2 | LogRing (tracing layer) |
-| Address book | `i2p.router.addressbook.*` | 6 | M003 adapter |
+| Address book | `i2p.router.addressbook.*` | 6 | AddressBook administrative store |
 
 ### Selector behavior
 

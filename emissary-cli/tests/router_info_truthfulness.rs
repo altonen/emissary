@@ -407,26 +407,42 @@ async fn no_implementation_specific_status_field() {
 }
 
 #[tokio::test]
-async fn nullable_clock_skew_serializes_exactly() {
+async fn clock_skew_none_serializes_as_null() {
     let ri = FakeRouterInfoControl::new();
+    ri.set_clock_skew(ClockSkew {
+        skew_seconds: None,
+    });
     let state = test_state(ri);
     let req = test_request(serde_json::json!({"i2p.router.clock.skew": true}));
     let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
-    // clock_skew defaults to Unavailable in FakeRouterInfoControl
-    assert!(resp.get("error").is_some());
+    let result = resp["result"].as_object().unwrap();
+    assert!(result["i2p.router.clock.skew"].is_null());
 }
 
 #[tokio::test]
-async fn clock_skew_none_serializes_as_null() {
+async fn clock_skew_zero_serializes_as_integer() {
     let ri = FakeRouterInfoControl::new();
-    // Set clock_skew to Ok with skew_seconds: None (unknown)
-    // FakeRouterInfoControl doesn't have a set_clock_skew, so test with
-    // a value that has Some(0) to verify serialization
+    ri.set_clock_skew(ClockSkew {
+        skew_seconds: Some(0),
+    });
     let state = test_state(ri);
-    // Default fake returns Unavailable for clock_skew — error path
     let req = test_request(serde_json::json!({"i2p.router.clock.skew": true}));
     let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
-    assert!(resp.get("error").is_some());
+    let result = resp["result"].as_object().unwrap();
+    assert_eq!(result["i2p.router.clock.skew"], 0);
+}
+
+#[tokio::test]
+async fn clock_skew_positive_serializes_as_integer() {
+    let ri = FakeRouterInfoControl::new();
+    ri.set_clock_skew(ClockSkew {
+        skew_seconds: Some(42),
+    });
+    let state = test_state(ri);
+    let req = test_request(serde_json::json!({"i2p.router.clock.skew": true}));
+    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let result = resp["result"].as_object().unwrap();
+    assert_eq!(result["i2p.router.clock.skew"], 42);
 }
 
 #[tokio::test]
