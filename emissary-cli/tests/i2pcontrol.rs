@@ -263,10 +263,9 @@ fn method_constants_correct() {
 #[test]
 fn fake_control_plane() {
     let cp = emissary_cli::i2pcontrol::control_plane::FakeControlPlane::new();
-    assert!(cp.tunnel_list().unwrap().is_empty());
-    assert!(cp.tunnel_get("test").unwrap().is_none());
-    assert!(!cp.is_tunnel_type_supported("client"));
     assert_eq!(cp.router_version(), "Emissary 0.4.0");
+    assert!(cp.router_identity().unwrap().is_empty());
+    assert_eq!(cp.router_uptime_ms(), 0);
 }
 
 /// TLS managed certificate generates and loads.

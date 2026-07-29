@@ -161,18 +161,6 @@ impl ProductionControlPlane {
 }
 
 impl ControlPlane for ProductionControlPlane {
-    fn tunnel_list(&self) -> Result<std::collections::HashMap<String, String>, String> {
-        Ok(std::collections::HashMap::new())
-    }
-
-    fn tunnel_get(&self, _name: &str) -> Result<Option<serde_json::Value>, String> {
-        Ok(None)
-    }
-
-    fn is_tunnel_type_supported(&self, _tunnel_type: &str) -> bool {
-        false
-    }
-
     fn router_identity(&self) -> Result<String, String> {
         Ok(self.router_id_b64.clone())
     }
@@ -500,7 +488,7 @@ pub struct ProductionRouterInfoControl {
     configured_bandwidth_out: u64,
     metrics: Arc<dyn EventMetrics>,
     log_ring: Arc<LogRing>,
-    tunnel_manager: Arc<ProductionTunnelManagerControl>,
+    tunnel_manager: Arc<dyn TunnelManagerControl>,
 }
 
 impl ProductionRouterInfoControl {
@@ -514,7 +502,7 @@ impl ProductionRouterInfoControl {
         configured_bandwidth_out: u64,
         metrics: Arc<dyn EventMetrics>,
         log_ring: Arc<LogRing>,
-        tunnel_manager: Arc<ProductionTunnelManagerControl>,
+        tunnel_manager: Arc<dyn TunnelManagerControl>,
     ) -> Self {
         Self {
             router_id_b64,

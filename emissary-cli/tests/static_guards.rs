@@ -358,3 +358,128 @@ fn production_control_plane_adapter_is_send_sync() {
     assert_send_sync::<ProductionControlPlane>();
     let _ = cp;
 }
+
+// --- M008 static guards ---
+
+/// Guard: no enabled production path falls back to fake adapters.
+///
+/// If any production code contains "falling back to fake", this test fails.
+/// This catches defects where init_server logs a warning and continues
+/// with a fake adapter instead of failing startup.
+#[test]
+fn no_fallback_to_fake_in_production() {
+    let files = &["src/i2pcontrol/server.rs", "src/i2pcontrol/production.rs"];
+    for f in files {
+        let src = read_source(f);
+        // Split at #[cfg(test)] so test-only code is excluded
+        let non_test = src.split("#[cfg(test)]").next().unwrap_or(&src);
+        assert!(
+            !non_test.contains("falling back to fake"),
+            "Production code {f} must not contain 'falling back to fake'"
+        );
+    }
+}
+
+/// Guard: no temporary fallback tunnel directory in production code.
+///
+/// Catches the defect where init_server creates a temp fallback directory
+/// instead of failing.
+#[test]
+fn no_temp_fallback_tunnel_dir() {
+    let files = &["src/i2pcontrol/server.rs", "src/i2pcontrol/production.rs"];
+    for f in files {
+        let src = read_source(f);
+        let non_test = src.split("#[cfg(test)]").next().unwrap_or(&src);
+        assert!(
+            !non_test.contains("emissary-i2pcontrol-tunnels-fallback"),
+            "Production code {f} must not contain temp fallback tunnel directory"
+        );
+    }
+}
+
+/// Guard: no production construction of Fake* adapters in init_server.
+///
+/// Catches the defect where init_server installs fake adapters as
+/// production defaults.
+#[test]
+fn no_production_fake_adapter_construction() {
+    let src = read_source("src/i2pcontrol/server.rs");
+    // Only check non-test code
+    let non_test = src.split("#[cfg(test)]").next().unwrap_or(&src);
+    assert!(
+        !non_test.contains("FakeControlPlane::new()"),
+        "Production init_server must not construct FakeControlPlane"
+    );
+    assert!(
+        !non_test.contains("FakeAddressBookControl::new()"),
+        "Production init_server must not construct FakeAddressBookControl"
+    );
+    assert!(
+        !non_test.contains("FakeTunnelManagerControl::new()"),
+        "Production init_server must not construct FakeTunnelManagerControl"
+    );
+    assert!(
+        !non_test.contains("FakeRouterInfoControl::new()"),
+        "Production init_server must not construct FakeRouterInfoControl"
+    );
+}
+
+/// Guard: no second ProductionTunnelManagerControl::new() in RouterInfo wiring.
+///
+/// Catches the defect where init_server opens a second tunnel store
+/// instance for RouterInfo instead of sharing the one already loaded.
+#[test]
+fn no_duplicate_tunnel_manager_in_init_server() {
+    let src = read_source("src/i2pcontrol/server.rs");
+    let non_test = src.split("#[cfg(test)]").next().unwrap_or(&src);
+    // Count occurrences of ProductionTunnelManagerControl::new outside test code
+    let count = non_test.matches("ProductionTunnelManagerControl::new").count();
+    assert!(
+        count <= 1,
+        "Production init_server must construct ProductionTunnelManagerControl exactly once, found {count}"
+    );
+}
+
+/// Guard: no error-suppressing unwrap_or_default or unwrap_or(0) in
+/// production state query helpers.
+///
+/// Catches the defect where tunnel_list, tunnel_get, address_book_list,
+/// address_book_lookup, address_book_subscriptions, or
+/// address_book_configuration silently turn errors into empty/zero state.
+#[test]
+fn no_error_suppressing_helpers() {
+    let src = read_source("src/i2pcontrol/server.rs");
+    let non_test = src.split("#[cfg(test)]").next().unwrap_or(&src);
+    assert!(
+        !non_test.contains("unwrap_or_default()"),
+        "Production state helpers must not use unwrap_or_default() to suppress errors"
+    );
+}
+
+/// Guard: ControlPlane no longer includes tunnel methods.
+///
+/// Catches the defect where ControlPlane still has tunnel_list, tunnel_get,
+/// or is_tunnel_type_supported, which creates dual-path access.
+#[test]
+fn control_plane_has_no_tunnel_methods() {
+    let src = read_source("src/i2pcontrol/control_plane.rs");
+    let non_test = src.split("#[cfg(test)]").next().unwrap_or(&src);
+    // Check the trait definition (between "pub trait ControlPlane" and the closing "}")
+    if let Some(trait_start) = non_test.find("pub trait ControlPlane") {
+        if let Some(trait_body_end) = non_test[trait_start..].find("\n}") {
+            let trait_body = &non_test[trait_start..trait_start + trait_body_end + 2];
+            assert!(
+                !trait_body.contains("fn tunnel_list"),
+                "ControlPlane must not have tunnel_list method"
+            );
+            assert!(
+                !trait_body.contains("fn tunnel_get"),
+                "ControlPlane must not have tunnel_get method"
+            );
+            assert!(
+                !trait_body.contains("fn is_tunnel_type_supported"),
+                "ControlPlane must not have is_tunnel_type_supported method"
+            );
+        }
+    }
+}

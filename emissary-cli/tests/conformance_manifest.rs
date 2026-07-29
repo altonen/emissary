@@ -55,14 +55,54 @@ struct MethodRow {
 }
 
 const METHOD_MANIFEST: &[MethodRow] = &[
-    MethodRow { name: methods::AUTHENTICATE, auth_required: false, owner_milestone: "M001", fixture_id: "fixture_authenticate" },
-    MethodRow { name: methods::GET_KEYS, auth_required: true, owner_milestone: "M002", fixture_id: "fixture_get_keys" },
-    MethodRow { name: methods::SET_CONFIG, auth_required: true, owner_milestone: "M003", fixture_id: "fixture_set_config" },
-    MethodRow { name: methods::SET_SUBSCRIPTIONS, auth_required: true, owner_milestone: "M003", fixture_id: "fixture_set_subscriptions" },
-    MethodRow { name: methods::ADDRESS_BOOK, auth_required: true, owner_milestone: "M003", fixture_id: "fixture_address_book" },
-    MethodRow { name: methods::TUNNEL_MANAGER, auth_required: true, owner_milestone: "M004", fixture_id: "fixture_tunnel_manager" },
-    MethodRow { name: methods::ROUTER_INFO, auth_required: true, owner_milestone: "M005", fixture_id: "fixture_router_info" },
-    MethodRow { name: methods::CLIENT_SERVICES_INFO, auth_required: true, owner_milestone: "M006", fixture_id: "fixture_client_services_info" },
+    MethodRow {
+        name: methods::AUTHENTICATE,
+        auth_required: false,
+        owner_milestone: "M001",
+        fixture_id: "fixture_authenticate",
+    },
+    MethodRow {
+        name: methods::GET_KEYS,
+        auth_required: true,
+        owner_milestone: "M002",
+        fixture_id: "fixture_get_keys",
+    },
+    MethodRow {
+        name: methods::SET_CONFIG,
+        auth_required: true,
+        owner_milestone: "M003",
+        fixture_id: "fixture_set_config",
+    },
+    MethodRow {
+        name: methods::SET_SUBSCRIPTIONS,
+        auth_required: true,
+        owner_milestone: "M003",
+        fixture_id: "fixture_set_subscriptions",
+    },
+    MethodRow {
+        name: methods::ADDRESS_BOOK,
+        auth_required: true,
+        owner_milestone: "M003",
+        fixture_id: "fixture_address_book",
+    },
+    MethodRow {
+        name: methods::TUNNEL_MANAGER,
+        auth_required: true,
+        owner_milestone: "M004",
+        fixture_id: "fixture_tunnel_manager",
+    },
+    MethodRow {
+        name: methods::ROUTER_INFO,
+        auth_required: true,
+        owner_milestone: "M005",
+        fixture_id: "fixture_router_info",
+    },
+    MethodRow {
+        name: methods::CLIENT_SERVICES_INFO,
+        auth_required: true,
+        owner_milestone: "M006",
+        fixture_id: "fixture_client_services_info",
+    },
 ];
 
 #[test]
@@ -79,12 +119,19 @@ fn method_manifest_matches_production_constants() {
         methods::CLIENT_SERVICES_INFO,
     ];
     let production_set: HashSet<&str> = production_methods.iter().copied().collect();
-    assert_eq!(manifest_names, production_set, "method manifest must exactly match production constants");
+    assert_eq!(
+        manifest_names, production_set,
+        "method manifest must exactly match production constants"
+    );
 }
 
 #[test]
 fn method_manifest_count() {
-    assert_eq!(METHOD_MANIFEST.len(), 8, "Proposal 170 defines exactly 8 methods");
+    assert_eq!(
+        METHOD_MANIFEST.len(),
+        8,
+        "Proposal 170 defines exactly 8 methods"
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -98,36 +145,95 @@ struct TunnelTypeRow {
 }
 
 const TUNNEL_TYPE_MANIFEST: &[TunnelTypeRow] = &[
-    TunnelTypeRow { name: tunnel_types::CLIENT, has_backend: true, owner_milestone: "M004" },
-    TunnelTypeRow { name: tunnel_types::HTTP_CLIENT, has_backend: true, owner_milestone: "M004" },
-    TunnelTypeRow { name: tunnel_types::IRC_CLIENT, has_backend: true, owner_milestone: "M004" },
-    TunnelTypeRow { name: tunnel_types::SOCKS, has_backend: true, owner_milestone: "M004" },
-    TunnelTypeRow { name: tunnel_types::SOCKS_IRC, has_backend: true, owner_milestone: "M004" },
-    TunnelTypeRow { name: tunnel_types::CONNECT_CLIENT, has_backend: true, owner_milestone: "M004" },
-    TunnelTypeRow { name: tunnel_types::STREAMR_CLIENT, has_backend: true, owner_milestone: "M004" },
-    TunnelTypeRow { name: tunnel_types::SERVER, has_backend: true, owner_milestone: "M004" },
-    TunnelTypeRow { name: tunnel_types::HTTP_SERVER, has_backend: true, owner_milestone: "M004" },
-    TunnelTypeRow { name: tunnel_types::HTTP_BIDIR_SERVER, has_backend: true, owner_milestone: "M004" },
-    TunnelTypeRow { name: tunnel_types::IRC_SERVER, has_backend: true, owner_milestone: "M004" },
-    TunnelTypeRow { name: tunnel_types::STREAMR_SERVER, has_backend: true, owner_milestone: "M004" },
+    TunnelTypeRow {
+        name: tunnel_types::CLIENT,
+        has_backend: true,
+        owner_milestone: "M004",
+    },
+    TunnelTypeRow {
+        name: tunnel_types::HTTP_CLIENT,
+        has_backend: true,
+        owner_milestone: "M004",
+    },
+    TunnelTypeRow {
+        name: tunnel_types::IRC_CLIENT,
+        has_backend: true,
+        owner_milestone: "M004",
+    },
+    TunnelTypeRow {
+        name: tunnel_types::SOCKS,
+        has_backend: true,
+        owner_milestone: "M004",
+    },
+    TunnelTypeRow {
+        name: tunnel_types::SOCKS_IRC,
+        has_backend: true,
+        owner_milestone: "M004",
+    },
+    TunnelTypeRow {
+        name: tunnel_types::CONNECT_CLIENT,
+        has_backend: true,
+        owner_milestone: "M004",
+    },
+    TunnelTypeRow {
+        name: tunnel_types::STREAMR_CLIENT,
+        has_backend: true,
+        owner_milestone: "M004",
+    },
+    TunnelTypeRow {
+        name: tunnel_types::SERVER,
+        has_backend: true,
+        owner_milestone: "M004",
+    },
+    TunnelTypeRow {
+        name: tunnel_types::HTTP_SERVER,
+        has_backend: true,
+        owner_milestone: "M004",
+    },
+    TunnelTypeRow {
+        name: tunnel_types::HTTP_BIDIR_SERVER,
+        has_backend: true,
+        owner_milestone: "M004",
+    },
+    TunnelTypeRow {
+        name: tunnel_types::IRC_SERVER,
+        has_backend: true,
+        owner_milestone: "M004",
+    },
+    TunnelTypeRow {
+        name: tunnel_types::STREAMR_SERVER,
+        has_backend: true,
+        owner_milestone: "M004",
+    },
 ];
 
 #[test]
 fn tunnel_type_manifest_matches_production() {
     let manifest_names: HashSet<&str> = TUNNEL_TYPE_MANIFEST.iter().map(|r| r.name).collect();
     let production_set: HashSet<&str> = tunnel_types::ALL.iter().copied().collect();
-    assert_eq!(manifest_names, production_set, "tunnel type manifest must exactly match production ALL");
+    assert_eq!(
+        manifest_names, production_set,
+        "tunnel type manifest must exactly match production ALL"
+    );
 }
 
 #[test]
 fn tunnel_type_manifest_count() {
-    assert_eq!(TUNNEL_TYPE_MANIFEST.len(), 12, "Proposal 170 defines exactly 12 tunnel types");
+    assert_eq!(
+        TUNNEL_TYPE_MANIFEST.len(),
+        12,
+        "Proposal 170 defines exactly 12 tunnel types"
+    );
 }
 
 #[test]
 fn every_tunnel_type_has_backend() {
     for row in TUNNEL_TYPE_MANIFEST {
-        assert!(row.has_backend, "tunnel type {} must have a backend", row.name);
+        assert!(
+            row.has_backend,
+            "tunnel type {} must have a backend",
+            row.name
+        );
     }
 }
 
@@ -145,7 +251,9 @@ fn default_registry_covers_all_manifest_types() {
             "streamrclient" => emissary_cli::i2pcontrol::domain::tunnel::TunnelType::StreamrClient,
             "server" => emissary_cli::i2pcontrol::domain::tunnel::TunnelType::Server,
             "httpserver" => emissary_cli::i2pcontrol::domain::tunnel::TunnelType::HttpServer,
-            "httpbidirserver" => emissary_cli::i2pcontrol::domain::tunnel::TunnelType::HttpBidirServer,
+            "httpbidirserver" => {
+                emissary_cli::i2pcontrol::domain::tunnel::TunnelType::HttpBidirServer
+            }
             "ircserver" => emissary_cli::i2pcontrol::domain::tunnel::TunnelType::IrcServer,
             "streamrserver" => emissary_cli::i2pcontrol::domain::tunnel::TunnelType::StreamrServer,
             _ => panic!("unknown tunnel type in manifest: {}", row.name),
@@ -164,25 +272,57 @@ struct TunnelActionRow {
 }
 
 const TUNNEL_ACTION_MANIFEST: &[TunnelActionRow] = &[
-    TunnelActionRow { name: tunnel_actions::LIST, owner_milestone: "M004" },
-    TunnelActionRow { name: tunnel_actions::CREATE, owner_milestone: "M004" },
-    TunnelActionRow { name: tunnel_actions::EDIT, owner_milestone: "M004" },
-    TunnelActionRow { name: tunnel_actions::GET, owner_milestone: "M004" },
-    TunnelActionRow { name: tunnel_actions::DELETE, owner_milestone: "M004" },
-    TunnelActionRow { name: tunnel_actions::START, owner_milestone: "M004" },
-    TunnelActionRow { name: tunnel_actions::STOP, owner_milestone: "M004" },
-    TunnelActionRow { name: tunnel_actions::RESTART, owner_milestone: "M004" },
+    TunnelActionRow {
+        name: tunnel_actions::LIST,
+        owner_milestone: "M004",
+    },
+    TunnelActionRow {
+        name: tunnel_actions::CREATE,
+        owner_milestone: "M004",
+    },
+    TunnelActionRow {
+        name: tunnel_actions::EDIT,
+        owner_milestone: "M004",
+    },
+    TunnelActionRow {
+        name: tunnel_actions::GET,
+        owner_milestone: "M004",
+    },
+    TunnelActionRow {
+        name: tunnel_actions::DELETE,
+        owner_milestone: "M004",
+    },
+    TunnelActionRow {
+        name: tunnel_actions::START,
+        owner_milestone: "M004",
+    },
+    TunnelActionRow {
+        name: tunnel_actions::STOP,
+        owner_milestone: "M004",
+    },
+    TunnelActionRow {
+        name: tunnel_actions::RESTART,
+        owner_milestone: "M004",
+    },
 ];
 
 #[test]
 fn tunnel_action_manifest_count() {
-    assert_eq!(TUNNEL_ACTION_MANIFEST.len(), 8, "Proposal 170 defines exactly 8 tunnel actions");
+    assert_eq!(
+        TUNNEL_ACTION_MANIFEST.len(),
+        8,
+        "Proposal 170 defines exactly 8 tunnel actions"
+    );
 }
 
 #[test]
 fn tunnel_action_manifest_unique() {
     let names: HashSet<&str> = TUNNEL_ACTION_MANIFEST.iter().map(|r| r.name).collect();
-    assert_eq!(names.len(), TUNNEL_ACTION_MANIFEST.len(), "tunnel action manifest must have unique names");
+    assert_eq!(
+        names.len(),
+        TUNNEL_ACTION_MANIFEST.len(),
+        "tunnel action manifest must have unique names"
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -195,22 +335,41 @@ struct AddressBookRow {
 }
 
 const ADDRESS_BOOK_MANIFEST: &[AddressBookRow] = &[
-    AddressBookRow { name: address_books::PRIVATE, owner_milestone: "M003" },
-    AddressBookRow { name: address_books::LOCAL, owner_milestone: "M003" },
-    AddressBookRow { name: address_books::ROUTER, owner_milestone: "M003" },
-    AddressBookRow { name: address_books::PUBLISHED, owner_milestone: "M003" },
+    AddressBookRow {
+        name: address_books::PRIVATE,
+        owner_milestone: "M003",
+    },
+    AddressBookRow {
+        name: address_books::LOCAL,
+        owner_milestone: "M003",
+    },
+    AddressBookRow {
+        name: address_books::ROUTER,
+        owner_milestone: "M003",
+    },
+    AddressBookRow {
+        name: address_books::PUBLISHED,
+        owner_milestone: "M003",
+    },
 ];
 
 #[test]
 fn address_book_manifest_matches_production() {
     let manifest_names: HashSet<&str> = ADDRESS_BOOK_MANIFEST.iter().map(|r| r.name).collect();
     let production_set: HashSet<&str> = address_books::ALL.iter().copied().collect();
-    assert_eq!(manifest_names, production_set, "address book manifest must exactly match production ALL");
+    assert_eq!(
+        manifest_names, production_set,
+        "address book manifest must exactly match production ALL"
+    );
 }
 
 #[test]
 fn address_book_manifest_count() {
-    assert_eq!(ADDRESS_BOOK_MANIFEST.len(), 4, "Proposal 170 defines exactly 4 address books");
+    assert_eq!(
+        ADDRESS_BOOK_MANIFEST.len(),
+        4,
+        "Proposal 170 defines exactly 4 address books"
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -223,16 +382,35 @@ struct AddressBookRequestRow {
 }
 
 const ADDRESS_BOOK_REQUEST_MANIFEST: &[AddressBookRequestRow] = &[
-    AddressBookRequestRow { name: address_book_requests::LIST, owner_milestone: "M003" },
-    AddressBookRequestRow { name: address_book_requests::LOOKUP, owner_milestone: "M003" },
-    AddressBookRequestRow { name: address_book_requests::ADD, owner_milestone: "M003" },
-    AddressBookRequestRow { name: address_book_requests::UPDATE, owner_milestone: "M003" },
-    AddressBookRequestRow { name: address_book_requests::DELETE, owner_milestone: "M003" },
+    AddressBookRequestRow {
+        name: address_book_requests::LIST,
+        owner_milestone: "M003",
+    },
+    AddressBookRequestRow {
+        name: address_book_requests::LOOKUP,
+        owner_milestone: "M003",
+    },
+    AddressBookRequestRow {
+        name: address_book_requests::ADD,
+        owner_milestone: "M003",
+    },
+    AddressBookRequestRow {
+        name: address_book_requests::UPDATE,
+        owner_milestone: "M003",
+    },
+    AddressBookRequestRow {
+        name: address_book_requests::DELETE,
+        owner_milestone: "M003",
+    },
 ];
 
 #[test]
 fn address_book_request_manifest_count() {
-    assert_eq!(ADDRESS_BOOK_REQUEST_MANIFEST.len(), 5, "Proposal 170 defines exactly 5 address book request modes");
+    assert_eq!(
+        ADDRESS_BOOK_REQUEST_MANIFEST.len(),
+        5,
+        "Proposal 170 defines exactly 5 address book request modes"
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -245,31 +423,61 @@ struct ClientServicesSelectorRow {
 }
 
 const CLIENT_SERVICES_SELECTOR_MANIFEST: &[ClientServicesSelectorRow] = &[
-    ClientServicesSelectorRow { name: "I2PTunnel", owner_milestone: "M006" },
-    ClientServicesSelectorRow { name: "HTTPProxy", owner_milestone: "M006" },
-    ClientServicesSelectorRow { name: "SOCKS", owner_milestone: "M006" },
-    ClientServicesSelectorRow { name: "SAM", owner_milestone: "M006" },
-    ClientServicesSelectorRow { name: "BOB", owner_milestone: "M006" },
-    ClientServicesSelectorRow { name: "I2CP", owner_milestone: "M006" },
+    ClientServicesSelectorRow {
+        name: "I2PTunnel",
+        owner_milestone: "M006",
+    },
+    ClientServicesSelectorRow {
+        name: "HTTPProxy",
+        owner_milestone: "M006",
+    },
+    ClientServicesSelectorRow {
+        name: "SOCKS",
+        owner_milestone: "M006",
+    },
+    ClientServicesSelectorRow {
+        name: "SAM",
+        owner_milestone: "M006",
+    },
+    ClientServicesSelectorRow {
+        name: "BOB",
+        owner_milestone: "M006",
+    },
+    ClientServicesSelectorRow {
+        name: "I2CP",
+        owner_milestone: "M006",
+    },
 ];
 
 #[test]
 fn client_services_selector_manifest_count() {
-    assert_eq!(CLIENT_SERVICES_SELECTOR_MANIFEST.len(), 6, "Proposal 170 defines exactly 6 ClientServicesInfo selectors");
+    assert_eq!(
+        CLIENT_SERVICES_SELECTOR_MANIFEST.len(),
+        6,
+        "Proposal 170 defines exactly 6 ClientServicesInfo selectors"
+    );
 }
 
 #[test]
 fn client_services_selector_manifest_unique() {
     let names: HashSet<&str> = CLIENT_SERVICES_SELECTOR_MANIFEST.iter().map(|r| r.name).collect();
-    assert_eq!(names.len(), CLIENT_SERVICES_SELECTOR_MANIFEST.len(), "ClientServicesInfo selectors must be unique");
+    assert_eq!(
+        names.len(),
+        CLIENT_SERVICES_SELECTOR_MANIFEST.len(),
+        "ClientServicesInfo selectors must be unique"
+    );
 }
 
 #[test]
 fn client_services_selector_manifest_matches_production() {
-    let manifest_names: HashSet<&str> = CLIENT_SERVICES_SELECTOR_MANIFEST.iter().map(|r| r.name).collect();
+    let manifest_names: HashSet<&str> =
+        CLIENT_SERVICES_SELECTOR_MANIFEST.iter().map(|r| r.name).collect();
     let production_valid = ["I2PTunnel", "HTTPProxy", "SOCKS", "SAM", "BOB", "I2CP"];
     let production_set: HashSet<&str> = production_valid.iter().copied().collect();
-    assert_eq!(manifest_names, production_set, "ClientServicesInfo selector manifest must match production validators");
+    assert_eq!(
+        manifest_names, production_set,
+        "ClientServicesInfo selector manifest must match production validators"
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -278,7 +486,11 @@ fn client_services_selector_manifest_matches_production() {
 
 #[test]
 fn router_info_selector_count() {
-    assert_eq!(rpc::router_info_keys::ALL.len(), 121, "Proposal 170 defines exactly 121 RouterInfo selectors");
+    assert_eq!(
+        rpc::router_info_keys::ALL.len(),
+        121,
+        "Proposal 170 defines exactly 121 RouterInfo selectors"
+    );
 }
 
 #[test]
@@ -291,19 +503,34 @@ fn router_info_selector_partition_integrity() {
     let union: HashSet<&str> = core.union(&ab).copied().collect();
     assert_eq!(all, union, "ALL must equal CORE ∪ ADDRESS_BOOK");
     // CORE ∩ ADDRESS_BOOK = ∅
-    assert!(core.is_disjoint(&ab), "CORE and ADDRESS_BOOK must be disjoint");
+    assert!(
+        core.is_disjoint(&ab),
+        "CORE and ADDRESS_BOOK must be disjoint"
+    );
     // sizes add up
-    assert_eq!(core.len() + ab.len(), 121, "CORE + ADDRESS_BOOK must sum to 121");
+    assert_eq!(
+        core.len() + ab.len(),
+        121,
+        "CORE + ADDRESS_BOOK must sum to 121"
+    );
 }
 
 #[test]
 fn router_info_address_book_selectors_count() {
-    assert_eq!(rpc::router_info_keys::ADDRESS_BOOK_KEYS.len(), 6, "Address book selectors: exactly 6");
+    assert_eq!(
+        rpc::router_info_keys::ADDRESS_BOOK_KEYS.len(),
+        6,
+        "Address book selectors: exactly 6"
+    );
 }
 
 #[test]
 fn router_info_core_selectors_count() {
-    assert_eq!(rpc::router_info_keys::CORE_KEYS.len(), 115, "Core selectors: exactly 115");
+    assert_eq!(
+        rpc::router_info_keys::CORE_KEYS.len(),
+        115,
+        "Core selectors: exactly 115"
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -317,12 +544,36 @@ struct ErrorCodeRow {
 }
 
 const ERROR_CODE_MANIFEST: &[ErrorCodeRow] = &[
-    ErrorCodeRow { name: "PARSE_ERROR", code: -32700, owner_milestone: "M001" },
-    ErrorCodeRow { name: "INVALID_REQUEST", code: -32600, owner_milestone: "M001" },
-    ErrorCodeRow { name: "METHOD_NOT_FOUND", code: -32601, owner_milestone: "M001" },
-    ErrorCodeRow { name: "INVALID_PARAMS", code: -32602, owner_milestone: "M001" },
-    ErrorCodeRow { name: "INTERNAL_ERROR", code: -32603, owner_milestone: "M001" },
-    ErrorCodeRow { name: "APP_ERROR", code: -1, owner_milestone: "M001" },
+    ErrorCodeRow {
+        name: "PARSE_ERROR",
+        code: -32700,
+        owner_milestone: "M001",
+    },
+    ErrorCodeRow {
+        name: "INVALID_REQUEST",
+        code: -32600,
+        owner_milestone: "M001",
+    },
+    ErrorCodeRow {
+        name: "METHOD_NOT_FOUND",
+        code: -32601,
+        owner_milestone: "M001",
+    },
+    ErrorCodeRow {
+        name: "INVALID_PARAMS",
+        code: -32602,
+        owner_milestone: "M001",
+    },
+    ErrorCodeRow {
+        name: "INTERNAL_ERROR",
+        code: -32603,
+        owner_milestone: "M001",
+    },
+    ErrorCodeRow {
+        name: "APP_ERROR",
+        code: -1,
+        owner_milestone: "M001",
+    },
 ];
 
 #[test]
@@ -337,7 +588,11 @@ fn error_code_manifest_matches_production() {
 
 #[test]
 fn error_code_manifest_count() {
-    assert_eq!(ERROR_CODE_MANIFEST.len(), 6, "Proposal 170 defines exactly 6 JSON-RPC error codes");
+    assert_eq!(
+        ERROR_CODE_MANIFEST.len(),
+        6,
+        "Proposal 170 defines exactly 6 JSON-RPC error codes"
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -348,7 +603,11 @@ fn error_code_manifest_count() {
 fn no_duplicate_tunnel_types() {
     let names: Vec<&str> = tunnel_types::ALL.to_vec();
     let set: HashSet<&str> = names.iter().copied().collect();
-    assert_eq!(set.len(), names.len(), "tunnel_types::ALL must have no duplicates");
+    assert_eq!(
+        set.len(),
+        names.len(),
+        "tunnel_types::ALL must have no duplicates"
+    );
 }
 
 #[test]
@@ -364,26 +623,42 @@ fn no_duplicate_tunnel_actions() {
         tunnel_actions::RESTART,
     ];
     let set: HashSet<&str> = actions.iter().copied().collect();
-    assert_eq!(set.len(), actions.len(), "tunnel_actions must have no duplicates");
+    assert_eq!(
+        set.len(),
+        actions.len(),
+        "tunnel_actions must have no duplicates"
+    );
 }
 
 #[test]
 fn no_duplicate_address_books() {
     let set: HashSet<&str> = address_books::ALL.iter().copied().collect();
-    assert_eq!(set.len(), address_books::ALL.len(), "address_books::ALL must have no duplicates");
+    assert_eq!(
+        set.len(),
+        address_books::ALL.len(),
+        "address_books::ALL must have no duplicates"
+    );
 }
 
 #[test]
 fn no_duplicate_router_info_selectors() {
     let set: HashSet<&str> = rpc::router_info_keys::ALL.iter().copied().collect();
-    assert_eq!(set.len(), rpc::router_info_keys::ALL.len(), "router_info_keys::ALL must have no duplicates");
+    assert_eq!(
+        set.len(),
+        rpc::router_info_keys::ALL.len(),
+        "router_info_keys::ALL must have no duplicates"
+    );
 }
 
 #[test]
 fn no_duplicate_methods() {
     let names: Vec<&str> = METHOD_MANIFEST.iter().map(|r| r.name).collect();
     let set: HashSet<&str> = names.iter().copied().collect();
-    assert_eq!(set.len(), names.len(), "method manifest must have no duplicates");
+    assert_eq!(
+        set.len(),
+        names.len(),
+        "method manifest must have no duplicates"
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -466,17 +741,26 @@ fn selector_key_exact_log_clear() {
 
 #[test]
 fn selector_key_exact_address_book_private() {
-    assert_eq!(rpc::router_info_keys::ADDRESS_BOOK_PRIVATE, "i2p.router.addressbook.private");
+    assert_eq!(
+        rpc::router_info_keys::ADDRESS_BOOK_PRIVATE,
+        "i2p.router.addressbook.private"
+    );
 }
 
 #[test]
 fn selector_key_exact_address_book_config() {
-    assert_eq!(rpc::router_info_keys::ADDRESS_BOOK_CONFIG, "i2p.router.addressbook.config");
+    assert_eq!(
+        rpc::router_info_keys::ADDRESS_BOOK_CONFIG,
+        "i2p.router.addressbook.config"
+    );
 }
 
 #[test]
 fn selector_key_exact_net_i2ptunnels() {
-    assert_eq!(rpc::router_info_keys::NET_IPTUNNELS, "i2p.router.net.i2ptunnels");
+    assert_eq!(
+        rpc::router_info_keys::NET_IPTUNNELS,
+        "i2p.router.net.i2ptunnels"
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -536,10 +820,13 @@ fn is_valid_tunnel_type_consistent_with_manifest() {
     for row in TUNNEL_TYPE_MANIFEST {
         assert!(
             emissary_cli::i2pcontrol::rpc::is_valid_tunnel_type(row.name),
-            "is_valid_tunnel_type({}) must be true", row.name
+            "is_valid_tunnel_type({}) must be true",
+            row.name
         );
     }
-    assert!(!emissary_cli::i2pcontrol::rpc::is_valid_tunnel_type("unknown"));
+    assert!(!emissary_cli::i2pcontrol::rpc::is_valid_tunnel_type(
+        "unknown"
+    ));
     assert!(!emissary_cli::i2pcontrol::rpc::is_valid_tunnel_type("All"));
     assert!(!emissary_cli::i2pcontrol::rpc::is_valid_tunnel_type(""));
 }
@@ -549,10 +836,13 @@ fn is_valid_address_book_consistent_with_manifest() {
     for row in ADDRESS_BOOK_MANIFEST {
         assert!(
             emissary_cli::i2pcontrol::rpc::is_valid_address_book(row.name),
-            "is_valid_address_book({}) must be true", row.name
+            "is_valid_address_book({}) must be true",
+            row.name
         );
     }
-    assert!(!emissary_cli::i2pcontrol::rpc::is_valid_address_book("unknown"));
+    assert!(!emissary_cli::i2pcontrol::rpc::is_valid_address_book(
+        "unknown"
+    ));
     assert!(!emissary_cli::i2pcontrol::rpc::is_valid_address_book(""));
 }
 
@@ -561,7 +851,8 @@ fn is_valid_router_info_selector_consistent_with_manifest() {
     for key in rpc::router_info_keys::ALL {
         assert!(
             emissary_cli::i2pcontrol::rpc::is_valid_router_info_selector(key),
-            "is_valid_router_info_selector({}) must be true", key
+            "is_valid_router_info_selector({}) must be true",
+            key
         );
     }
     assert!(!emissary_cli::i2pcontrol::rpc::is_valid_router_info_selector("unknown.key"));
@@ -604,10 +895,18 @@ fn all_backends_report_unsupported_state() {
     };
 
     let types = [
-        TunnelType::Client, TunnelType::HttpClient, TunnelType::IrcClient,
-        TunnelType::Socks, TunnelType::SocksIrc, TunnelType::ConnectClient,
-        TunnelType::StreamrClient, TunnelType::Server, TunnelType::HttpServer,
-        TunnelType::HttpBidirServer, TunnelType::IrcServer, TunnelType::StreamrServer,
+        TunnelType::Client,
+        TunnelType::HttpClient,
+        TunnelType::IrcClient,
+        TunnelType::Socks,
+        TunnelType::SocksIrc,
+        TunnelType::ConnectClient,
+        TunnelType::StreamrClient,
+        TunnelType::Server,
+        TunnelType::HttpServer,
+        TunnelType::HttpBidirServer,
+        TunnelType::IrcServer,
+        TunnelType::StreamrServer,
     ];
 
     for tt in types {
@@ -615,7 +914,10 @@ fn all_backends_report_unsupported_state() {
         let status = backend.inspect(&def);
         // Unsupported backends report Unsupported runtime state
         assert!(
-            matches!(status.runtime_state, emissary_cli::i2pcontrol::domain::tunnel::TunnelRuntimeState::Unsupported),
+            matches!(
+                status.runtime_state,
+                emissary_cli::i2pcontrol::domain::tunnel::TunnelRuntimeState::Unsupported
+            ),
             "backend for {:?} should report Unsupported runtime state, got {:?}",
             tt,
             status.runtime_state
@@ -664,10 +966,22 @@ fn unsupported_start_returns_not_implemented() {
 fn selector_keys_contain_no_secret_material() {
     for key in rpc::router_info_keys::ALL {
         let lower = key.to_lowercase();
-        assert!(!lower.contains("password"), "selector key must not contain password: {key}");
-        assert!(!lower.contains("secret"), "selector key must not contain secret: {key}");
-        assert!(!lower.contains("private_key"), "selector key must not contain private_key: {key}");
-        assert!(!lower.contains("token"), "selector key must not contain token: {key}");
+        assert!(
+            !lower.contains("password"),
+            "selector key must not contain password: {key}"
+        );
+        assert!(
+            !lower.contains("secret"),
+            "selector key must not contain secret: {key}"
+        );
+        assert!(
+            !lower.contains("private_key"),
+            "selector key must not contain private_key: {key}"
+        );
+        assert!(
+            !lower.contains("token"),
+            "selector key must not contain token: {key}"
+        );
     }
 }
 

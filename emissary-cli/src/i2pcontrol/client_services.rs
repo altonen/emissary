@@ -463,7 +463,7 @@ mod tests {
     }
 
     fn test_state(reg: ServiceRegistry) -> crate::i2pcontrol::server::I2pControlState {
-        let mut state = crate::i2pcontrol::server::I2pControlState::new("test".to_string());
+        let mut state = crate::i2pcontrol::server::I2pControlState::new_test("test".to_string());
         state.set_service_registry(reg);
         state
     }

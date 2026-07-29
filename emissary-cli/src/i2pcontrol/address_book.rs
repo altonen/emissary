@@ -149,7 +149,17 @@ async fn handle_list(
     id: RequestId,
     book_type: AdministrativeAddressBookType,
 ) -> serde_json::Value {
-    let entries = state.address_book_list(book_type).await;
+    let entries = match state.address_book_list(book_type).await {
+        Ok(entries) => entries,
+        Err(e) => {
+            tracing::error!(target: LOG_TARGET, "List failed: {}", e);
+            return error_response(
+                id,
+                rpc::error_codes::INTERNAL_ERROR,
+                "Failed to list address book entries",
+            );
+        }
+    };
 
     // Build result array with deterministic ordering (BTreeMap ensures this)
     let result: Vec<serde_json::Value> = entries
@@ -198,14 +208,22 @@ async fn handle_lookup(
     }
 
     match state.address_book_lookup(book_type, hostname).await {
-        Some(entry) => success_response(
+        Ok(Some(entry)) => success_response(
             id,
             serde_json::json!({
                 "name": entry.hostname,
                 "value": entry.destination,
             }),
         ),
-        None => success_response(id, serde_json::Value::Null),
+        Ok(None) => success_response(id, serde_json::Value::Null),
+        Err(e) => {
+            tracing::error!(target: LOG_TARGET, "Lookup failed: {}", e);
+            error_response(
+                id,
+                rpc::error_codes::INTERNAL_ERROR,
+                "Failed to look up address book entry",
+            )
+        }
     }
 }
 
@@ -782,7 +800,8 @@ mod tests {
     use crate::i2pcontrol::rpc::JsonRpcRequest;
 
     fn test_state() -> crate::i2pcontrol::server::I2pControlState {
-        let mut state = crate::i2pcontrol::server::I2pControlState::new("testpass".to_string());
+        let mut state =
+            crate::i2pcontrol::server::I2pControlState::new_test("testpass".to_string());
         // Replace the address book control with a fresh fake
         state.set_address_book_control(Box::new(FakeAddressBookControl::new()));
         state
@@ -1090,7 +1109,7 @@ mod tests {
         assert_eq!(resp["result"], "ok");
 
         // Verify dedup
-        let subs = state.address_book_subscriptions().await;
+        let subs = state.address_book_subscriptions().await.unwrap();
         assert_eq!(subs.len(), 1);
     }
 

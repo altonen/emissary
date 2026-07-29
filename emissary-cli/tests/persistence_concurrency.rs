@@ -43,7 +43,10 @@ fn generation_store_first_initialization() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let result = rt.block_on(async { store.load().await });
     assert!(result.is_ok());
-    assert!(store.current().is_none(), "empty dir should have no current state");
+    assert!(
+        store.current().is_none(),
+        "empty dir should have no current state"
+    );
 }
 
 #[test]
@@ -73,9 +76,12 @@ fn generation_store_revision_increments() {
     >::new(dir.path().to_path_buf(), 1024 * 1024);
     let rt = tokio::runtime::Runtime::new().unwrap();
 
-    let rev1 = rt.block_on(async { store.publish(serde_json::json!(1), |_| Ok(())).await.unwrap() });
-    let rev2 = rt.block_on(async { store.publish(serde_json::json!(2), |_| Ok(())).await.unwrap() });
-    let rev3 = rt.block_on(async { store.publish(serde_json::json!(3), |_| Ok(())).await.unwrap() });
+    let rev1 =
+        rt.block_on(async { store.publish(serde_json::json!(1), |_| Ok(())).await.unwrap() });
+    let rev2 =
+        rt.block_on(async { store.publish(serde_json::json!(2), |_| Ok(())).await.unwrap() });
+    let rev3 =
+        rt.block_on(async { store.publish(serde_json::json!(3), |_| Ok(())).await.unwrap() });
 
     assert!(rev2.value() > rev1.value());
     assert!(rev3.value() > rev2.value());
@@ -291,7 +297,9 @@ fn address_book_store_add_and_list() {
             .unwrap()
     });
 
-    let entries = store.list(emissary_cli::i2pcontrol::domain::address_book::AdministrativeAddressBookType::Private);
+    let entries = store.list(
+        emissary_cli::i2pcontrol::domain::address_book::AdministrativeAddressBookType::Private,
+    );
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].hostname, "fixture-dest");
 }
@@ -301,7 +309,10 @@ fn address_book_store_book_isolation() {
     use emissary_cli::i2pcontrol::domain::address_book::*;
 
     let dir = tempfile::tempdir().unwrap();
-    let mut store = emissary_cli::i2pcontrol::stores::address_book_store::AddressBookStore::new(dir.path().to_path_buf(), 1024 * 1024);
+    let mut store = emissary_cli::i2pcontrol::stores::address_book_store::AddressBookStore::new(
+        dir.path().to_path_buf(),
+        1024 * 1024,
+    );
     let rt = tokio::runtime::Runtime::new().unwrap();
 
     let entry_private = AddressBookEntry {
@@ -318,18 +329,9 @@ fn address_book_store_book_isolation() {
         store.add(AdministrativeAddressBookType::Local, entry_local).await.unwrap();
     });
 
-    assert_eq!(
-        store.list(AdministrativeAddressBookType::Private).len(),
-        1
-    );
-    assert_eq!(
-        store.list(AdministrativeAddressBookType::Local).len(),
-        1
-    );
-    assert_eq!(
-        store.list(AdministrativeAddressBookType::Router).len(),
-        0
-    );
+    assert_eq!(store.list(AdministrativeAddressBookType::Private).len(), 1);
+    assert_eq!(store.list(AdministrativeAddressBookType::Local).len(), 1);
+    assert_eq!(store.list(AdministrativeAddressBookType::Router).len(), 0);
 }
 
 #[test]
@@ -337,7 +339,10 @@ fn address_book_store_delete_all() {
     use emissary_cli::i2pcontrol::domain::address_book::*;
 
     let dir = tempfile::tempdir().unwrap();
-    let mut store = emissary_cli::i2pcontrol::stores::address_book_store::AddressBookStore::new(dir.path().to_path_buf(), 1024 * 1024);
+    let mut store = emissary_cli::i2pcontrol::stores::address_book_store::AddressBookStore::new(
+        dir.path().to_path_buf(),
+        1024 * 1024,
+    );
     let rt = tokio::runtime::Runtime::new().unwrap();
 
     for i in 0..5 {
@@ -352,9 +357,7 @@ fn address_book_store_delete_all() {
 
     assert_eq!(store.list(AdministrativeAddressBookType::Local).len(), 5);
 
-    rt.block_on(async {
-        store.delete_all(AdministrativeAddressBookType::Local).await.unwrap()
-    });
+    rt.block_on(async { store.delete_all(AdministrativeAddressBookType::Local).await.unwrap() });
 
     assert_eq!(store.list(AdministrativeAddressBookType::Local).len(), 0);
 }
@@ -367,7 +370,10 @@ fn address_book_store_round_trip_persistence() {
 
     // Write
     {
-        let mut store = emissary_cli::i2pcontrol::stores::address_book_store::AddressBookStore::new(dir.path().to_path_buf(), 1024 * 1024);
+        let mut store = emissary_cli::i2pcontrol::stores::address_book_store::AddressBookStore::new(
+            dir.path().to_path_buf(),
+            1024 * 1024,
+        );
         let rt = tokio::runtime::Runtime::new().unwrap();
         let entry = AddressBookEntry {
             hostname: "persistent-dest".to_string(),
@@ -380,7 +386,10 @@ fn address_book_store_round_trip_persistence() {
 
     // Read back
     {
-        let mut store = emissary_cli::i2pcontrol::stores::address_book_store::AddressBookStore::new(dir.path().to_path_buf(), 1024 * 1024);
+        let mut store = emissary_cli::i2pcontrol::stores::address_book_store::AddressBookStore::new(
+            dir.path().to_path_buf(),
+            1024 * 1024,
+        );
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async { store.load().await.unwrap() });
         assert_eq!(store.total_entries(), 1);
@@ -401,21 +410,23 @@ fn subscription_store_round_trip() {
 
     // Write
     {
-        let mut store = emissary_cli::i2pcontrol::stores::subscription_store::SubscriptionStore::new(
-            dir.path().to_path_buf(),
-            1024 * 1024,
-        );
+        let mut store =
+            emissary_cli::i2pcontrol::stores::subscription_store::SubscriptionStore::new(
+                dir.path().to_path_buf(),
+                1024 * 1024,
+            );
         let rt = tokio::runtime::Runtime::new().unwrap();
-    let subs = SubscriptionSet::from_vec(vec!["http://fixture-subscription-1.i2p".to_string()]);
+        let subs = SubscriptionSet::from_vec(vec!["http://fixture-subscription-1.i2p".to_string()]);
         rt.block_on(async { store.set(subs).await.unwrap() });
     }
 
     // Read back
     {
-        let mut store = emissary_cli::i2pcontrol::stores::subscription_store::SubscriptionStore::new(
-            dir.path().to_path_buf(),
-            1024 * 1024,
-        );
+        let mut store =
+            emissary_cli::i2pcontrol::stores::subscription_store::SubscriptionStore::new(
+                dir.path().to_path_buf(),
+                1024 * 1024,
+            );
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async { store.load().await.unwrap() });
         assert_eq!(store.len(), 1);
@@ -577,10 +588,7 @@ fn generation_store_retention_keeps_bounded() {
     // Publish many states
     for i in 0..20 {
         rt.block_on(async {
-            store
-                .publish(serde_json::json!({"i": i}), |_| Ok(()))
-                .await
-                .unwrap()
+            store.publish(serde_json::json!({"i": i}), |_| Ok(())).await.unwrap()
         });
     }
 

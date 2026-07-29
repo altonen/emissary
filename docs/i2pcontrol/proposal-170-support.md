@@ -1,6 +1,9 @@
 # Proposal 170 Support Status
 
-Status: M006 implemented (composition wiring closed)
+Status: M008 implemented (production composition and durable-state integrity closed)
+
+> **Note:** Strict Proposal 170 closure is reopened until M008–M012 close. Prior M005–M007
+> closure records are not accepted as current strict closure after the corrective review.
 
 This document tracks the implementation status of Proposal 170 I2PControl expansion in Emissary.
 
@@ -135,6 +138,7 @@ and integration evidence.
 | M002 | Closed | Tunnel domain, persistence, backend trait |
 | M003 | Closed | AddressBook handler |
 | M004 | Closed | TunnelManager contract and stubs |
-| M005 | Corrective pass | RouterInfo inspection (121 selectors, bounded metrics, logs) |
-| M006 | Closed | ClientServicesInfo (composition wiring complete) |
-| M007 | Ready | Integration, restart, security hardening |
+| M005 | Corrective pass required | RouterInfo inspection (121 selectors, bounded metrics, logs) |
+| M006 | Corrective pass required | ClientServicesInfo (composition wiring complete) |
+| M007 | Corrective pass required | Conformance and strict closure |
+| M008 | Closed | Production composition and durable-state integrity |

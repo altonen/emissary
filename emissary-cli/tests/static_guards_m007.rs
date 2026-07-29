@@ -143,7 +143,13 @@ fn no_axum_outside_server_rs() {
 fn core_has_no_server_dependencies() {
     let manifest_path = workspace_root().join("emissary-core/Cargo.toml");
     let manifest = std::fs::read_to_string(&manifest_path).unwrap();
-    for dep in ["axum", "hyper", "tokio-rustls", "rustls-pemfile", "serde_json"] {
+    for dep in [
+        "axum",
+        "hyper",
+        "tokio-rustls",
+        "rustls-pemfile",
+        "serde_json",
+    ] {
         assert!(
             !manifest.contains(dep),
             "emissary-core must not depend on {dep}"
@@ -240,7 +246,10 @@ fn no_handlers_write_router_toml() {
 #[test]
 fn no_handlers_spawn_resources() {
     for f in ALL_I2PCONTROL_FILES {
-        if f.ends_with("server.rs") || f.ends_with("observers.rs") || f.ends_with("service_registry.rs") {
+        if f.ends_with("server.rs")
+            || f.ends_with("observers.rs")
+            || f.ends_with("service_registry.rs")
+        {
             continue;
         }
         let src = read_source(f);
@@ -306,7 +315,9 @@ fn no_truncation_in_response_types() {
         }
         let lower = line.to_lowercase();
         assert!(
-            !lower.contains("truncat") && !lower.contains("paginate") && !lower.contains("cursor")
+            !lower.contains("truncat")
+                && !lower.contains("paginate")
+                && !lower.contains("cursor")
                 && !lower.contains("capability"),
             "rpc.rs must not contain truncation/pagination/capability at line {i}: {line}"
         );
@@ -335,11 +346,20 @@ fn exact_public_method_vocabulary() {
     }
     // Allowed public modules in rpc.rs
     let allowed = [
-        "error_codes", "methods", "tunnel_types", "tunnel_actions",
-        "address_books", "address_book_requests", "router_info_keys",
+        "error_codes",
+        "methods",
+        "tunnel_types",
+        "tunnel_actions",
+        "address_books",
+        "address_book_requests",
+        "router_info_keys",
     ];
     let allowed_set: HashSet<&str> = allowed.iter().copied().collect();
-    let extra: Vec<&str> = modules.iter().map(|s| s.as_str()).filter(|m| !allowed_set.contains(*m)).collect();
+    let extra: Vec<&str> = modules
+        .iter()
+        .map(|s| s.as_str())
+        .filter(|m| !allowed_set.contains(*m))
+        .collect();
     assert!(
         extra.is_empty(),
         "rpc.rs has unexpected public modules: {extra:?}"

@@ -63,7 +63,8 @@ fn json_string_returns_invalid_request() {
 
 #[test]
 fn json_array_returns_invalid_request() {
-    let err = rpc::parse_request(r#"[{"jsonrpc":"2.0","method":"Authenticate","id":1}]"#).unwrap_err();
+    let err =
+        rpc::parse_request(r#"[{"jsonrpc":"2.0","method":"Authenticate","id":1}]"#).unwrap_err();
     assert_eq!(err.error.code, rpc::error_codes::INVALID_REQUEST);
 }
 
@@ -79,7 +80,8 @@ fn missing_jsonrpc_field() {
 
 #[test]
 fn wrong_jsonrpc_version() {
-    let err = rpc::parse_request(r#"{"jsonrpc":"1.0","method":"Authenticate","id":1}"#).unwrap_err();
+    let err =
+        rpc::parse_request(r#"{"jsonrpc":"1.0","method":"Authenticate","id":1}"#).unwrap_err();
     assert_eq!(err.error.code, rpc::error_codes::INVALID_REQUEST);
 }
 
@@ -101,13 +103,17 @@ fn empty_method_name() {
 
 #[test]
 fn positional_params_rejected() {
-    let err = rpc::parse_request(r#"{"jsonrpc":"2.0","method":"Authenticate","params":["a","b"],"id":1}"#).unwrap_err();
+    let err = rpc::parse_request(
+        r#"{"jsonrpc":"2.0","method":"Authenticate","params":["a","b"],"id":1}"#,
+    )
+    .unwrap_err();
     assert_eq!(err.error.code, rpc::error_codes::INVALID_PARAMS);
 }
 
 #[test]
 fn array_params_rejected() {
-    let err = rpc::parse_request(r#"{"jsonrpc":"2.0","method":"RouterInfo","params":[],"id":1}"#).unwrap_err();
+    let err = rpc::parse_request(r#"{"jsonrpc":"2.0","method":"RouterInfo","params":[],"id":1}"#)
+        .unwrap_err();
     assert_eq!(err.error.code, rpc::error_codes::INVALID_PARAMS);
 }
 
@@ -123,7 +129,8 @@ fn integer_id_preserved() {
 
 #[test]
 fn string_id_preserved() {
-    let req = rpc::parse_request(r#"{"jsonrpc":"2.0","method":"Authenticate","id":"test-123"}"#).unwrap();
+    let req =
+        rpc::parse_request(r#"{"jsonrpc":"2.0","method":"Authenticate","id":"test-123"}"#).unwrap();
     assert_eq!(req.id, Some(rpc::RequestId::String("test-123".to_string())));
 }
 
@@ -231,10 +238,17 @@ fn error_response_has_exact_structure() {
     assert_eq!(obj.get("id"), Some(&json!(1)));
 
     let error = obj.get("error").unwrap().as_object().unwrap();
-    assert_eq!(error.len(), 2, "error object must have exactly code and message");
+    assert_eq!(
+        error.len(),
+        2,
+        "error object must have exactly code and message"
+    );
     assert!(error.contains_key("code"));
     assert!(error.contains_key("message"));
-    assert!(!error.contains_key("data"), "error must not have data unless explicitly set");
+    assert!(
+        !error.contains_key("data"),
+        "error must not have data unless explicitly set"
+    );
 }
 
 #[test]
@@ -247,7 +261,11 @@ fn error_response_with_data() {
     );
     let json = serde_json::to_value(&resp).unwrap();
     let error = json.get("error").unwrap().as_object().unwrap();
-    assert_eq!(error.len(), 3, "error with data must have code, message, and data");
+    assert_eq!(
+        error.len(),
+        3,
+        "error with data must have code, message, and data"
+    );
     assert!(error.contains_key("data"));
 }
 
@@ -305,11 +323,17 @@ fn password_timing_resistance() {
     // Empty passwords
     assert!(emissary_cli::i2pcontrol::auth::compare_passwords("", ""));
     // Same passwords
-    assert!(emissary_cli::i2pcontrol::auth::compare_passwords("secret", "secret"));
+    assert!(emissary_cli::i2pcontrol::auth::compare_passwords(
+        "secret", "secret"
+    ));
     // Different passwords
-    assert!(!emissary_cli::i2pcontrol::auth::compare_passwords("secret", "other"));
+    assert!(!emissary_cli::i2pcontrol::auth::compare_passwords(
+        "secret", "other"
+    ));
     // Prefix attack resistant
-    assert!(!emissary_cli::i2pcontrol::auth::compare_passwords("secret", "secret2"));
+    assert!(!emissary_cli::i2pcontrol::auth::compare_passwords(
+        "secret", "secret2"
+    ));
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -370,7 +394,10 @@ fn enabled_config_requires_password() {
             private_key: None,
         },
     };
-    assert!(config.validate().is_err(), "enabled config with empty password must fail");
+    assert!(
+        config.validate().is_err(),
+        "enabled config with empty password must fail"
+    );
 }
 
 #[test]
@@ -384,7 +411,10 @@ fn disabled_config_allows_empty_password() {
             private_key: None,
         },
     };
-    assert!(config.validate().is_ok(), "disabled config with empty password must pass");
+    assert!(
+        config.validate().is_ok(),
+        "disabled config with empty password must pass"
+    );
 }
 
 #[test]
@@ -408,16 +438,23 @@ fn enabled_config_with_password_passes() {
 #[test]
 fn tls_managed_cert_generates() {
     let dir = tempfile::tempdir().unwrap();
-    let (certs, _) = emissary_cli::i2pcontrol::tls::load_or_generate_managed_tls(dir.path()).unwrap();
+    let (certs, _) =
+        emissary_cli::i2pcontrol::tls::load_or_generate_managed_tls(dir.path()).unwrap();
     assert!(!certs.is_empty());
 }
 
 #[test]
 fn tls_managed_cert_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
-    let (certs1, _) = emissary_cli::i2pcontrol::tls::load_or_generate_managed_tls(dir.path()).unwrap();
-    let (certs2, _) = emissary_cli::i2pcontrol::tls::load_or_generate_managed_tls(dir.path()).unwrap();
-    assert_eq!(certs1[0].as_ref(), certs2[0].as_ref(), "same material should load deterministically");
+    let (certs1, _) =
+        emissary_cli::i2pcontrol::tls::load_or_generate_managed_tls(dir.path()).unwrap();
+    let (certs2, _) =
+        emissary_cli::i2pcontrol::tls::load_or_generate_managed_tls(dir.path()).unwrap();
+    assert_eq!(
+        certs1[0].as_ref(),
+        certs2[0].as_ref(),
+        "same material should load deterministically"
+    );
 }
 
 #[test]
@@ -445,7 +482,10 @@ fn canary_not_in_success_response() {
         json!({"Token": "not-the-canary"}),
     );
     let json_str = serde_json::to_string(&resp).unwrap();
-    assert!(!json_str.contains(CANARY_SECRET), "canary must not appear in success response");
+    assert!(
+        !json_str.contains(CANARY_SECRET),
+        "canary must not appear in success response"
+    );
 }
 
 #[test]
@@ -456,7 +496,10 @@ fn canary_not_in_error_response() {
         "Internal error",
     );
     let json_str = serde_json::to_string(&resp).unwrap();
-    assert!(!json_str.contains(CANARY_SECRET), "canary must not appear in error response");
+    assert!(
+        !json_str.contains(CANARY_SECRET),
+        "canary must not appear in error response"
+    );
 }
 
 #[test]
@@ -468,7 +511,10 @@ fn canary_not_in_error_with_data() {
         json!({"detail": "something"}),
     );
     let json_str = serde_json::to_string(&resp).unwrap();
-    assert!(!json_str.contains(CANARY_SECRET), "canary must not appear in error response with data");
+    assert!(
+        !json_str.contains(CANARY_SECRET),
+        "canary must not appear in error response with data"
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -481,7 +527,10 @@ fn token_not_in_parse_error_messages() {
     let result = rpc::parse_request(body);
     if let Err(err) = result {
         let msg = err.error.message.to_lowercase();
-        assert!(!msg.contains("my-secret-token"), "error message must not contain password");
+        assert!(
+            !msg.contains("my-secret-token"),
+            "error message must not contain password"
+        );
     }
 }
 
@@ -500,7 +549,10 @@ fn jsonrpc_must_be_exactly_2_0() {
         if version == &"2.0" {
             assert!(result.is_ok());
         } else {
-            assert!(result.is_err(), "jsonrpc version {version} should be rejected");
+            assert!(
+                result.is_err(),
+                "jsonrpc version {version} should be rejected"
+            );
         }
     }
 }
@@ -518,7 +570,8 @@ fn missing_params_field_accepted_by_parser() {
 
 #[test]
 fn empty_params_object_accepted() {
-    let req = rpc::parse_request(r#"{"jsonrpc":"2.0","method":"Authenticate","params":{},"id":1}"#).unwrap();
+    let req = rpc::parse_request(r#"{"jsonrpc":"2.0","method":"Authenticate","params":{},"id":1}"#)
+        .unwrap();
     assert!(req.params.is_some());
     assert_eq!(req.params.unwrap().len(), 0);
 }
@@ -529,16 +582,28 @@ fn empty_params_object_accepted() {
 
 #[test]
 fn tunnel_type_case_sensitive() {
-    assert!(!emissary_cli::i2pcontrol::rpc::is_valid_tunnel_type("Client"));
-    assert!(!emissary_cli::i2pcontrol::rpc::is_valid_tunnel_type("CLIENT"));
-    assert!(emissary_cli::i2pcontrol::rpc::is_valid_tunnel_type("client"));
+    assert!(!emissary_cli::i2pcontrol::rpc::is_valid_tunnel_type(
+        "Client"
+    ));
+    assert!(!emissary_cli::i2pcontrol::rpc::is_valid_tunnel_type(
+        "CLIENT"
+    ));
+    assert!(emissary_cli::i2pcontrol::rpc::is_valid_tunnel_type(
+        "client"
+    ));
 }
 
 #[test]
 fn tunnel_type_no_whitespace() {
-    assert!(!emissary_cli::i2pcontrol::rpc::is_valid_tunnel_type(" client"));
-    assert!(!emissary_cli::i2pcontrol::rpc::is_valid_tunnel_type("client "));
-    assert!(!emissary_cli::i2pcontrol::rpc::is_valid_tunnel_type(" client "));
+    assert!(!emissary_cli::i2pcontrol::rpc::is_valid_tunnel_type(
+        " client"
+    ));
+    assert!(!emissary_cli::i2pcontrol::rpc::is_valid_tunnel_type(
+        "client "
+    ));
+    assert!(!emissary_cli::i2pcontrol::rpc::is_valid_tunnel_type(
+        " client "
+    ));
 }
 
 #[test]
@@ -557,9 +622,15 @@ fn tunnel_type_reserved_name_all() {
 
 #[test]
 fn address_book_case_sensitive() {
-    assert!(!emissary_cli::i2pcontrol::rpc::is_valid_address_book("Private"));
-    assert!(!emissary_cli::i2pcontrol::rpc::is_valid_address_book("PRIVATE"));
-    assert!(emissary_cli::i2pcontrol::rpc::is_valid_address_book("private"));
+    assert!(!emissary_cli::i2pcontrol::rpc::is_valid_address_book(
+        "Private"
+    ));
+    assert!(!emissary_cli::i2pcontrol::rpc::is_valid_address_book(
+        "PRIVATE"
+    ));
+    assert!(emissary_cli::i2pcontrol::rpc::is_valid_address_book(
+        "private"
+    ));
 }
 
 #[test]
@@ -569,8 +640,12 @@ fn address_book_empty_string() {
 
 #[test]
 fn address_book_unknown() {
-    assert!(!emissary_cli::i2pcontrol::rpc::is_valid_address_book("unknown"));
-    assert!(!emissary_cli::i2pcontrol::rpc::is_valid_address_book("system"));
+    assert!(!emissary_cli::i2pcontrol::rpc::is_valid_address_book(
+        "unknown"
+    ));
+    assert!(!emissary_cli::i2pcontrol::rpc::is_valid_address_book(
+        "system"
+    ));
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -594,7 +669,9 @@ fn selector_empty() {
 
 #[test]
 fn selector_with_trailing_space() {
-    assert!(!emissary_cli::i2pcontrol::rpc::is_valid_router_info_selector("i2p.router.udp.active "));
+    assert!(
+        !emissary_cli::i2pcontrol::rpc::is_valid_router_info_selector("i2p.router.udp.active ")
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────

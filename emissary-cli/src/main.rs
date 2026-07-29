@@ -472,8 +472,6 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
                 .with_event_metrics(metrics)
                 .with_share_ratio(share_ratio)
                 .with_configured_bandwidth(bw_in, bw_out)
-                .with_production_address_book()
-                .with_production_tunnel_manager()
                 .with_service_registry(registry_for_i2pcontrol);
 
                 let instance =
@@ -485,40 +483,7 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
                 // observation becomes visible immediately.
                 let state_clone = instance.state_clone();
                 let registry_for_tunnel_population = state_clone.service_registry_clone();
-                let tm_arc_for_population: Arc<
-                    i2pcontrol::production::ProductionTunnelManagerControl,
-                > = {
-                    let dir = base_path.join("tunnels");
-                    match i2pcontrol::production::ProductionTunnelManagerControl::new(dir) {
-                        Ok(tm) => {
-                            if let Err(error) = tm.load().await {
-                                tracing::warn!(
-                                    target: LOG_TARGET,
-                                    error = %error,
-                                    "tunnel store reload for I2PTunnel inventory failed",
-                                );
-                            }
-                            Arc::new(tm)
-                        }
-                        Err(error) => {
-                            tracing::warn!(
-                                target: LOG_TARGET,
-                                error = %error,
-                                "tunnel store reopen for I2PTunnel inventory failed",
-                            );
-                            // Fall back to an empty inventory so the
-                            // registry reflects truthful empty state.
-                            let dir =
-                                std::env::temp_dir().join("emissary-i2pcontrol-tunnels-empty");
-                            let _ = std::fs::create_dir_all(&dir);
-                            Arc::new(
-                                i2pcontrol::production::ProductionTunnelManagerControl::new(dir)
-                                    .expect("empty tunnel store directory was created"),
-                            )
-                        }
-                    }
-                };
-                let tunnel_defs = tm_arc_for_population.list().await.unwrap_or_default();
+                let tunnel_defs = state_clone.tunnel_list().await.unwrap_or_default();
                 let inv = tunnel_defs
                     .into_iter()
                     .map(|def| {

@@ -32,7 +32,7 @@ Canonical direction:
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | 008 — production composition and durable-state integrity | ready | `plans/implementation/i2pcontrol-proposal-170/008-production-composition-and-durable-state-integrity.md` | Stable M001–M004 interfaces; planning baseline `b35d9ad7295f6d7d8795a741c7942a5ff7a97f52` |
+| I2PControl Proposal 170 | 009 — RouterInfo availability and truthfulness | ready | `plans/implementation/i2pcontrol-proposal-170/009-router-info-availability-and-truthfulness.md` | M008 strict closure and baseline reconciliation |
 
 ## Active closure work
 
@@ -46,7 +46,7 @@ These plans are written for full-workstream handoff but MUST NOT execute until t
 
 | Subsystem | Milestone | Status | Implementation plan | Blocker |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | 009 — RouterInfo availability and truthfulness | blocked | `plans/implementation/i2pcontrol-proposal-170/009-router-info-availability-and-truthfulness.md` | M008 strict closure and baseline reconciliation |
+| I2PControl Proposal 170 | 009 — RouterInfo availability and truthfulness | ready | `plans/implementation/i2pcontrol-proposal-170/009-router-info-availability-and-truthfulness.md` | None (M008 closed) |
 | I2PControl Proposal 170 | 010 — bounded core router inspection | blocked | `plans/implementation/i2pcontrol-proposal-170/010-bounded-core-router-inspection.md` | M009 strict closure and stable selector source map |
 | I2PControl Proposal 170 | 011 — ClientServicesInfo live state | blocked | `plans/implementation/i2pcontrol-proposal-170/011-client-services-live-state.md` | M008 and M009 strict closure; reconcile with M010 integration head before final closure |
 | I2PControl Proposal 170 | 012 — real TLS and request resource hardening | blocked | `plans/implementation/i2pcontrol-proposal-170/012-real-tls-and-request-resource-hardening.md` | M008/M009 interfaces stable; activate after M009, may run parallel with M010/M011 |
@@ -86,6 +86,7 @@ These rows preserve traceability. M005–M007 historical closure records are not
 
 | Subsystem | Milestone | Historical closure record | Historical reviewed commit | Current follow-up |
 |---|---|---|---|---|
+| I2PControl Proposal 170 | 008 — production composition and durable-state integrity | `plans/closure/i2pcontrol-proposal-170/008-closure.md` | `b35d9ad` baseline | Strictly closed; M009 may activate |
 | I2PControl Proposal 170 | 001 — contract matrix and I2PControl foundation | `plans/closure/i2pcontrol-proposal-170/001-closure.md` | `9b43484a21d5a1291c4881cdae62a36c527f8c0f` | Revalidate at M013; TLS correction owned by M012 |
 | I2PControl Proposal 170 | 002 — control-plane domain and persistence | `plans/closure/i2pcontrol-proposal-170/002-closure.md` | `6c92a71` | Revalidate at M013; production composition owned by M008 |
 | I2PControl Proposal 170 | 003 — AddressBook administrative API | `plans/closure/i2pcontrol-proposal-170/003-closure.md` | `9d2f646` | Revalidate fail-closed behavior at M008/M013 |

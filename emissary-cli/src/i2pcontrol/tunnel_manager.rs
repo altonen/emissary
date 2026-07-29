@@ -160,10 +160,18 @@ pub(crate) async fn handle_tunnel_manager(
 /// Handle List action: return all tunnel definitions.
 async fn handle_list(state: &I2pControlState, id: RequestId) -> serde_json::Value {
     match state.tunnel_list().await {
-        definitions => {
+        Ok(definitions) => {
             let result: Vec<serde_json::Value> =
                 definitions.iter().map(|d| tunnel_definition_to_get_result(d)).collect();
             success_response(id, serde_json::json!(result))
+        }
+        Err(e) => {
+            tracing::error!(target: LOG_TARGET, "List failed: {}", e);
+            error_response(
+                id,
+                rpc::error_codes::INTERNAL_ERROR,
+                "Failed to list tunnel definitions",
+            )
         }
     }
 }
@@ -316,12 +324,20 @@ async fn handle_edit(
 
     // Load existing definition
     let existing = match state.tunnel_get(tunnel_name).await {
-        Some(d) => d,
-        None => {
+        Ok(Some(d)) => d,
+        Ok(None) => {
             return error_response(
                 id,
                 rpc::error_codes::APP_ERROR,
                 format!("error - tunnel '{}' not found", tunnel_name),
+            );
+        }
+        Err(e) => {
+            tracing::error!(target: LOG_TARGET, "Edit lookup failed: {}", e);
+            return error_response(
+                id,
+                rpc::error_codes::INTERNAL_ERROR,
+                "Failed to look up tunnel definition",
             );
         }
     };
@@ -441,7 +457,17 @@ async fn handle_get(
 ) -> serde_json::Value {
     if all {
         // Get all definitions
-        let definitions = state.tunnel_list().await;
+        let definitions = match state.tunnel_list().await {
+            Ok(defs) => defs,
+            Err(e) => {
+                tracing::error!(target: LOG_TARGET, "Get all failed: {}", e);
+                return error_response(
+                    id,
+                    rpc::error_codes::INTERNAL_ERROR,
+                    "Failed to list tunnel definitions",
+                );
+            }
+        };
         let result: Vec<serde_json::Value> =
             definitions.iter().map(|d| tunnel_definition_to_get_result(d)).collect();
         return success_response(id, serde_json::json!(result));
@@ -459,15 +485,23 @@ async fn handle_get(
     };
 
     match state.tunnel_get(tunnel_name).await {
-        Some(definition) => {
+        Ok(Some(definition)) => {
             let result = tunnel_definition_to_get_result(&definition);
             success_response(id, result)
         }
-        None => error_response(
+        Ok(None) => error_response(
             id,
             rpc::error_codes::APP_ERROR,
             format!("error - tunnel '{}' not found", tunnel_name),
         ),
+        Err(e) => {
+            tracing::error!(target: LOG_TARGET, "Get failed: {}", e);
+            error_response(
+                id,
+                rpc::error_codes::INTERNAL_ERROR,
+                "Failed to get tunnel definition",
+            )
+        }
     }
 }
 
@@ -492,7 +526,7 @@ async fn handle_delete(
 
     // Check existence and ownership before delete
     match state.tunnel_get(tunnel_name).await {
-        Some(def) => {
+        Ok(Some(def)) => {
             if def.ownership == TunnelOwnership::StartupManaged {
                 return error_response(
                     id,
@@ -501,9 +535,17 @@ async fn handle_delete(
                 );
             }
         }
-        None => {
+        Ok(None) => {
             // Delete of absent name is a successful no-op
             return success_response(id, serde_json::json!("ok"));
+        }
+        Err(e) => {
+            tracing::error!(target: LOG_TARGET, "Delete lookup failed: {}", e);
+            return error_response(
+                id,
+                rpc::error_codes::INTERNAL_ERROR,
+                "Failed to look up tunnel definition",
+            );
         }
     }
 
@@ -550,12 +592,20 @@ async fn handle_lifecycle(
 
     // Verify tunnel exists
     let definition = match state.tunnel_get(tunnel_name).await {
-        Some(d) => d,
-        None => {
+        Ok(Some(d)) => d,
+        Ok(None) => {
             return error_response(
                 id,
                 rpc::error_codes::APP_ERROR,
                 format!("error - tunnel '{}' not found", tunnel_name),
+            );
+        }
+        Err(e) => {
+            tracing::error!(target: LOG_TARGET, "Lifecycle lookup failed: {}", e);
+            return error_response(
+                id,
+                rpc::error_codes::INTERNAL_ERROR,
+                "Failed to look up tunnel definition",
             );
         }
     };
@@ -594,7 +644,17 @@ async fn handle_lifecycle_all(
     id: RequestId,
     action: &str,
 ) -> serde_json::Value {
-    let definitions = state.tunnel_list().await;
+    let definitions = match state.tunnel_list().await {
+        Ok(defs) => defs,
+        Err(e) => {
+            tracing::error!(target: LOG_TARGET, "All {} list failed: {}", action, e);
+            return error_response(
+                id,
+                rpc::error_codes::INTERNAL_ERROR,
+                "Failed to list tunnel definitions",
+            );
+        }
+    };
 
     if definitions.is_empty() {
         return success_response(id, serde_json::json!("ok"));
@@ -943,7 +1003,8 @@ mod tests {
     use crate::i2pcontrol::rpc::JsonRpcRequest;
 
     fn test_state() -> crate::i2pcontrol::server::I2pControlState {
-        let mut state = crate::i2pcontrol::server::I2pControlState::new("testpass".to_string());
+        let mut state =
+            crate::i2pcontrol::server::I2pControlState::new_test("testpass".to_string());
         state.set_tunnel_manager(Box::new(FakeTunnelManagerControl::new()));
         state
     }
@@ -1771,7 +1832,8 @@ mod tests {
                 })
                 .collect();
         let registry = TunnelBackendRegistry::new(backends).unwrap();
-        let mut state = crate::i2pcontrol::server::I2pControlState::new("testpass".to_string());
+        let mut state =
+            crate::i2pcontrol::server::I2pControlState::new_test("testpass".to_string());
         state.set_tunnel_manager(Box::new(
             crate::i2pcontrol::control_plane::FakeTunnelManagerControl::with_registry(registry),
         ));
@@ -1886,7 +1948,8 @@ mod tests {
             })
             .collect();
         let registry = TunnelBackendRegistry::new(backends).unwrap();
-        let mut state = crate::i2pcontrol::server::I2pControlState::new("testpass".to_string());
+        let mut state =
+            crate::i2pcontrol::server::I2pControlState::new_test("testpass".to_string());
         state.set_tunnel_manager(Box::new(
             crate::i2pcontrol::control_plane::FakeTunnelManagerControl::with_registry(registry),
         ));

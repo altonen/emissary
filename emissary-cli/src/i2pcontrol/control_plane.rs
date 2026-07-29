@@ -16,8 +16,6 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::collections::HashMap;
-
 use async_trait::async_trait;
 
 use crate::i2pcontrol::backends::registry::TunnelBackendRegistry;
@@ -31,22 +29,13 @@ use crate::i2pcontrol::stores::fakes::TunnelStoreFake;
 /// Control plane interface for I2PControl method handlers.
 ///
 /// This trait defines the typed internal boundary used by JSON-RPC handlers.
-/// It coordinates authentication-independent operations for router inspection,
-/// address books, tunnel definitions, service inspection, logs, and persistence.
+/// It coordinates authentication-independent operations for router identity,
+/// version, and uptime.
 ///
-/// M001 provides a minimal interface with a fake implementation for tests.
-/// Later milestones extend this with real router inspection, address book,
-/// tunnel management, and client service adapters.
+/// Tunnel operations are delegated exclusively to [`TunnelManagerControl`].
+/// This trait intentionally does not include tunnel queries to prevent
+/// dual-path access and ensure all tunnel consumers share one service object.
 pub trait ControlPlane: Send + Sync {
-    /// Get a list of all tunnel names and their types.
-    fn tunnel_list(&self) -> Result<HashMap<String, String>, String>;
-
-    /// Get a tunnel definition by name.
-    fn tunnel_get(&self, name: &str) -> Result<Option<serde_json::Value>, String>;
-
-    /// Check if a tunnel type is supported for runtime operations.
-    fn is_tunnel_type_supported(&self, tunnel_type: &str) -> bool;
-
     /// Get the router identity (base64 RouterInfo).
     fn router_identity(&self) -> Result<String, String>;
 
@@ -152,18 +141,6 @@ impl Default for FakeControlPlane {
 }
 
 impl ControlPlane for FakeControlPlane {
-    fn tunnel_list(&self) -> Result<HashMap<String, String>, String> {
-        Ok(HashMap::new())
-    }
-
-    fn tunnel_get(&self, _name: &str) -> Result<Option<serde_json::Value>, String> {
-        Ok(None)
-    }
-
-    fn is_tunnel_type_supported(&self, _tunnel_type: &str) -> bool {
-        false
-    }
-
     fn router_identity(&self) -> Result<String, String> {
         Ok(String::new())
     }
@@ -504,10 +481,9 @@ mod tests {
     #[test]
     fn fake_control_plane_returns_stubs() {
         let cp = FakeControlPlane::new();
-        assert!(cp.tunnel_list().unwrap().is_empty());
-        assert!(cp.tunnel_get("test").unwrap().is_none());
-        assert!(!cp.is_tunnel_type_supported("client"));
         assert_eq!(cp.router_uptime_ms(), 0);
+        assert_eq!(cp.router_version(), "Emissary 0.4.0");
+        assert!(cp.router_identity().unwrap().is_empty());
     }
 
     #[tokio::test]

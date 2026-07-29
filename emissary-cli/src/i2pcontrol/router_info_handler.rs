@@ -944,7 +944,7 @@ mod tests {
     }
 
     fn test_state(ri: FakeRouterInfoControl) -> crate::i2pcontrol::server::I2pControlState {
-        let mut state = crate::i2pcontrol::server::I2pControlState::new("test".to_string());
+        let mut state = crate::i2pcontrol::server::I2pControlState::new_test("test".to_string());
         state.set_router_info(Box::new(ri));
         state
     }

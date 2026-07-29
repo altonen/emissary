@@ -133,7 +133,6 @@ fn production_control_plane_identity_and_uptime() {
     assert_eq!(cp.router_identity().unwrap(), "test-router-id-b64");
     assert_eq!(cp.router_version(), "Emissary 0.5.0");
     assert!(cp.router_uptime_ms() < 1000);
-    assert!(!cp.is_tunnel_type_supported("client"));
 }
 
 // --- ProductionAddressBookControl ---

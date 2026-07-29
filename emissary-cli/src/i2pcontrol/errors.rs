@@ -30,6 +30,10 @@ pub enum I2pControlError {
     /// Listener bind error.
     Bind(String),
 
+    /// Persistence initialization or load failure (directory creation,
+    /// store construction, schema validation, or load error).
+    Persistence(String),
+
     /// Token store full or unavailable.
     TokenStore,
 
@@ -43,6 +47,9 @@ impl fmt::Display for I2pControlError {
             Self::Config(msg) => write!(f, "I2PControl configuration error: {msg}"),
             Self::Tls(msg) => write!(f, "I2PControl TLS error: {msg}"),
             Self::Bind(msg) => write!(f, "I2PControl bind error: {msg}"),
+            Self::Persistence(msg) => {
+                write!(f, "I2PControl persistence error: {msg}")
+            }
             Self::TokenStore => write!(f, "I2PControl token store error"),
             Self::Internal(_) => write!(f, "I2PControl internal error"),
         }

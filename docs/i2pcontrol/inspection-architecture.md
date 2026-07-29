@@ -1,6 +1,6 @@
 # I2PControl Inspection Architecture
 
-Status: M005 implemented (corrective pass)
+Status: M008 implemented (production composition closed)
 
 This document describes the read-only inspection architecture for I2PControl Proposal 170 in Emissary.
 
@@ -11,6 +11,8 @@ This document describes the read-only inspection architecture for I2PControl Pro
 3. **Bounded responses**: All collections and byte sizes have explicit limits
 4. **No event consumption**: `EventSubscriber` is never consumed by I2PControl
 5. **No core dependencies**: Core remains free of HTTP/JSON-RPC/Serde-JSON server dependencies
+6. **Fail-closed startup**: Production store failures abort I2PControl initialization
+7. **Shared identity**: All tunnel consumers share one loaded service object via `Arc`
 
 ## Architecture layers
 
@@ -48,12 +50,23 @@ This document describes the read-only inspection architecture for I2PControl Pro
 
 Shared application state holding:
 - Token service for authentication
-- Router info control adapter (trait object)
-- Address book control adapter (trait object)
+- Router info control adapter (`Arc<dyn RouterInfoControl>`)
+- Address book control adapter (`Arc<dyn AddressBookControl>`)
+- Tunnel manager control adapter (`Arc<dyn TunnelManagerControl>`)
+- Control plane adapter (`Arc<dyn ControlPlane>`)
 - Startup-retained values (router ID, RI bytes, RI Base64)
 - MetricsSnapshot for cumulative counters
 - RollingWindow for recent traffic
 - Concurrency semaphore
+
+Production state is constructed via `I2pControlState::new_production()` with all required
+dependencies supplied explicitly. Test state is constructed via `I2pControlState::new_test()`
+which installs fake adapters. The production constructor cannot omit a dependency or default
+to a fake.
+
+All trait-object fields use `Arc` (not `Box`) to enable shared identity across consumers.
+The tunnel manager, router info, and address book all reference the same underlying service
+objects through their `Arc` clones.
 
 ### RouterInfoControl trait
 

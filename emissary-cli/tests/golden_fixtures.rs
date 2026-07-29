@@ -74,7 +74,11 @@ fn fixture_authenticate_success_envelope() {
     let result = obj.get("result").unwrap().as_object().unwrap();
     assert!(result.contains_key("Token"));
     assert!(result.contains_key("API"));
-    assert_eq!(result.len(), 2, "authenticate result must have exactly 2 keys");
+    assert_eq!(
+        result.len(),
+        2,
+        "authenticate result must have exactly 2 keys"
+    );
 
     // Token must be a non-empty string
     let token = result.get("Token").unwrap().as_str().unwrap();
@@ -95,7 +99,10 @@ fn fixture_authenticate_error_envelope() {
     });
     let obj = resp.as_object().unwrap();
     assert!(obj.contains_key("error"));
-    assert!(!obj.contains_key("result"), "error response must not have result");
+    assert!(
+        !obj.contains_key("result"),
+        "error response must not have result"
+    );
 
     let error = obj.get("error").unwrap().as_object().unwrap();
     assert_eq!(error.get("code"), Some(&json!(-1)));
@@ -107,10 +114,8 @@ fn fixture_authenticate_error_envelope() {
 // ──────────────────────────────────────────────────────────────────────
 
 fn router_info_request(selectors: &[&str]) -> Value {
-    let params: serde_json::Map<String, Value> = selectors
-        .iter()
-        .map(|s| (s.to_string(), json!(true)))
-        .collect();
+    let params: serde_json::Map<String, Value> =
+        selectors.iter().map(|s| (s.to_string(), json!(true))).collect();
     json!({
         "jsonrpc": "2.0",
         "method": "RouterInfo",
@@ -177,7 +182,8 @@ fn fixture_ri_all_selectors() {
 
 #[test]
 fn fixture_ri_address_book_selectors() {
-    let req = router_info_request(emissary_cli::i2pcontrol::rpc::router_info_keys::ADDRESS_BOOK_KEYS);
+    let req =
+        router_info_request(emissary_cli::i2pcontrol::rpc::router_info_keys::ADDRESS_BOOK_KEYS);
     let parsed = emissary_cli::i2pcontrol::rpc::parse_request(&req.to_string()).unwrap();
     let params = parsed.params.unwrap();
     assert_eq!(params.len(), 6);
@@ -187,7 +193,11 @@ fn fixture_ri_address_book_selectors() {
 // § 3. AddressBook fixtures — all valid operation modes
 // ──────────────────────────────────────────────────────────────────────
 
-fn address_book_request(book: &str, request: &str, extra: Option<serde_json::Map<String, Value>>) -> Value {
+fn address_book_request(
+    book: &str,
+    request: &str,
+    extra: Option<serde_json::Map<String, Value>>,
+) -> Value {
     let mut params = serde_json::Map::new();
     params.insert("book".to_string(), json!(book));
     params.insert("request".to_string(), json!(request));
@@ -228,7 +238,10 @@ fn fixture_ab_lookup() {
 fn fixture_ab_add() {
     let mut extra = serde_json::Map::new();
     extra.insert("name".to_string(), json!("fixture-dest"));
-    extra.insert("value".to_string(), json!(" fixture-i2p-destination-REDACTED "));
+    extra.insert(
+        "value".to_string(),
+        json!(" fixture-i2p-destination-REDACTED "),
+    );
     let req = address_book_request("local", "Add", Some(extra));
     let parsed = emissary_cli::i2pcontrol::rpc::parse_request(&req.to_string()).unwrap();
     let params = parsed.params.unwrap();
@@ -261,7 +274,10 @@ fn fixture_ab_delete_all() {
     let req = address_book_request("private", "Delete", None);
     let parsed = emissary_cli::i2pcontrol::rpc::parse_request(&req.to_string()).unwrap();
     let params = parsed.params.unwrap();
-    assert!(!params.contains_key("name"), "Delete all must not have name param");
+    assert!(
+        !params.contains_key("name"),
+        "Delete all must not have name param"
+    );
 }
 
 #[test]
@@ -316,9 +332,18 @@ fn fixture_tm_list() {
 #[test]
 fn fixture_tm_create_all_types() {
     let types = [
-        "client", "httpclient", "ircclient", "socks", "socksirc",
-        "connectclient", "streamrclient", "server", "httpserver",
-        "httpbidirserver", "ircserver", "streamrserver",
+        "client",
+        "httpclient",
+        "ircclient",
+        "socks",
+        "socksirc",
+        "connectclient",
+        "streamrclient",
+        "server",
+        "httpserver",
+        "httpbidirserver",
+        "ircserver",
+        "streamrserver",
     ];
     for tt in types {
         let mut extra = serde_json::Map::new();
@@ -432,10 +457,8 @@ fn fixture_tm_all_restart() {
 // ──────────────────────────────────────────────────────────────────────
 
 fn client_services_request(selectors: &[&str]) -> Value {
-    let selector_map: serde_json::Map<String, Value> = selectors
-        .iter()
-        .map(|s| (s.to_string(), json!(true)))
-        .collect();
+    let selector_map: serde_json::Map<String, Value> =
+        selectors.iter().map(|s| (s.to_string(), json!(true))).collect();
     json!({
         "jsonrpc": "2.0",
         "method": "ClientServicesInfo",
@@ -641,7 +664,10 @@ fn fixtures_contain_no_real_secrets() {
         "fixture-updated-REDACTED",
     ];
     for f in &fixtures {
-        assert!(f.starts_with("fixture-"), "fixture must use fixture- prefix: {f}");
+        assert!(
+            f.starts_with("fixture-"),
+            "fixture must use fixture- prefix: {f}"
+        );
         assert!(f.contains("REDACTED"), "fixture must contain REDACTED: {f}");
     }
 }

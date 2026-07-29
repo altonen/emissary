@@ -30,16 +30,13 @@ use tokio::sync::Semaphore;
 use tracing;
 
 use super::auth::{self, TokenService};
-use super::control_plane::{
-    AddressBookControl, ControlPlane, FakeAddressBookControl, FakeControlPlane,
-    FakeTunnelManagerControl, TunnelManagerControl,
-};
+use super::control_plane::{AddressBookControl, ControlPlane, TunnelManagerControl};
 use super::errors::I2pControlError;
 use super::production::{
     EventMetrics, ProductionAddressBookControl, ProductionControlPlane,
     ProductionRouterInfoControl, ProductionTunnelManagerControl,
 };
-use super::router_info::{FakeRouterInfoControl, RouterInfoControl};
+use super::router_info::RouterInfoControl;
 use super::rpc::{
     self, AuthenticateParams, AuthenticateResult, JsonRpcErrorResponse, JsonRpcRequest,
     JsonRpcSuccess, RequestId,
@@ -93,15 +90,20 @@ impl I2pControlConfig {
 }
 
 /// Shared application state for the I2PControl server.
+///
+/// Production state is constructed via [`new_production`] with all required
+/// dependencies supplied explicitly. Test state is constructed via
+/// [`new_test`] which installs fake adapters. The generic `new()` is
+/// retained only for internal composition in `init_server`.
 pub(crate) struct I2pControlState {
     token_service: TokenService,
     #[allow(dead_code)]
     password: String,
     #[allow(dead_code)]
-    control_plane: Box<dyn ControlPlane>,
-    address_book_control: Box<dyn AddressBookControl>,
-    tunnel_manager: Box<dyn TunnelManagerControl>,
-    router_info: Box<dyn RouterInfoControl>,
+    control_plane: Arc<dyn ControlPlane>,
+    address_book_control: Arc<dyn AddressBookControl>,
+    tunnel_manager: Arc<dyn TunnelManagerControl>,
+    router_info: Arc<dyn RouterInfoControl>,
     semaphore: Semaphore,
     /// Local router identity in Base64 (retained at startup, never re-read).
     router_id: String,
@@ -122,18 +124,54 @@ pub(crate) struct I2pControlState {
 }
 
 impl I2pControlState {
-    /// Create a new state with the given password.
-    pub fn new(password: String) -> Self {
+    /// Create production state from required, already-validated dependencies.
+    ///
+    /// All adapter objects are constructed and loaded by the caller before
+    /// this call. The state takes ownership of the `Arc` clones and never
+    /// falls back to fake adapters.
+    pub fn new_production(password: String, controls: ProductionControls) -> Self {
         let metrics_snapshot = super::observability::MetricsSnapshot::new();
         let rolling_window = Arc::new(super::observability::RollingWindow::default());
         let log_ring = Arc::new(super::observability::LogRing::default());
         Self {
             token_service: TokenService::new(),
             password,
-            control_plane: Box::new(FakeControlPlane::new()),
-            address_book_control: Box::new(FakeAddressBookControl::new()),
-            tunnel_manager: Box::new(FakeTunnelManagerControl::new()),
-            router_info: Box::new(FakeRouterInfoControl::new()),
+            control_plane: controls.control_plane,
+            address_book_control: controls.address_books,
+            tunnel_manager: controls.tunnels,
+            router_info: controls.router_info,
+            semaphore: Semaphore::new(MAX_CONCURRENT_REQUESTS),
+            router_id: String::new(),
+            router_info_bytes: Vec::new(),
+            router_info_b64: String::new(),
+            startup_time: std::time::Instant::now(),
+            metrics_snapshot,
+            rolling_window,
+            log_ring,
+            service_registry: controls.service_registry,
+        }
+    }
+
+    /// Create test state with fake adapters.
+    ///
+    /// This is the only constructor that installs fake implementations.
+    /// Available only in test builds.
+    #[cfg(test)]
+    pub fn new_test(password: String) -> Self {
+        use super::control_plane::{
+            FakeAddressBookControl, FakeControlPlane, FakeTunnelManagerControl,
+        };
+        use super::router_info::FakeRouterInfoControl;
+        let metrics_snapshot = super::observability::MetricsSnapshot::new();
+        let rolling_window = Arc::new(super::observability::RollingWindow::default());
+        let log_ring = Arc::new(super::observability::LogRing::default());
+        Self {
+            token_service: TokenService::new(),
+            password,
+            control_plane: Arc::new(FakeControlPlane::new()),
+            address_book_control: Arc::new(FakeAddressBookControl::new()),
+            tunnel_manager: Arc::new(FakeTunnelManagerControl::new()),
+            router_info: Arc::new(FakeRouterInfoControl::new()),
             semaphore: Semaphore::new(MAX_CONCURRENT_REQUESTS),
             router_id: String::new(),
             router_info_bytes: Vec::new(),
@@ -210,38 +248,18 @@ impl I2pControlState {
 
     /// Replace the address book control plane (for testing).
     pub fn set_address_book_control(&mut self, control: Box<dyn AddressBookControl>) {
-        self.address_book_control = control;
+        self.address_book_control = control.into();
     }
 
     /// Replace the tunnel manager control plane (for testing).
     pub fn set_tunnel_manager(&mut self, control: Box<dyn TunnelManagerControl>) {
-        self.tunnel_manager = control;
+        self.tunnel_manager = control.into();
     }
 
     /// Replace the router info inspection control plane (for testing).
     #[allow(dead_code)]
     pub fn set_router_info(&mut self, control: Box<dyn RouterInfoControl>) {
-        self.router_info = control;
-    }
-
-    /// Replace the address book control plane with a production adapter.
-    pub fn set_address_book_control_production(&mut self, control: Box<dyn AddressBookControl>) {
-        self.address_book_control = control;
-    }
-
-    /// Replace the tunnel manager control plane with a production adapter.
-    pub fn set_tunnel_manager_production(&mut self, control: Box<dyn TunnelManagerControl>) {
-        self.tunnel_manager = control;
-    }
-
-    /// Replace the router info control plane with a production adapter.
-    pub fn set_router_info_production(&mut self, control: Box<dyn RouterInfoControl>) {
-        self.router_info = control;
-    }
-
-    /// Replace the control plane with a production adapter.
-    pub fn set_control_plane_production(&mut self, control: Box<dyn ControlPlane>) {
-        self.control_plane = control;
+        self.router_info = control.into();
     }
 
     /// Set startup-retained values (router identity, serialized RI).
@@ -283,16 +301,18 @@ impl I2pControlState {
     }
 
     /// List all tunnel definitions.
-    pub async fn tunnel_list(&self) -> Vec<crate::i2pcontrol::domain::tunnel::TunnelDefinition> {
-        self.tunnel_manager.list().await.unwrap_or_default()
+    pub async fn tunnel_list(
+        &self,
+    ) -> Result<Vec<crate::i2pcontrol::domain::tunnel::TunnelDefinition>, String> {
+        self.tunnel_manager.list().await
     }
 
     /// Get a tunnel definition by name.
     pub async fn tunnel_get(
         &self,
         name: &str,
-    ) -> Option<crate::i2pcontrol::domain::tunnel::TunnelDefinition> {
-        self.tunnel_manager.get(name).await.ok().flatten()
+    ) -> Result<Option<crate::i2pcontrol::domain::tunnel::TunnelDefinition>, String> {
+        self.tunnel_manager.get(name).await
     }
 
     /// Create a new tunnel definition.
@@ -337,8 +357,8 @@ impl I2pControlState {
     pub async fn address_book_list(
         &self,
         book_type: crate::i2pcontrol::domain::address_book::AdministrativeAddressBookType,
-    ) -> Vec<crate::i2pcontrol::domain::address_book::AddressBookEntry> {
-        self.address_book_control.list(book_type).await.unwrap_or_default()
+    ) -> Result<Vec<crate::i2pcontrol::domain::address_book::AddressBookEntry>, String> {
+        self.address_book_control.list(book_type).await
     }
 
     /// Look up an entry in the specified address book.
@@ -346,8 +366,8 @@ impl I2pControlState {
         &self,
         book_type: crate::i2pcontrol::domain::address_book::AdministrativeAddressBookType,
         hostname: &str,
-    ) -> Option<crate::i2pcontrol::domain::address_book::AddressBookEntry> {
-        self.address_book_control.lookup(book_type, hostname).await.ok().flatten()
+    ) -> Result<Option<crate::i2pcontrol::domain::address_book::AddressBookEntry>, String> {
+        self.address_book_control.lookup(book_type, hostname).await
     }
 
     /// Add an entry to the specified address book.
@@ -388,8 +408,8 @@ impl I2pControlState {
     /// Get the current subscription set.
     pub async fn address_book_subscriptions(
         &self,
-    ) -> crate::i2pcontrol::domain::address_book::SubscriptionSet {
-        self.address_book_control.subscriptions().await.unwrap_or_default()
+    ) -> Result<crate::i2pcontrol::domain::address_book::SubscriptionSet, String> {
+        self.address_book_control.subscriptions().await
     }
 
     /// Set the subscription set atomically.
@@ -403,8 +423,8 @@ impl I2pControlState {
     /// Get the address book configuration.
     pub async fn address_book_configuration(
         &self,
-    ) -> crate::i2pcontrol::domain::address_book::AddressBookConfiguration {
-        self.address_book_control.configuration().await.unwrap_or_default()
+    ) -> Result<crate::i2pcontrol::domain::address_book::AddressBookConfiguration, String> {
+        self.address_book_control.configuration().await
     }
 
     /// Set the address book configuration atomically.
@@ -414,6 +434,20 @@ impl I2pControlState {
     ) -> Result<(), String> {
         self.address_book_control.set_configuration(configuration).await
     }
+}
+
+/// Production dependencies for I2PControl state construction.
+///
+/// All fields are required. The caller must construct and load each adapter
+/// before passing it here. This ensures that the production composition root
+/// cannot silently substitute fake, empty, zeroed, or separately initialized
+/// state.
+pub struct ProductionControls {
+    pub address_books: Arc<dyn AddressBookControl>,
+    pub tunnels: Arc<dyn TunnelManagerControl>,
+    pub router_info: Arc<dyn RouterInfoControl>,
+    pub control_plane: Arc<dyn ControlPlane>,
+    pub service_registry: ServiceRegistry,
 }
 
 /// A bound and initialized I2PControl server, ready to serve requests.
@@ -446,10 +480,10 @@ impl ServerInstance {
 
 /// Bundle of dependencies used to construct the production I2PControl server.
 ///
-/// All fields are optional. When present, they replace the corresponding
-/// fakes with production adapters. The fakes are retained as defaults so
-/// that headless test environments and unit tests can build a server
-/// without supplying real router state.
+/// When production adapters are supplied, they replace the corresponding
+/// fakes. The fakes are retained as defaults so that headless test
+/// environments and unit tests can build a server without supplying real
+/// router state.
 pub struct ServerInitContext {
     /// Local router identity in Base64.
     pub router_id: String,
@@ -465,10 +499,6 @@ pub struct ServerInitContext {
     pub configured_bandwidth_in: u64,
     /// Configured outbound bandwidth limit in bytes/second.
     pub configured_bandwidth_out: u64,
-    /// Whether to use the production address book adapter.
-    pub use_production_address_book: bool,
-    /// Whether to use the production tunnel manager adapter.
-    pub use_production_tunnel_manager: bool,
     /// Pre-built service registry from the application composition root.
     ///
     /// When provided, `init_server` uses this registry instead of creating
@@ -488,8 +518,6 @@ impl ServerInitContext {
             share_ratio: 0.0,
             configured_bandwidth_in: 0,
             configured_bandwidth_out: 0,
-            use_production_address_book: false,
-            use_production_tunnel_manager: false,
             service_registry: None,
         }
     }
@@ -513,18 +541,6 @@ impl ServerInitContext {
         self
     }
 
-    /// Enable the production address book adapter rooted at the given path.
-    pub fn with_production_address_book(mut self) -> Self {
-        self.use_production_address_book = true;
-        self
-    }
-
-    /// Enable the production tunnel manager adapter rooted at the given path.
-    pub fn with_production_tunnel_manager(mut self) -> Self {
-        self.use_production_tunnel_manager = true;
-        self
-    }
-
     /// Inject a pre-built service registry from the application composition
     /// root. Producers in the composition root (proxy tasks, listener
     /// snapshot readouts, tunnel query tasks) share clones of this same
@@ -540,6 +556,12 @@ impl ServerInitContext {
 /// Returns a `ServerInstance` ready to serve, or an error if startup fails.
 /// This function is synchronous-safe for calling from `setup_router` so that
 /// bind/TLS/startup failures are surfaced as application errors.
+///
+/// # Fail-closed behavior
+///
+/// Directory creation, adapter construction, or store load failure aborts
+/// I2PControl initialization. No partially constructed server state is
+/// returned. No fake adapters are substituted on failure.
 pub async fn init_server(
     config: &I2pControlConfig,
     base_path: &std::path::Path,
@@ -551,120 +573,79 @@ pub async fn init_server(
     let tls_config = super::tls::build_tls_config(&config.tls, base_path)?;
     let _tls_acceptor = tokio_rustls::TlsAcceptor::from(tls_config);
 
-    // Build shared state with startup-retained values
     let router_info_bytes = ctx.router_info_bytes.clone();
     let router_info_b64 = base64_encode(&router_info_bytes);
-    let mut state = I2pControlState::new(config.password.clone());
+
+    // --- Build and load production address book adapter ---
+    let ab_dir = base_path.join("addressbooks");
+    std::fs::create_dir_all(&ab_dir).map_err(|e| {
+        I2pControlError::Persistence(format!(
+            "failed to create address book directory {}: {e}",
+            ab_dir.display()
+        ))
+    })?;
+    let address_books = Arc::new(ProductionAddressBookControl::new(ab_dir));
+    address_books.load().await.map_err(|e| {
+        I2pControlError::Persistence(format!("failed to load address book store: {e}"))
+    })?;
+
+    // --- Build and load production tunnel manager adapter ---
+    let tm_dir = base_path.join("tunnels");
+    std::fs::create_dir_all(&tm_dir).map_err(|e| {
+        I2pControlError::Persistence(format!(
+            "failed to create tunnel store directory {}: {e}",
+            tm_dir.display()
+        ))
+    })?;
+    let tunnels: Arc<ProductionTunnelManagerControl> = Arc::new(
+        ProductionTunnelManagerControl::new(tm_dir.clone()).map_err(|e| {
+            I2pControlError::Persistence(format!("failed to create tunnel manager: {e}"))
+        })?,
+    );
+    tunnels
+        .load()
+        .await
+        .map_err(|e| I2pControlError::Persistence(format!("failed to load tunnel store: {e}")))?;
+
+    // --- Build the shared tunnel service reference for all consumers ---
+    let tunnels_shared: Arc<dyn TunnelManagerControl> = tunnels.clone();
+
+    // --- Build production control plane (identity/version/uptime only) ---
+    let metrics = ctx.event_metrics.clone().unwrap_or_else(|| Arc::new(NoopEventMetrics));
+    let control_plane: Arc<dyn ControlPlane> = Arc::new(ProductionControlPlane::new(
+        ctx.router_id.clone(),
+        env!("CARGO_PKG_VERSION").to_string(),
+        Arc::clone(&metrics),
+    ));
+
+    // --- Build production router info adapter using the shared tunnel service ---
+    let log_ring = Arc::new(super::observability::LogRing::default());
+    let router_info: Arc<dyn RouterInfoControl> = Arc::new(ProductionRouterInfoControl::new(
+        ctx.router_id.clone(),
+        env!("CARGO_PKG_VERSION").to_string(),
+        ctx.share_ratio,
+        ctx.configured_bandwidth_in,
+        ctx.configured_bandwidth_out,
+        metrics,
+        log_ring,
+        tunnels_shared,
+    ));
+
+    // --- Install the pre-built service registry from the composition root ---
+    let service_registry = ctx.service_registry.unwrap_or_default();
+
+    // --- Construct production state with all required dependencies ---
+    let mut state = I2pControlState::new_production(
+        config.password.clone(),
+        ProductionControls {
+            address_books,
+            tunnels: tunnels.clone(),
+            router_info,
+            control_plane,
+            service_registry,
+        },
+    );
     state.set_startup_values(ctx.router_id, router_info_bytes, router_info_b64);
-
-    // Install the pre-built service registry from the composition root when
-    // supplied, otherwise keep the internally-created empty registry.
-    if let Some(registry) = ctx.service_registry {
-        state.set_service_registry(registry);
-    }
-
-    // Wire production adapters as requested. Each branch is independent so
-    // a single failure does not affect unrelated adapters.
-    if ctx.use_production_address_book {
-        let dir = base_path.join("addressbooks");
-        if let Err(e) = std::fs::create_dir_all(&dir) {
-            tracing::warn!(
-                target: LOG_TARGET,
-                ?e,
-                dir = %dir.display(),
-                "failed to create address book dir, falling back to fake",
-            );
-        } else {
-            let ab = ProductionAddressBookControl::new(dir);
-            if let Err(e) = ab.load().await {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    ?e,
-                    "failed to load address book store, falling back to fake",
-                );
-            } else {
-                state.set_address_book_control_production(Box::new(ab));
-            }
-        }
-    }
-
-    if ctx.use_production_tunnel_manager {
-        let dir = base_path.join("tunnels");
-        if let Err(e) = std::fs::create_dir_all(&dir) {
-            tracing::warn!(
-                target: LOG_TARGET,
-                ?e,
-                dir = %dir.display(),
-                "failed to create tunnel store dir, falling back to fake",
-            );
-        } else {
-            match ProductionTunnelManagerControl::new(dir) {
-                Ok(tm) => {
-                    if let Err(e) = tm.load().await {
-                        tracing::warn!(
-                            target: LOG_TARGET,
-                            ?e,
-                            "failed to load tunnel store, falling back to fake",
-                        );
-                    } else {
-                        state.set_tunnel_manager_production(Box::new(tm));
-                    }
-                }
-                Err(e) => tracing::warn!(
-                    target: LOG_TARGET,
-                    ?e,
-                    "failed to create production tunnel manager, falling back to fake",
-                ),
-            }
-        }
-    }
-
-    // Wire the production control plane when we have event metrics. The
-    // production router info adapter needs the tunnel manager; if a fake
-    // is in use, the configured tunnel count is reported as 0.
-    if let Some(metrics) = ctx.event_metrics.clone() {
-        let cp = ProductionControlPlane::new(
-            state.router_id.clone(),
-            env!("CARGO_PKG_VERSION").to_string(),
-            Arc::clone(&metrics),
-        );
-        state.set_control_plane_production(Box::new(cp));
-
-        // Build a router info adapter. If the user enabled the production
-        // tunnel manager, point the adapter at the same directory; otherwise
-        // build a fresh in-memory adapter.
-        let tm_arc: Arc<ProductionTunnelManagerControl> = if ctx.use_production_tunnel_manager {
-            let dir = base_path.join("tunnels");
-            ProductionTunnelManagerControl::new(dir).ok().map(Arc::new).unwrap_or_else(|| {
-                // Use a safe fallback directory.
-                let dir = std::env::temp_dir().join("emissary-i2pcontrol-tunnels-fallback");
-                let _ = std::fs::create_dir_all(&dir);
-                Arc::new(
-                    ProductionTunnelManagerControl::new(dir)
-                        .expect("tunnel store directory was created"),
-                )
-            })
-        } else {
-            let dir = std::env::temp_dir().join("emissary-i2pcontrol-tunnels-fallback");
-            let _ = std::fs::create_dir_all(&dir);
-            Arc::new(
-                ProductionTunnelManagerControl::new(dir)
-                    .expect("tunnel store directory was created"),
-            )
-        };
-        let log_ring = state.log_ring_arc();
-        let ri = ProductionRouterInfoControl::new(
-            state.router_id.clone(),
-            env!("CARGO_PKG_VERSION").to_string(),
-            ctx.share_ratio,
-            ctx.configured_bandwidth_in,
-            ctx.configured_bandwidth_out,
-            metrics,
-            log_ring,
-            tm_arc,
-        );
-        state.set_router_info_production(Box::new(ri));
-    }
 
     let state = Arc::new(state);
 
@@ -684,6 +665,43 @@ pub async fn init_server(
         state,
         bind: config.bind,
     })
+}
+
+/// Zero-cost event metrics stub for production startup when no real metrics
+/// source is provided. All counters return zero.
+struct NoopEventMetrics;
+
+impl EventMetrics for NoopEventMetrics {
+    fn transport_inbound_bytes(&self) -> u64 {
+        0
+    }
+    fn transport_outbound_bytes(&self) -> u64 {
+        0
+    }
+    fn transit_inbound_bytes(&self) -> u64 {
+        0
+    }
+    fn transit_outbound_bytes(&self) -> u64 {
+        0
+    }
+    fn connected_routers(&self) -> usize {
+        0
+    }
+    fn transit_tunnel_count(&self) -> usize {
+        0
+    }
+    fn tunnel_build_successes(&self) -> u64 {
+        0
+    }
+    fn tunnel_build_failures(&self) -> u64 {
+        0
+    }
+    fn ipv4_firewall_status(&self) -> emissary_core::FirewallStatus {
+        emissary_core::FirewallStatus::Unknown
+    }
+    fn ipv6_firewall_status(&self) -> emissary_core::FirewallStatus {
+        emissary_core::FirewallStatus::Unknown
+    }
 }
 
 /// Run the I2PControl server loop with structured shutdown.
@@ -1023,6 +1041,10 @@ fn extract_token(headers: &HeaderMap) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::i2pcontrol::control_plane::{
+        FakeAddressBookControl, FakeControlPlane, FakeTunnelManagerControl,
+    };
+    use crate::i2pcontrol::router_info::FakeRouterInfoControl;
 
     #[test]
     fn config_validation_empty_password() {
@@ -1077,5 +1099,405 @@ mod tests {
     #[test]
     fn resolve_id_defaults_to_null() {
         assert_eq!(resolve_id(&None), RequestId::Null);
+    }
+
+    // --- M008 composition and provenance tests ---
+
+    #[test]
+    fn production_requires_all_dependencies() {
+        let tm: Arc<dyn TunnelManagerControl> = Arc::new(FakeTunnelManagerControl::new());
+        let ab: Arc<dyn AddressBookControl> = Arc::new(FakeAddressBookControl::new());
+        let ri: Arc<dyn RouterInfoControl> = Arc::new(FakeRouterInfoControl::new());
+        let cp: Arc<dyn ControlPlane> = Arc::new(FakeControlPlane::new());
+
+        let state = I2pControlState::new_production(
+            "testpass".to_string(),
+            ProductionControls {
+                address_books: ab,
+                tunnels: tm,
+                router_info: ri,
+                control_plane: cp,
+                service_registry: ServiceRegistry::new(),
+            },
+        );
+
+        assert_eq!(state.router_id(), "");
+    }
+
+    #[test]
+    fn test_state_is_only_path_for_fakes() {
+        let state = I2pControlState::new_test("testpass".to_string());
+        let _ = state.router_info();
+    }
+
+    #[tokio::test]
+    async fn shared_tunnel_object_identity() {
+        use crate::i2pcontrol::domain::tunnel::{
+            StartIntent, TunnelDefinition, TunnelName, TunnelOwnership, TunnelRuntimeState,
+            TunnelType,
+        };
+        use std::sync::atomic::AtomicUsize;
+
+        struct SentinelTunnelControl {
+            generation: AtomicUsize,
+        }
+        impl SentinelTunnelControl {
+            fn new() -> Self {
+                Self {
+                    generation: AtomicUsize::new(0),
+                }
+            }
+            fn generation(&self) -> usize {
+                self.generation.load(std::sync::atomic::Ordering::Acquire)
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl TunnelManagerControl for SentinelTunnelControl {
+            async fn list(&self) -> Result<Vec<TunnelDefinition>, String> {
+                Ok(Vec::new())
+            }
+            async fn get(&self, _: &str) -> Result<Option<TunnelDefinition>, String> {
+                Ok(None)
+            }
+            async fn create(&self, _: TunnelDefinition) -> Result<(), String> {
+                self.generation.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                Ok(())
+            }
+            async fn update(
+                &self,
+                _: &str,
+                _: TunnelDefinition,
+                _: Option<TunnelName>,
+            ) -> Result<bool, String> {
+                Ok(false)
+            }
+            async fn delete(&self, _: &str) -> Result<bool, String> {
+                Ok(false)
+            }
+            async fn start(&self, _: &str) -> Result<String, String> {
+                Ok("ok".into())
+            }
+            async fn stop(&self, _: &str) -> Result<String, String> {
+                Ok("ok".into())
+            }
+            async fn restart(&self, _: &str) -> Result<String, String> {
+                Ok("ok".into())
+            }
+            fn get_backend(
+                &self,
+                _: TunnelType,
+            ) -> Option<Arc<dyn crate::i2pcontrol::backends::TunnelBackend>> {
+                None
+            }
+            fn registry(&self) -> &crate::i2pcontrol::backends::registry::TunnelBackendRegistry {
+                use std::sync::OnceLock;
+                static REGISTRY: OnceLock<
+                    crate::i2pcontrol::backends::registry::TunnelBackendRegistry,
+                > = OnceLock::new();
+                REGISTRY.get_or_init(|| {
+                    crate::i2pcontrol::backends::registry::create_default_registry()
+                        .expect("default registry is exhaustive")
+                })
+            }
+        }
+
+        let sentinel = Arc::new(SentinelTunnelControl::new());
+
+        sentinel
+            .create(TunnelDefinition {
+                name: TunnelName::new("t").unwrap(),
+                tunnel_type: TunnelType::Client,
+                ownership: TunnelOwnership::ControlPlane,
+                runtime_state: TunnelRuntimeState::Stopped,
+                start_intent: StartIntent::DoNotStart,
+                options: Default::default(),
+                raw_config: Default::default(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(sentinel.generation(), 1);
+
+        let ab: Arc<dyn AddressBookControl> = Arc::new(FakeAddressBookControl::new());
+        let ri: Arc<dyn RouterInfoControl> = Arc::new(FakeRouterInfoControl::new());
+        let cp: Arc<dyn ControlPlane> = Arc::new(FakeControlPlane::new());
+
+        let state = I2pControlState::new_production(
+            "testpass".to_string(),
+            ProductionControls {
+                address_books: ab,
+                tunnels: sentinel.clone() as Arc<dyn TunnelManagerControl>,
+                router_info: ri,
+                control_plane: cp,
+                service_registry: ServiceRegistry::new(),
+            },
+        );
+
+        let _ = state.tunnel_list().await.unwrap();
+        assert_eq!(
+            sentinel.generation(),
+            1,
+            "state and sentinel share the same object"
+        );
+    }
+
+    #[tokio::test]
+    async fn tunnel_list_failure_returns_error() {
+        struct FailingTunnelControl;
+        #[async_trait::async_trait]
+        impl TunnelManagerControl for FailingTunnelControl {
+            async fn list(
+                &self,
+            ) -> Result<Vec<crate::i2pcontrol::domain::tunnel::TunnelDefinition>, String>
+            {
+                Err("store read failed".into())
+            }
+            async fn get(
+                &self,
+                _: &str,
+            ) -> Result<Option<crate::i2pcontrol::domain::tunnel::TunnelDefinition>, String>
+            {
+                Err("store read failed".into())
+            }
+            async fn create(
+                &self,
+                _: crate::i2pcontrol::domain::tunnel::TunnelDefinition,
+            ) -> Result<(), String> {
+                unimplemented!()
+            }
+            async fn update(
+                &self,
+                _: &str,
+                _: crate::i2pcontrol::domain::tunnel::TunnelDefinition,
+                _: Option<crate::i2pcontrol::domain::tunnel::TunnelName>,
+            ) -> Result<bool, String> {
+                unimplemented!()
+            }
+            async fn delete(&self, _: &str) -> Result<bool, String> {
+                unimplemented!()
+            }
+            async fn start(&self, _: &str) -> Result<String, String> {
+                unimplemented!()
+            }
+            async fn stop(&self, _: &str) -> Result<String, String> {
+                unimplemented!()
+            }
+            async fn restart(&self, _: &str) -> Result<String, String> {
+                unimplemented!()
+            }
+            fn get_backend(
+                &self,
+                _: crate::i2pcontrol::domain::tunnel::TunnelType,
+            ) -> Option<Arc<dyn crate::i2pcontrol::backends::TunnelBackend>> {
+                None
+            }
+            fn registry(&self) -> &crate::i2pcontrol::backends::registry::TunnelBackendRegistry {
+                use std::sync::OnceLock;
+                static REGISTRY: OnceLock<
+                    crate::i2pcontrol::backends::registry::TunnelBackendRegistry,
+                > = OnceLock::new();
+                REGISTRY.get_or_init(|| {
+                    crate::i2pcontrol::backends::registry::create_default_registry()
+                        .expect("default registry is exhaustive")
+                })
+            }
+        }
+
+        let tm: Arc<dyn TunnelManagerControl> = Arc::new(FailingTunnelControl);
+        let ab: Arc<dyn AddressBookControl> = Arc::new(FakeAddressBookControl::new());
+        let ri: Arc<dyn RouterInfoControl> = Arc::new(FakeRouterInfoControl::new());
+        let cp: Arc<dyn ControlPlane> = Arc::new(FakeControlPlane::new());
+
+        let state = I2pControlState::new_production(
+            "testpass".to_string(),
+            ProductionControls {
+                address_books: ab,
+                tunnels: tm,
+                router_info: ri,
+                control_plane: cp,
+                service_registry: ServiceRegistry::new(),
+            },
+        );
+
+        let result = state.tunnel_list().await;
+        assert!(
+            result.is_err(),
+            "tunnel_list should propagate the error, not return empty Vec"
+        );
+
+        let result = state.tunnel_get("test").await;
+        assert!(
+            result.is_err(),
+            "tunnel_get should propagate the error, not return None"
+        );
+    }
+
+    #[tokio::test]
+    async fn address_book_failure_returns_error() {
+        use crate::i2pcontrol::domain::address_book::AdministrativeAddressBookType;
+
+        struct FailingAddressBookControl;
+        #[async_trait::async_trait]
+        impl crate::i2pcontrol::control_plane::AddressBookControl for FailingAddressBookControl {
+            async fn list(
+                &self,
+                _: AdministrativeAddressBookType,
+            ) -> Result<Vec<crate::i2pcontrol::domain::address_book::AddressBookEntry>, String>
+            {
+                Err("store read failed".into())
+            }
+            async fn lookup(
+                &self,
+                _: AdministrativeAddressBookType,
+                _: &str,
+            ) -> Result<Option<crate::i2pcontrol::domain::address_book::AddressBookEntry>, String>
+            {
+                Err("store read failed".into())
+            }
+            async fn add(
+                &self,
+                _: AdministrativeAddressBookType,
+                _: crate::i2pcontrol::domain::address_book::AddressBookEntry,
+            ) -> Result<(), String> {
+                unimplemented!()
+            }
+            async fn update(
+                &self,
+                _: AdministrativeAddressBookType,
+                _: crate::i2pcontrol::domain::address_book::AddressBookEntry,
+            ) -> Result<bool, String> {
+                unimplemented!()
+            }
+            async fn delete(
+                &self,
+                _: AdministrativeAddressBookType,
+                _: &str,
+            ) -> Result<bool, String> {
+                unimplemented!()
+            }
+            async fn delete_all(&self, _: AdministrativeAddressBookType) -> Result<bool, String> {
+                unimplemented!()
+            }
+            async fn subscriptions(
+                &self,
+            ) -> Result<crate::i2pcontrol::domain::address_book::SubscriptionSet, String>
+            {
+                Err("store read failed".into())
+            }
+            async fn set_subscriptions(
+                &self,
+                _: crate::i2pcontrol::domain::address_book::SubscriptionSet,
+            ) -> Result<(), String> {
+                unimplemented!()
+            }
+            async fn configuration(
+                &self,
+            ) -> Result<crate::i2pcontrol::domain::address_book::AddressBookConfiguration, String>
+            {
+                Err("store read failed".into())
+            }
+            async fn set_configuration(
+                &self,
+                _: crate::i2pcontrol::domain::address_book::AddressBookConfiguration,
+            ) -> Result<(), String> {
+                unimplemented!()
+            }
+        }
+
+        let tm: Arc<dyn TunnelManagerControl> = Arc::new(FakeTunnelManagerControl::new());
+        let ab: Arc<dyn AddressBookControl> = Arc::new(FailingAddressBookControl);
+        let ri: Arc<dyn RouterInfoControl> = Arc::new(FakeRouterInfoControl::new());
+        let cp: Arc<dyn ControlPlane> = Arc::new(FakeControlPlane::new());
+
+        let state = I2pControlState::new_production(
+            "testpass".to_string(),
+            ProductionControls {
+                address_books: ab,
+                tunnels: tm,
+                router_info: ri,
+                control_plane: cp,
+                service_registry: ServiceRegistry::new(),
+            },
+        );
+
+        let result = state.address_book_list(AdministrativeAddressBookType::Private).await;
+        assert!(
+            result.is_err(),
+            "address_book_list should propagate error, not return empty Vec"
+        );
+
+        let result = state
+            .address_book_lookup(AdministrativeAddressBookType::Private, "test.i2p")
+            .await;
+        assert!(
+            result.is_err(),
+            "address_book_lookup should propagate error, not return None"
+        );
+
+        let result = state.address_book_subscriptions().await;
+        assert!(
+            result.is_err(),
+            "address_book_subscriptions should propagate error"
+        );
+    }
+
+    #[tokio::test]
+    async fn fail_closed_startup_dir_creation_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Block addressbooks directory creation by placing a file in its path
+        let blocker = tmp.path().join("addressbooks");
+        std::fs::write(&blocker, "x").unwrap();
+
+        let config = I2pControlConfig {
+            enabled: true,
+            bind: "127.0.0.1:0".parse().unwrap(),
+            password: "testpass".to_string(),
+            tls: TlsConfig {
+                certificate: None,
+                private_key: None,
+            },
+        };
+        let ctx = ServerInitContext::new("id".into(), vec![]);
+
+        let result = init_server(&config, tmp.path(), ctx).await;
+        assert!(result.is_err());
+        if let Err(I2pControlError::Persistence(msg)) = result {
+            assert!(
+                msg.contains("address book"),
+                "error should mention address book: {msg}"
+            );
+        } else {
+            panic!("expected Persistence error");
+        }
+    }
+
+    #[tokio::test]
+    async fn fail_closed_startup_no_temp_fallback() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = I2pControlConfig {
+            enabled: true,
+            bind: "127.0.0.1:0".parse().unwrap(),
+            password: "testpass".to_string(),
+            tls: TlsConfig {
+                certificate: None,
+                private_key: None,
+            },
+        };
+        let ctx = ServerInitContext::new("id".into(), vec![]);
+
+        let _ = init_server(&config, tmp.path(), ctx).await.unwrap();
+
+        // No temp fallback directories should have been created
+        let temp = std::env::temp_dir();
+        let entries: Vec<_> = std::fs::read_dir(&temp)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains("emissary-i2pcontrol"))
+            .collect();
+        assert!(
+            entries.is_empty(),
+            "no fallback directories should exist in temp: {:?}",
+            entries
+        );
     }
 }

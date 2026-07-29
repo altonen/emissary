@@ -493,8 +493,8 @@ The subsystem closes only when M013 independently confirms the exact completion 
 | 005 | corrective pass required | `plans/implementation/i2pcontrol-proposal-170/005-router-info-inspection.md` | M008–M010 | Fabricated/default production state and missing core inspection |
 | 006 | corrective pass required | `plans/implementation/i2pcontrol-proposal-170/006-client-services-info.md` | M011 | Startup-stale tunnel inventory and empty SAM sessions |
 | 007 | corrective pass required / superseded | `plans/implementation/i2pcontrol-proposal-170/007-conformance-hardening-and-strict-closure.md` | M012–M013 | Invalid security evidence and non-independent closure |
-| 008 | ready | `plans/implementation/i2pcontrol-proposal-170/008-production-composition-and-durable-state-integrity.md` | pending | — |
-| 009 | blocked | `plans/implementation/i2pcontrol-proposal-170/009-router-info-availability-and-truthfulness.md` | pending | M008 strict closure |
+| 008 | closed | `plans/implementation/i2pcontrol-proposal-170/008-production-composition-and-durable-state-integrity.md` | `plans/closure/i2pcontrol-proposal-170/008-closure.md` | — |
+| 009 | ready | `plans/implementation/i2pcontrol-proposal-170/009-router-info-availability-and-truthfulness.md` | pending | M008 closed |
 | 010 | blocked | `plans/implementation/i2pcontrol-proposal-170/010-bounded-core-router-inspection.md` | pending | M009 strict closure |
 | 011 | blocked | `plans/implementation/i2pcontrol-proposal-170/011-client-services-live-state.md` | pending | M008 and M009 strict closure |
 | 012 | blocked | `plans/implementation/i2pcontrol-proposal-170/012-real-tls-and-request-resource-hardening.md` | pending | M008/M009 interfaces stable; activate after M009 |
