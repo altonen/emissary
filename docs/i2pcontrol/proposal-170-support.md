@@ -1,6 +1,6 @@
 # Proposal 170 Support Status
 
-Status: M005 corrective pass implemented
+Status: M006 implemented (composition wiring closed)
 
 This document tracks the implementation status of Proposal 170 I2PControl expansion in Emissary.
 
@@ -13,7 +13,7 @@ This document tracks the implementation status of Proposal 170 I2PControl expans
 | `RouterInfo` | Implemented (corrective pass) | M005 |
 | `AddressBook` | Implemented | M003 |
 | `TunnelManager` | Implemented | M004 |
-| `ClientServicesInfo` | Not started | M006 |
+| `ClientServicesInfo` | Implemented | M006 |
 
 ## TunnelManager action support
 
@@ -97,7 +97,21 @@ Real backend implementations will be added in future milestones.
 
 ## ClientServicesInfo selectors
 
-Not yet implemented. Planned for M006.
+Implemented in M006. The `ClientServicesInfo` method accepts a `Selector` map
+with boolean values for the six exact Proposal 170 keys:
+
+| Selector | Response shape | Source |
+|---|---|---|
+| `I2PTunnel` | `{client: {…}, server: {…}}` | `ProductionTunnelManagerControl::list()` |
+| `HTTPProxy` | `{enabled, address, port}` | HTTP proxy `Listening`/`Stopped` |
+| `SOCKS` | `{enabled, address, port}` | SOCKS proxy `Listening`/`Stopped` |
+| `SAM` | `{enabled, sessions}` | core `SamServer::tcp_local_address()` |
+| `BOB` | `false` (boolean) | exact Proposal 170 value (not implemented) |
+| `I2CP` | `{enabled}` | core `ProtocolAddressInfo::i2cp` |
+
+See [`docs/i2pcontrol/client-services.md`](client-services.md) for the
+full method documentation, including configured-vs-listening semantics
+and integration evidence.
 
 ## Security
 
@@ -122,5 +136,5 @@ Not yet implemented. Planned for M006.
 | M003 | Closed | AddressBook handler |
 | M004 | Closed | TunnelManager contract and stubs |
 | M005 | Corrective pass | RouterInfo inspection (121 selectors, bounded metrics, logs) |
-| M006 | Blocked | ClientServicesInfo |
-| M007 | Blocked | Integration, restart, security hardening |
+| M006 | Closed | ClientServicesInfo (composition wiring complete) |
+| M007 | Ready | Integration, restart, security hardening |

@@ -158,6 +158,14 @@ impl I2pControlState {
         &self.service_registry
     }
 
+    /// Get a clone of the service registry (cheap Arc clone). Used by the
+    /// application composition root to share the registry with producers
+    /// (proxy tasks, listener snapshot readouts, tunnel query tasks).
+    #[allow(dead_code)]
+    pub fn service_registry_clone(&self) -> ServiceRegistry {
+        self.service_registry.clone()
+    }
+
     /// Take a snapshot from the service registry.
     #[allow(dead_code)]
     pub fn service_snapshot(&self) -> ServiceSnapshot {
@@ -165,6 +173,11 @@ impl I2pControlState {
     }
 
     /// Replace the service registry (for testing or composition).
+    ///
+    /// Producers in the composition root (proxy tasks, listener snapshot
+    /// readouts) should allocate their handles from the registry they
+    /// already hold a clone of — only the I2PControl-facing half is
+    /// replaced here.
     #[allow(dead_code)]
     pub fn set_service_registry(&mut self, registry: ServiceRegistry) {
         self.service_registry = registry;
@@ -413,6 +426,24 @@ pub struct ServerInstance {
     bind: SocketAddr,
 }
 
+impl ServerInstance {
+    /// Get a clone of the shared [`I2pControlState`].
+    ///
+    /// Used by the application composition root to access the service
+    /// registry handle so additional producers (e.g. SAM session snapshot
+    /// tasks) can be wired after [`init_server`] returns.
+    #[allow(dead_code)]
+    pub(crate) fn state_clone(&self) -> Arc<I2pControlState> {
+        Arc::clone(&self.state)
+    }
+
+    /// Get the bound listener address.
+    #[allow(dead_code)]
+    pub(crate) fn bind(&self) -> SocketAddr {
+        self.bind
+    }
+}
+
 /// Bundle of dependencies used to construct the production I2PControl server.
 ///
 /// All fields are optional. When present, they replace the corresponding
@@ -438,6 +469,12 @@ pub struct ServerInitContext {
     pub use_production_address_book: bool,
     /// Whether to use the production tunnel manager adapter.
     pub use_production_tunnel_manager: bool,
+    /// Pre-built service registry from the application composition root.
+    ///
+    /// When provided, `init_server` uses this registry instead of creating
+    /// a new one. The composition root shares its clone of the same
+    /// registry with proxy tasks and listener snapshot readouts.
+    pub service_registry: Option<ServiceRegistry>,
 }
 
 impl ServerInitContext {
@@ -453,6 +490,7 @@ impl ServerInitContext {
             configured_bandwidth_out: 0,
             use_production_address_book: false,
             use_production_tunnel_manager: false,
+            service_registry: None,
         }
     }
 
@@ -486,6 +524,15 @@ impl ServerInitContext {
         self.use_production_tunnel_manager = true;
         self
     }
+
+    /// Inject a pre-built service registry from the application composition
+    /// root. Producers in the composition root (proxy tasks, listener
+    /// snapshot readouts, tunnel query tasks) share clones of this same
+    /// registry.
+    pub fn with_service_registry(mut self, registry: ServiceRegistry) -> Self {
+        self.service_registry = Some(registry);
+        self
+    }
 }
 
 /// Initialize the I2PControl server: validate config, set up TLS, bind the port.
@@ -509,6 +556,12 @@ pub async fn init_server(
     let router_info_b64 = base64_encode(&router_info_bytes);
     let mut state = I2pControlState::new(config.password.clone());
     state.set_startup_values(ctx.router_id, router_info_bytes, router_info_b64);
+
+    // Install the pre-built service registry from the composition root when
+    // supplied, otherwise keep the internally-created empty registry.
+    if let Some(registry) = ctx.service_registry {
+        state.set_service_registry(registry);
+    }
 
     // Wire production adapters as requested. Each branch is independent so
     // a single failure does not affect unrelated adapters.

@@ -28,6 +28,9 @@ use crate::{
     tunnel::{client::ClientTunnelManager, server::ServerTunnelManager},
 };
 
+#[cfg(feature = "i2pcontrol")]
+use crate::i2pcontrol::control_plane::TunnelManagerControl;
+
 use anyhow::anyhow;
 use clap::Parser;
 use emissary_core::{
@@ -233,6 +236,30 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
     // save newest router info to disk
     File::create(path.join("router.info"))?.write_all(&local_router_info)?;
 
+    // Create the passive client-service registry in the application
+    // composition root. Producers (proxy tasks, listener snapshot
+    // readouts) and the I2PControl state share clones of the same
+    // registry through `Arc`, so observations emitted from the spawn
+    // sites become visible to `ClientServicesInfo` immediately.
+    #[cfg(feature = "i2pcontrol")]
+    let service_registry = i2pcontrol::service_registry::ServiceRegistry::new();
+
+    // Record I2CP and SAM listener state from the actual bound
+    // addresses produced by core router startup. This is a single
+    // passive observation at composition time; the registry continues
+    // to be observed by proxy tasks below.
+    #[cfg(feature = "i2pcontrol")]
+    {
+        let info = router.protocol_address_info();
+        i2pcontrol::observers::observe_i2cp_listener(&service_registry, info.i2cp);
+        i2pcontrol::observers::observe_sam_listener(
+            &service_registry,
+            info.sam_tcp,
+            info.sam_udp,
+            0,
+        );
+    }
+
     // if sam was enabled, start all enabled proxies, client tunnels and the address book
     let address_book_handle = if let Some(address) = router.protocol_address_info().sam_tcp {
         // start http proxy if it was enabled
@@ -262,16 +289,36 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
             // start event loop of http proxy
             let handle = address_book_handle.clone();
 
+            // Spawn a passive observer that marks Starting now and
+            // Stopped when the proxy task exits. The composition root
+            // owns the observer registry clone; the spawned task owns
+            // its own handle for the same category.
+            #[cfg(feature = "i2pcontrol")]
+            let http_observer_handle =
+                i2pcontrol::observers::spawn_http_observer(&service_registry, true);
+            #[cfg(feature = "i2pcontrol")]
+            let _stop_guard = Arc::new(i2pcontrol::service_registry::ServiceUpdateHandle::clone(
+                &http_observer_handle,
+            ));
+
+            let http_proxy_fut = HttpProxy::new(
+                config,
+                address.port(),
+                http_proxy_ready_tx,
+                handle.map(|handle| handle as Arc<dyn AddressBook>),
+            );
+
             tokio::spawn(async move {
-                match HttpProxy::new(
-                    config,
-                    address.port(),
-                    http_proxy_ready_tx,
-                    handle.map(|handle| handle as Arc<dyn AddressBook>),
-                )
-                .await
-                {
+                match http_proxy_fut.await {
                     Ok(proxy) => {
+                        // Record Listening transition now that the proxy
+                        // has a bound address. The observer is purely
+                        // passive; the proxy lifecycle is unchanged.
+                        #[cfg(feature = "i2pcontrol")]
+                        i2pcontrol::observers::observe_http_listening(
+                            &http_observer_handle,
+                            proxy.local_addr(),
+                        );
                         if let Err(error) = proxy.run().await {
                             tracing::debug!(
                                 target: LOG_TARGET,
@@ -280,11 +327,19 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
                             );
                         }
                     }
-                    Err(error) => tracing::warn!(
-                        target: LOG_TARGET,
-                        ?error,
-                        "failed to start http proxy",
-                    ),
+                    Err(error) => {
+                        let error_for_observer = anyhow::Error::from(error);
+                        #[cfg(feature = "i2pcontrol")]
+                        i2pcontrol::observers::observe_proxy_failure(
+                            &http_observer_handle,
+                            &error_for_observer,
+                        );
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            error = %error_for_observer,
+                            "failed to start http proxy",
+                        );
+                    }
                 }
             });
 
@@ -296,9 +351,24 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
         // start socks proxy if it was enabled
         if let Some(config) = socks {
             // start event loop of socks proxy
+            #[cfg(feature = "i2pcontrol")]
+            let socks_observer_handle =
+                i2pcontrol::observers::spawn_socks_observer(&service_registry, true);
+            #[cfg(feature = "i2pcontrol")]
+            let _stop_guard = Arc::new(i2pcontrol::service_registry::ServiceUpdateHandle::clone(
+                &socks_observer_handle,
+            ));
+
+            let socks_proxy_fut = SocksProxy::new(config, address.port());
+
             tokio::spawn(async move {
-                match SocksProxy::new(config, address.port()).await {
+                match socks_proxy_fut.await {
                     Ok(proxy) => {
+                        #[cfg(feature = "i2pcontrol")]
+                        i2pcontrol::observers::observe_socks_listening(
+                            &socks_observer_handle,
+                            proxy.local_addr(),
+                        );
                         if let Err(error) = proxy.run().await {
                             tracing::debug!(
                                 target: LOG_TARGET,
@@ -307,11 +377,19 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
                             );
                         }
                     }
-                    Err(error) => tracing::warn!(
-                        target: LOG_TARGET,
-                        ?error,
-                        "failed to start socks proxy",
-                    ),
+                    Err(error) => {
+                        let error_for_observer = anyhow::Error::from(error);
+                        #[cfg(feature = "i2pcontrol")]
+                        i2pcontrol::observers::observe_proxy_failure(
+                            &socks_observer_handle,
+                            &error_for_observer,
+                        );
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            error = %error_for_observer,
+                            "failed to start socks proxy",
+                        );
+                    }
                 }
             });
         }
@@ -380,6 +458,13 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
                     router.event_handle().clone(),
                 ));
 
+                // Build a clone of the registry to hand to the I2PControl
+                // state. The composition-root clone continues to be used
+                // by the proxy tasks and listener snapshot tasks already
+                // spawned above; producer handles on that clone target the
+                // same backing storage as the clone held by I2pControlState.
+                let registry_for_i2pcontrol = service_registry.clone();
+
                 let ctx = i2pcontrol::server::ServerInitContext::new(
                     router.router_id().to_base64().to_owned(),
                     local_router_info.clone(),
@@ -388,10 +473,81 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
                 .with_share_ratio(share_ratio)
                 .with_configured_bandwidth(bw_in, bw_out)
                 .with_production_address_book()
-                .with_production_tunnel_manager();
+                .with_production_tunnel_manager()
+                .with_service_registry(registry_for_i2pcontrol);
 
                 let instance =
                     i2pcontrol::server::init_server(&server_config, &base_path, ctx).await?;
+
+                // Populate the I2PTunnel entry from the production tunnel
+                // manager now that it has been loaded by init_server. The
+                // handler reads from the shared registry, so this single
+                // observation becomes visible immediately.
+                let state_clone = instance.state_clone();
+                let registry_for_tunnel_population = state_clone.service_registry_clone();
+                let tm_arc_for_population: Arc<
+                    i2pcontrol::production::ProductionTunnelManagerControl,
+                > = {
+                    let dir = base_path.join("tunnels");
+                    match i2pcontrol::production::ProductionTunnelManagerControl::new(dir) {
+                        Ok(tm) => {
+                            if let Err(error) = tm.load().await {
+                                tracing::warn!(
+                                    target: LOG_TARGET,
+                                    error = %error,
+                                    "tunnel store reload for I2PTunnel inventory failed",
+                                );
+                            }
+                            Arc::new(tm)
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                target: LOG_TARGET,
+                                error = %error,
+                                "tunnel store reopen for I2PTunnel inventory failed",
+                            );
+                            // Fall back to an empty inventory so the
+                            // registry reflects truthful empty state.
+                            let dir =
+                                std::env::temp_dir().join("emissary-i2pcontrol-tunnels-empty");
+                            let _ = std::fs::create_dir_all(&dir);
+                            Arc::new(
+                                i2pcontrol::production::ProductionTunnelManagerControl::new(dir)
+                                    .expect("empty tunnel store directory was created"),
+                            )
+                        }
+                    }
+                };
+                let tunnel_defs = tm_arc_for_population.list().await.unwrap_or_default();
+                let inv = tunnel_defs
+                    .into_iter()
+                    .map(|def| {
+                        let kind = if def.tunnel_type.is_client() {
+                            "client"
+                        } else {
+                            "server"
+                        };
+                        let name = def.name.as_str().to_string();
+                        let address = def
+                            .options
+                            .target_destination
+                            .clone()
+                            .or_else(|| def.options.hosting_destination.clone())
+                            .unwrap_or_default();
+                        let port = if def.tunnel_type.is_server() {
+                            def.options.listen_port
+                        } else {
+                            def.options.target_port
+                        };
+                        i2pcontrol::observers::I2PTunnelInventoryEntry::new(
+                            kind, name, address, port,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                i2pcontrol::observers::observe_i2ptunnel_inventory(
+                    &registry_for_tunnel_population,
+                    inv,
+                );
 
                 let shutdown_tx = i2pcontrol_shutdown_tx.clone();
                 tokio::spawn(async move {

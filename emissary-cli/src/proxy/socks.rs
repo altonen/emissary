@@ -73,6 +73,15 @@ impl SocksProxy {
         })
     }
 
+    /// Get the bound local address of this proxy's TCP listener.
+    ///
+    /// Used by the I2PControl passive observation layer to record the
+    /// `Listening` transition after the listener has been successfully
+    /// bound. Does not mutate or supervise the proxy lifecycle.
+    pub fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        self.listener.local_addr()
+    }
+
     /// Attempt to parse `TCP CONNECT` SOCKSv5 command from `stream` and return the parsed host.
     async fn parse_tcp_connect(mut stream: TcpStream) -> anyhow::Result<(TcpStream, String, u16)> {
         let mut buf = [0u8; 262];

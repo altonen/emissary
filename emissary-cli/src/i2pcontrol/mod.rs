@@ -24,6 +24,7 @@ pub mod control_plane;
 pub mod domain;
 pub mod errors;
 pub mod observability;
+pub mod observers;
 pub mod production;
 pub mod router_info;
 pub mod router_info_handler;
