@@ -205,6 +205,96 @@ impl Default for LogRing {
     }
 }
 
+/// A shared, clonable handle to a [`LogRing`] that implements [`tracing_subscriber::Layer`].
+///
+/// Use [`LogRing::layer`] to create one. The layer captures formatted tracing
+/// events into the ring with redaction applied before insertion.
+#[derive(Clone)]
+pub struct LogRingLayer {
+    ring: Arc<LogRing>,
+}
+
+impl LogRingLayer {
+    /// Push a pre-formatted event into the ring at the current wall-clock time.
+    fn push_formatted(&self, level: &str, target: &str, message: &str) {
+        let timestamp_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+
+        self.ring.push(LogEntry {
+            timestamp_ms,
+            level: level.to_string(),
+            target: target.to_string(),
+            message: message.to_string(),
+        });
+    }
+}
+
+impl<S> tracing_subscriber::Layer<S> for LogRingLayer
+where
+    S: tracing::Subscriber,
+{
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        let metadata = event.metadata();
+        let level = metadata.level().as_str();
+        let target = metadata.target();
+
+        // Format the event message using a visitor
+        let mut visitor = FormatVisitor(String::new());
+        event.record(&mut visitor);
+
+        self.push_formatted(level, target, &visitor.0);
+    }
+}
+
+/// Visitor that captures the event message into a String.
+struct FormatVisitor(String);
+
+impl tracing::field::Visit for FormatVisitor {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        use std::fmt::Write;
+        if !self.0.is_empty() {
+            self.0.push(' ');
+        }
+        if field.name() == "message" {
+            let _ = write!(self.0, "{value:?}");
+        } else {
+            let _ = write!(self.0, "{}={value:?}", field.name());
+        }
+    }
+}
+
+impl LogRing {
+    /// Create a [`tracing_subscriber::Layer`] backed by this ring.
+    ///
+    /// The returned layer can be added to a tracing subscriber to capture
+    /// formatted events into the ring. The ring itself remains accessible
+    /// for snapshot/clear operations via the original [`LogRing`] reference.
+    pub fn layer(self) -> LogRingLayer {
+        LogRingLayer {
+            ring: Arc::new(self),
+        }
+    }
+
+    /// Create a [`tracing_subscriber::Layer`] backed by a shared [`Arc<LogRing>`].
+    ///
+    /// The returned layer and the original `Arc<LogRing>` share the same ring,
+    /// so snapshots and clears are visible across both.
+    pub fn shared_layer(ring: Arc<LogRing>) -> LogRingLayer {
+        LogRingLayer { ring }
+    }
+
+    /// Get a reference to the underlying ring from a layer (for snapshot/clear).
+    pub fn from_layer(layer: &LogRingLayer) -> &LogRing {
+        &layer.ring
+    }
+}
+
 // --- Metrics Snapshot ---
 
 /// Cloneable passive cumulative metrics snapshot source.
@@ -363,6 +453,12 @@ pub struct RollingData {
     pub outbound_1s: u64,
     pub inbound_15s: u64,
     pub outbound_15s: u64,
+    pub inbound_1m: u64,
+    pub outbound_1m: u64,
+    pub inbound_1h: u64,
+    pub outbound_1h: u64,
+    pub inbound_1d: u64,
+    pub outbound_1d: u64,
 }
 
 impl RollingWindow {
@@ -407,7 +503,7 @@ impl RollingWindow {
         }
     }
 
-    /// Read the rolling window data.
+    /// Read the rolling window data for all supported intervals.
     pub fn read(&self) -> RollingData {
         let now = Instant::now();
         let mut inner = self.inner.lock().unwrap();
@@ -427,9 +523,27 @@ impl RollingWindow {
             }
 
             // 15-second window
-            if age_ms <= 15000 {
+            if age_ms <= 15_000 {
                 data.inbound_15s += bucket.inbound;
                 data.outbound_15s += bucket.outbound;
+            }
+
+            // 1-minute window
+            if age_ms <= 60_000 {
+                data.inbound_1m += bucket.inbound;
+                data.outbound_1m += bucket.outbound;
+            }
+
+            // 1-hour window
+            if age_ms <= 3_600_000 {
+                data.inbound_1h += bucket.inbound;
+                data.outbound_1h += bucket.outbound;
+            }
+
+            // 1-day window
+            if age_ms <= 86_400_000 {
+                data.inbound_1d += bucket.inbound;
+                data.outbound_1d += bucket.outbound;
             }
         }
 
@@ -450,8 +564,8 @@ impl RollingWindow {
 
 impl Default for RollingWindow {
     fn default() -> Self {
-        // 1-second buckets, 15 buckets = 15-second window
-        Self::new(1000, 15)
+        // 1-second buckets, 86400 buckets = 24-hour window
+        Self::new(1000, 86400)
     }
 }
 
@@ -664,17 +778,29 @@ mod tests {
         assert_eq!(data.outbound_1s, 0);
         assert_eq!(data.inbound_15s, 0);
         assert_eq!(data.outbound_15s, 0);
+        assert_eq!(data.inbound_1m, 0);
+        assert_eq!(data.outbound_1m, 0);
+        assert_eq!(data.inbound_1h, 0);
+        assert_eq!(data.outbound_1h, 0);
+        assert_eq!(data.inbound_1d, 0);
+        assert_eq!(data.outbound_1d, 0);
     }
 
     #[test]
     fn rolling_window_record() {
-        let window = RollingWindow::new(1000, 15);
+        let window = RollingWindow::new(1000, 86400);
         window.record(100, 200);
         let data = window.read();
         assert_eq!(data.inbound_1s, 100);
         assert_eq!(data.outbound_1s, 200);
         assert_eq!(data.inbound_15s, 100);
         assert_eq!(data.outbound_15s, 200);
+        assert_eq!(data.inbound_1m, 100);
+        assert_eq!(data.outbound_1m, 200);
+        assert_eq!(data.inbound_1h, 100);
+        assert_eq!(data.outbound_1h, 200);
+        assert_eq!(data.inbound_1d, 100);
+        assert_eq!(data.outbound_1d, 200);
     }
 
     #[test]

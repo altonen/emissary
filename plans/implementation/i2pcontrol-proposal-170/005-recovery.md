@@ -1,6 +1,6 @@
 # M005 Recovery Plan — RouterInfo Inspection Gaps
 
-Status: active
+Status: completed
 
 ## Scope
 

@@ -71,13 +71,19 @@ pub struct TransportBytes {
     pub sent: u64,
 }
 
-/// Rolling 15-second transit traffic snapshot.
+/// Rolling transit traffic snapshot at multiple intervals.
 #[derive(Debug, Clone, Default)]
 pub struct RecentTransitTraffic {
     pub inbound_1s: u64,
     pub outbound_1s: u64,
     pub inbound_15s: u64,
     pub outbound_15s: u64,
+    pub inbound_1m: u64,
+    pub outbound_1m: u64,
+    pub inbound_1h: u64,
+    pub outbound_1h: u64,
+    pub inbound_1d: u64,
+    pub outbound_1d: u64,
 }
 
 /// Cumulative transit byte counters.

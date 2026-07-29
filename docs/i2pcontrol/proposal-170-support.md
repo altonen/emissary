@@ -1,6 +1,6 @@
 # Proposal 170 Support Status
 
-Status: M004 implemented
+Status: M005 corrective pass implemented
 
 This document tracks the implementation status of Proposal 170 I2PControl expansion in Emissary.
 
@@ -10,7 +10,7 @@ This document tracks the implementation status of Proposal 170 I2PControl expans
 |---|---|---|
 | `Authenticate` | Implemented | M001 |
 | `GetKeys` | Not started | — |
-| `RouterInfo` | Not started | M005 |
+| `RouterInfo` | Implemented (corrective pass) | M005 |
 | `AddressBook` | Implemented | M003 |
 | `TunnelManager` | Implemented | M004 |
 | `ClientServicesInfo` | Not started | M006 |
@@ -76,7 +76,24 @@ Real backend implementations will be added in future milestones.
 
 ## RouterInfo selectors
 
-Not yet implemented. Planned for M005.
+121 selectors registered and dispatched. See [router-info.md](router-info.md) for the full selector catalog.
+
+| Selector group | Status | Notes |
+|---|---|---|
+| Identity/static | Implemented | Startup-retained values |
+| Router news | Implemented | Empty string (no news subsystem) |
+| Clock skew | Fake | Requires core integration |
+| Network status | Fake | Requires core integration |
+| Share ratio | Fake | Requires config integration |
+| Configured BW | Fake | Requires config integration |
+| UDP/TCP transport | Fake | Requires core integration |
+| NetDB | Fake | Requires core integration |
+| Bandwidth (all intervals) | Implemented | MetricsSnapshot + RollingWindow |
+| Tunnels | Fake | Requires core integration |
+| I2PTunnel | Fake | Requires M004 adapter |
+| Peers | Fake | Requires core integration |
+| Logs | Implemented | LogRing with redaction |
+| Address book | Implemented | M003 adapter |
 
 ## ClientServicesInfo selectors
 
@@ -88,8 +105,13 @@ Not yet implemented. Planned for M006.
 - Token-based authentication
 - Request body and string length limits
 - Secret redaction in logs and Debug output
+- Log ring redaction of private keys, passwords, tokens
 - No file system mutations outside persistence store
 - No network activity in handler code
+- Pre-query budget estimation prevents oversized responses
+- Per-selector item bounds enforce collection limits
+- No `EventSubscriber` consumption (frontend events preserved)
+- No private keys or session material in responses
 
 ## Roadmap
 
@@ -99,6 +121,6 @@ Not yet implemented. Planned for M006.
 | M002 | Closed | Tunnel domain, persistence, backend trait |
 | M003 | Closed | AddressBook handler |
 | M004 | Closed | TunnelManager contract and stubs |
-| M005 | Ready | RouterInfo inspection |
+| M005 | Corrective pass | RouterInfo inspection (121 selectors, bounded metrics, logs) |
 | M006 | Blocked | ClientServicesInfo |
 | M007 | Blocked | Integration, restart, security hardening |

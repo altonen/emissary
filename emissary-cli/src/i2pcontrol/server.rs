@@ -42,6 +42,8 @@ use super::rpc::{
 };
 use super::tls::TlsConfig;
 
+use emissary_core::crypto::base64_encode;
+
 const LOG_TARGET: &str = "emissary::i2pcontrol::server";
 
 /// Maximum request body size (1 MiB).
@@ -104,11 +106,17 @@ pub(crate) struct I2pControlState {
     router_info_b64: String,
     /// Startup time for uptime calculation.
     startup_time: std::time::Instant,
+    /// Cumulative metrics snapshot (fed by transport/tunnel event tracking).
+    metrics_snapshot: super::observability::MetricsSnapshot,
+    /// Rolling traffic window (fed by transport byte accounting).
+    rolling_window: Arc<super::observability::RollingWindow>,
 }
 
 impl I2pControlState {
     /// Create a new state with the given password.
     pub fn new(password: String) -> Self {
+        let metrics_snapshot = super::observability::MetricsSnapshot::new();
+        let rolling_window = Arc::new(super::observability::RollingWindow::default());
         Self {
             token_service: TokenService::new(),
             password,
@@ -121,12 +129,34 @@ impl I2pControlState {
             router_info_bytes: Vec::new(),
             router_info_b64: String::new(),
             startup_time: std::time::Instant::now(),
+            metrics_snapshot,
+            rolling_window,
         }
     }
 
     /// Get a reference to the token service.
     pub fn token_service(&self) -> &TokenService {
         &self.token_service
+    }
+
+    /// Get a reference to the metrics snapshot for feeding/reading.
+    pub fn metrics_snapshot(&self) -> &super::observability::MetricsSnapshot {
+        &self.metrics_snapshot
+    }
+
+    /// Get a reference to the rolling window for feeding/reading.
+    pub fn rolling_window(&self) -> &Arc<super::observability::RollingWindow> {
+        &self.rolling_window
+    }
+
+    /// Get a reference to the router info control.
+    pub fn router_info(&self) -> &dyn RouterInfoControl {
+        &*self.router_info
+    }
+
+    /// Get a reference to the address book control.
+    pub fn address_book_control(&self) -> &dyn AddressBookControl {
+        &*self.address_book_control
     }
 
     /// Replace the address book control plane (for testing).
@@ -335,6 +365,8 @@ pub struct ServerInstance {
 pub async fn init_server(
     config: &I2pControlConfig,
     base_path: &std::path::Path,
+    router_id: String,
+    router_info_bytes: Vec<u8>,
 ) -> Result<ServerInstance, I2pControlError> {
     config.validate()?;
 
@@ -342,8 +374,11 @@ pub async fn init_server(
     let tls_config = super::tls::build_tls_config(&config.tls, base_path)?;
     let _tls_acceptor = tokio_rustls::TlsAcceptor::from(tls_config);
 
-    // Build shared state
-    let state = Arc::new(I2pControlState::new(config.password.clone()));
+    // Build shared state with startup-retained values
+    let router_info_b64 = base64_encode(&router_info_bytes);
+    let mut state = I2pControlState::new(config.password.clone());
+    state.set_startup_values(router_id, router_info_bytes, router_info_b64);
+    let state = Arc::new(state);
 
     // Bind listener — this verifies the port is available
     let listener = TcpListener::bind(config.bind)
@@ -547,12 +582,7 @@ pub(crate) async fn handle_jsonrpc(
                 ))
                 .unwrap()
             } else {
-                super::router_info_handler::handle_router_info(
-                    &*state.router_info,
-                    &*state.address_book_control,
-                    &request,
-                )
-                .await
+                super::router_info_handler::handle_router_info(&state, &request).await
             }
         }
         _ => {

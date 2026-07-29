@@ -365,6 +365,11 @@ impl<R: Runtime> TransportManager<R> {
         Ssu2Transport::<R>::metrics(metrics)
     }
 
+    /// Get reference to [`EventHandle`] for read-only metric snapshots.
+    pub fn event_handle(&self) -> &EventHandle<R> {
+        &self.event_handle
+    }
+
     /// Update local router's external addresses to `address`, if published.
     fn update_router_addresses(&mut self, address: IpAddr) {
         match &self.ntcp2_config {

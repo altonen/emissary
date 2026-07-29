@@ -74,10 +74,16 @@ pub(super) fn parse_log_targets(log: Option<String>) -> Targets {
 macro_rules! init_logger {
     ($log:expr) => {{
         use crate::logger::parse_log_targets;
+        use std::sync::Arc;
         use tracing_subscriber::{fmt::time::ChronoLocal, prelude::*, reload};
 
         let targets = parse_log_targets($log);
         let (filter, handle) = reload::Layer::new(targets);
+
+        // Create bounded log ring for I2PControl snapshot/clear
+        let log_ring = Arc::new(crate::i2pcontrol::observability::LogRing::default());
+        let log_ring_layer =
+            crate::i2pcontrol::observability::LogRing::shared_layer(Arc::clone(&log_ring));
 
         let _ = tracing_subscriber::registry()
             .with(
@@ -85,9 +91,10 @@ macro_rules! init_logger {
                     .with_timer(ChronoLocal::new(String::from("%H:%M:%S%.3f"))),
             )
             .with(filter)
+            .with(log_ring_layer)
             .try_init();
 
-        handle
+        (handle, log_ring)
     }};
     ($log:expr, $handle:ident) => {{
         $handle.reload(crate::logger::parse_log_targets($log)).expect("to succeed");

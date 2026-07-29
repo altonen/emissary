@@ -33,32 +33,84 @@ use crate::i2pcontrol::rpc::{
 const LOG_TARGET: &str = "emissary::i2pcontrol::router_info_handler";
 
 /// Maximum number of peer identities in a single response.
-#[allow(dead_code)]
 const MAX_PEER_IDENTITIES: usize = 10000;
 
 /// Maximum total byte size of peer RouterInfo responses.
-#[allow(dead_code)]
 const MAX_PEER_RI_BYTES: usize = 4 * 1024 * 1024;
 
 /// Maximum number of active peer stat entries.
-#[allow(dead_code)]
 const MAX_ACTIVE_PEER_STATS: usize = 10000;
 
 /// Maximum number of log entries in a snapshot.
-#[allow(dead_code)]
 const MAX_LOG_ENTRIES: usize = 10000;
 
 /// Maximum number of banned peers.
-#[allow(dead_code)]
 const MAX_BANNED_PEERS: usize = 10000;
+
+/// Estimate worst-case output bytes for the requested selector set.
+///
+/// Returns `Err` if the aggregate response would exceed safe bounds
+/// before any expensive queries are issued.
+fn estimate_response_budget(key_set: &HashSet<&str>) -> Result<(), String> {
+    let mut estimated_bytes: usize = 0;
+
+    // Identity (Base64 router info ~4KB)
+    if key_set.contains(rpc::router_info_keys::IDENTITY) {
+        estimated_bytes += 4096;
+    }
+
+    // Peer identity lists
+    if key_set.contains(rpc::router_info_keys::PEERS_KNOWN)
+        || key_set.contains(rpc::router_info_keys::PEERS_KNOWN_COUNT)
+    {
+        // Each peer ID ~52 bytes Base64, max 10000 peers
+        estimated_bytes += MAX_PEER_IDENTITIES * 64;
+    }
+    if key_set.contains(rpc::router_info_keys::PEERS_ACTIVE)
+        || key_set.contains(rpc::router_info_keys::PEERS_ACTIVE_COUNT)
+    {
+        estimated_bytes += MAX_PEER_IDENTITIES * 64;
+    }
+
+    // Peer RouterInfo (large payloads)
+    if key_set.contains(rpc::router_info_keys::PEERS_ROUTER_INFO) {
+        estimated_bytes += MAX_PEER_RI_BYTES;
+    }
+
+    // Active peer stats
+    if key_set.contains(rpc::router_info_keys::PEERS_ACTIVE_STATS) {
+        estimated_bytes += MAX_ACTIVE_PEER_STATS * 128;
+    }
+
+    // Banned peers
+    if key_set.contains(rpc::router_info_keys::PEERS_BANNED)
+        || key_set.contains(rpc::router_info_keys::PEERS_BANNED_COUNT)
+    {
+        estimated_bytes += MAX_BANNED_PEERS * 128;
+    }
+
+    // Log snapshot
+    if key_set.contains(rpc::router_info_keys::LOG_SNAPSHOT) {
+        estimated_bytes += MAX_LOG_ENTRIES * 256;
+    }
+
+    // Total response cap (10 MB)
+    const MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
+    if estimated_bytes > MAX_RESPONSE_BYTES {
+        return Err(format!(
+            "Estimated response size ({estimated_bytes} bytes) exceeds maximum ({MAX_RESPONSE_BYTES} bytes)"
+        ));
+    }
+
+    Ok(())
+}
 
 /// Handle the RouterInfo JSON-RPC method.
 ///
 /// Parses the `Selector` parameter, dispatches to snapshot sources,
 /// and returns only the requested keys.
 pub(crate) async fn handle_router_info(
-    router_info: &dyn RouterInfoControl,
-    address_book: &dyn AddressBookControl,
+    state: &crate::i2pcontrol::server::I2pControlState,
     request: &JsonRpcRequest,
 ) -> serde_json::Value {
     let id = resolve_id(&request.id);
@@ -99,8 +151,14 @@ pub(crate) async fn handle_router_info(
         }
     }
 
+    // Estimate response budget before expensive queries
+    let key_set: HashSet<&str> = requested_keys.iter().copied().collect();
+    if let Err(e) = estimate_response_budget(&key_set) {
+        return error_response(id, rpc::error_codes::INTERNAL_ERROR, e);
+    }
+
     // Dispatch and assemble response
-    match assemble_response(router_info, address_book, &requested_keys).await {
+    match assemble_response(state, &requested_keys).await {
         Ok(result) => {
             let response = JsonRpcSuccess::new(id, serde_json::Value::Object(result));
             serde_json::to_value(&response).unwrap()
@@ -114,10 +172,11 @@ pub(crate) async fn handle_router_info(
 
 /// Assemble the response object containing only requested keys.
 async fn assemble_response(
-    router_info: &dyn RouterInfoControl,
-    address_book: &dyn AddressBookControl,
+    state: &crate::i2pcontrol::server::I2pControlState,
     requested_keys: &[&str],
 ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    let router_info = state.router_info();
+    let address_book = state.address_book_control();
     let mut result = serde_json::Map::new();
 
     if requested_keys.is_empty() {
@@ -235,9 +294,31 @@ async fn assemble_response(
 
     // --- Bandwidth ---
     if key_set.iter().any(|k| k.starts_with("i2p.router.bw.")) {
-        let transport = router_info.transport_bytes().await;
-        let transit = router_info.transit_bytes().await;
-        let recent = router_info.recent_transit_traffic().await;
+        // Read cumulative bytes from MetricsSnapshot (fed by transport/tunnel events)
+        let metrics = state.metrics_snapshot();
+        let snapshot = metrics.snapshot();
+        let transport = crate::i2pcontrol::router_info::TransportBytes {
+            received: snapshot.total_transport_received,
+            sent: snapshot.total_transport_sent,
+        };
+        let transit = crate::i2pcontrol::router_info::TransitBytes {
+            received: snapshot.total_transit_received,
+            sent: snapshot.total_transit_sent,
+        };
+        // Read rolling window data
+        let rolling = state.rolling_window().read();
+        let recent = crate::i2pcontrol::router_info::RecentTransitTraffic {
+            inbound_1s: rolling.inbound_1s,
+            outbound_1s: rolling.outbound_1s,
+            inbound_15s: rolling.inbound_15s,
+            outbound_15s: rolling.outbound_15s,
+            inbound_1m: rolling.inbound_1m,
+            outbound_1m: rolling.outbound_1m,
+            inbound_1h: rolling.inbound_1h,
+            outbound_1h: rolling.outbound_1h,
+            inbound_1d: rolling.inbound_1d,
+            outbound_1d: rolling.outbound_1d,
+        };
         resolve_bw_selectors(&mut result, &key_set, &transport, &transit, &recent);
     }
 
@@ -264,6 +345,13 @@ async fn assemble_response(
     // --- Log selectors ---
     if key_set.contains(rpc::router_info_keys::LOG_SNAPSHOT) {
         let snap = router_info.log_snapshot().await;
+        if snap.entries.len() > MAX_LOG_ENTRIES {
+            return Err(format!(
+                "Log snapshot entries ({}) exceeds limit ({})",
+                snap.entries.len(),
+                MAX_LOG_ENTRIES
+            ));
+        }
         let entries: Vec<serde_json::Value> = snap
             .entries
             .iter()
@@ -608,49 +696,45 @@ fn resolve_bw_selectors(
         );
     }
 
-    // Rolling 1-minute (placeholder: same as 15s for now)
+    // Rolling 1-minute
     if key_set.contains(rpc::router_info_keys::BW_INBOUND_1M) {
         result.insert(
             rpc::router_info_keys::BW_INBOUND_1M.to_string(),
-            serde_json::json!(recent.inbound_15s),
+            serde_json::json!(recent.inbound_1m),
         );
     }
     if key_set.contains(rpc::router_info_keys::BW_OUTBOUND_1M) {
         result.insert(
             rpc::router_info_keys::BW_OUTBOUND_1M.to_string(),
-            serde_json::json!(recent.outbound_15s),
+            serde_json::json!(recent.outbound_1m),
         );
     }
 
-    // Rolling 1-hour (placeholder: total / 3600)
+    // Rolling 1-hour
     if key_set.contains(rpc::router_info_keys::BW_INBOUND_1H) {
-        let rate = transport.received / 3600;
         result.insert(
             rpc::router_info_keys::BW_INBOUND_1H.to_string(),
-            serde_json::json!(rate),
+            serde_json::json!(recent.inbound_1h),
         );
     }
     if key_set.contains(rpc::router_info_keys::BW_OUTBOUND_1H) {
-        let rate = transport.sent / 3600;
         result.insert(
             rpc::router_info_keys::BW_OUTBOUND_1H.to_string(),
-            serde_json::json!(rate),
+            serde_json::json!(recent.outbound_1h),
         );
     }
 
-    // Rolling 1-day (placeholder: total / 86400)
+    // Rolling 1-day
     if key_set.contains(rpc::router_info_keys::BW_INBOUND_1D) {
-        let rate = transport.received / 86400;
         result.insert(
             rpc::router_info_keys::BW_INBOUND_1D.to_string(),
-            serde_json::json!(rate),
+            serde_json::json!(recent.inbound_1d),
         );
     }
     if key_set.contains(rpc::router_info_keys::BW_OUTBOUND_1D) {
-        let rate = transport.sent / 86400;
         result.insert(
             rpc::router_info_keys::BW_OUTBOUND_1D.to_string(),
-            serde_json::json!(rate),
+            serde_json::json!(recent.outbound_1d),
         );
     }
 }
@@ -706,6 +790,8 @@ fn resolve_tunnel_selectors(
 }
 
 /// Resolve peer selectors into response entries.
+///
+/// Enforces per-selector item bounds from `MAX_*` constants.
 async fn resolve_peer_selectors(
     result: &mut serde_json::Map<String, serde_json::Value>,
     key_set: &HashSet<&str>,
@@ -721,6 +807,13 @@ async fn resolve_peer_selectors(
     }
     if key_set.contains(rpc::router_info_keys::PEERS_KNOWN) {
         let peers = router_info.known_peers().await;
+        if peers.len() > MAX_PEER_IDENTITIES {
+            return Err(format!(
+                "Known peers count ({}) exceeds limit ({})",
+                peers.len(),
+                MAX_PEER_IDENTITIES
+            ));
+        }
         let ids: Vec<String> = peers.iter().map(|p| p.id.clone()).collect();
         result.insert(
             rpc::router_info_keys::PEERS_KNOWN.to_string(),
@@ -737,6 +830,13 @@ async fn resolve_peer_selectors(
     }
     if key_set.contains(rpc::router_info_keys::PEERS_ACTIVE) {
         let peers = router_info.active_peers().await;
+        if peers.len() > MAX_PEER_IDENTITIES {
+            return Err(format!(
+                "Active peers count ({}) exceeds limit ({})",
+                peers.len(),
+                MAX_PEER_IDENTITIES
+            ));
+        }
         let ids: Vec<String> = peers.iter().map(|p| p.id.clone()).collect();
         result.insert(
             rpc::router_info_keys::PEERS_ACTIVE.to_string(),
@@ -752,6 +852,13 @@ async fn resolve_peer_selectors(
     }
     if key_set.contains(rpc::router_info_keys::PEERS_BANNED) {
         let banned = router_info.banned_peers().await;
+        if banned.len() > MAX_BANNED_PEERS {
+            return Err(format!(
+                "Banned peers count ({}) exceeds limit ({})",
+                banned.len(),
+                MAX_BANNED_PEERS
+            ));
+        }
         let entries: Vec<serde_json::Value> = banned
             .iter()
             .map(|b| {
@@ -787,6 +894,13 @@ async fn resolve_peer_selectors(
     }
     if key_set.contains(rpc::router_info_keys::PEERS_ACTIVE_STATS) {
         let stats = router_info.active_peer_stats().await;
+        if stats.len() > MAX_ACTIVE_PEER_STATS {
+            return Err(format!(
+                "Active peer stats count ({}) exceeds limit ({})",
+                stats.len(),
+                MAX_ACTIVE_PEER_STATS
+            ));
+        }
         let entries: Vec<serde_json::Value> = stats
             .iter()
             .map(|s| {
@@ -830,12 +944,18 @@ mod tests {
         }
     }
 
+    fn test_state(ri: FakeRouterInfoControl) -> crate::i2pcontrol::server::I2pControlState {
+        let mut state = crate::i2pcontrol::server::I2pControlState::new("test".to_string());
+        state.set_router_info(Box::new(ri));
+        state
+    }
+
     #[tokio::test]
     async fn handle_router_info_empty_selector() {
         let ri = FakeRouterInfoControl::new();
-        let ab = crate::i2pcontrol::control_plane::FakeAddressBookControl::new();
+        let state = test_state(ri);
         let req = test_request(serde_json::json!({}));
-        let resp = handle_router_info(&ri, &ab, &req).await;
+        let resp = handle_router_info(&state, &req).await;
         assert_eq!(resp["jsonrpc"], "2.0");
         assert!(resp["result"].is_object());
         assert_eq!(resp["result"].as_object().unwrap().len(), 0);
@@ -845,9 +965,9 @@ mod tests {
     async fn handle_router_info_version_only() {
         let ri = FakeRouterInfoControl::new();
         ri.set_version("Test 2.0".to_string());
-        let ab = crate::i2pcontrol::control_plane::FakeAddressBookControl::new();
+        let state = test_state(ri);
         let req = test_request(serde_json::json!({"i2p.router.version": true}));
-        let resp = handle_router_info(&ri, &ab, &req).await;
+        let resp = handle_router_info(&state, &req).await;
         let result = resp["result"].as_object().unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result["i2p.router.version"], "Test 2.0");
@@ -858,12 +978,12 @@ mod tests {
         let ri = FakeRouterInfoControl::new();
         ri.set_version("Emissary 0.5.0".to_string());
         ri.set_uptime_ms(120000);
-        let ab = crate::i2pcontrol::control_plane::FakeAddressBookControl::new();
+        let state = test_state(ri);
         let req = test_request(serde_json::json!({
             "i2p.router.version": true,
             "i2p.router.uptime": true
         }));
-        let resp = handle_router_info(&ri, &ab, &req).await;
+        let resp = handle_router_info(&state, &req).await;
         let result = resp["result"].as_object().unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(result["i2p.router.version"], "Emissary 0.5.0");
@@ -873,9 +993,9 @@ mod tests {
     #[tokio::test]
     async fn handle_router_info_unknown_selector() {
         let ri = FakeRouterInfoControl::new();
-        let ab = crate::i2pcontrol::control_plane::FakeAddressBookControl::new();
+        let state = test_state(ri);
         let req = test_request(serde_json::json!({"unknown.selector": true}));
-        let resp = handle_router_info(&ri, &ab, &req).await;
+        let resp = handle_router_info(&state, &req).await;
         assert_eq!(resp["error"]["code"], -32602);
     }
 
@@ -883,9 +1003,9 @@ mod tests {
     async fn handle_router_info_false_selector_ignored() {
         let ri = FakeRouterInfoControl::new();
         ri.set_version("Test".to_string());
-        let ab = crate::i2pcontrol::control_plane::FakeAddressBookControl::new();
+        let state = test_state(ri);
         let req = test_request(serde_json::json!({"i2p.router.version": false}));
-        let resp = handle_router_info(&ri, &ab, &req).await;
+        let resp = handle_router_info(&state, &req).await;
         let result = resp["result"].as_object().unwrap();
         assert!(result.is_empty());
     }
@@ -893,14 +1013,14 @@ mod tests {
     #[tokio::test]
     async fn handle_router_info_missing_selector_param() {
         let ri = FakeRouterInfoControl::new();
-        let ab = crate::i2pcontrol::control_plane::FakeAddressBookControl::new();
+        let state = test_state(ri);
         let req = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             method: "RouterInfo".to_string(),
             params: Some(serde_json::json!({"Token": "abc"}).as_object().cloned().unwrap()),
             id: Some(rpc::RequestId::Number(1)),
         };
-        let resp = handle_router_info(&ri, &ab, &req).await;
+        let resp = handle_router_info(&state, &req).await;
         assert_eq!(resp["error"]["code"], -32602);
     }
 
@@ -915,12 +1035,12 @@ mod tests {
             hidden: false,
             ..Default::default()
         });
-        let ab = crate::i2pcontrol::control_plane::FakeAddressBookControl::new();
+        let state = test_state(ri);
         let req = test_request(serde_json::json!({
             "i2p.router.udp.active": true,
             "i2p.router.udp.integratedPeers": true,
         }));
-        let resp = handle_router_info(&ri, &ab, &req).await;
+        let resp = handle_router_info(&state, &req).await;
         let result = resp["result"].as_object().unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(result["i2p.router.udp.active"], true);
@@ -938,12 +1058,12 @@ mod tests {
             status: "Active".to_string(),
             version: "NTCP2".to_string(),
         });
-        let ab = crate::i2pcontrol::control_plane::FakeAddressBookControl::new();
+        let state = test_state(ri);
         let req = test_request(serde_json::json!({
             "i2p.router.tcp.active": true,
             "i2p.router.tcp.status": true,
         }));
-        let resp = handle_router_info(&ri, &ab, &req).await;
+        let resp = handle_router_info(&state, &req).await;
         let result = resp["result"].as_object().unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(result["i2p.router.tcp.active"], true);
@@ -959,13 +1079,13 @@ mod tests {
             active_profiles: 50,
             ..Default::default()
         });
-        let ab = crate::i2pcontrol::control_plane::FakeAddressBookControl::new();
+        let state = test_state(ri);
         let req = test_request(serde_json::json!({
             "i2p.router.netdb.active": true,
             "i2p.router.netdb.knownProfiles": true,
             "i2p.router.netdb.activeProfiles": true,
         }));
-        let resp = handle_router_info(&ri, &ab, &req).await;
+        let resp = handle_router_info(&state, &req).await;
         let result = resp["result"].as_object().unwrap();
         assert_eq!(result.len(), 3);
         assert_eq!(result["i2p.router.netdb.active"], true);
@@ -976,16 +1096,15 @@ mod tests {
     #[tokio::test]
     async fn handle_router_info_bw_selectors() {
         let ri = FakeRouterInfoControl::new();
-        ri.set_transport_bytes(TransportBytes {
-            received: 1000000,
-            sent: 500000,
-        });
-        let ab = crate::i2pcontrol::control_plane::FakeAddressBookControl::new();
+        let state = test_state(ri);
+        // Feed the MetricsSnapshot (bandwidth now reads from here)
+        state.metrics_snapshot().record_transport_received(1000000);
+        state.metrics_snapshot().record_transport_sent(500000);
         let req = test_request(serde_json::json!({
             "i2p.router.bw.inbound.total": true,
             "i2p.router.bw.outbound.total": true,
         }));
-        let resp = handle_router_info(&ri, &ab, &req).await;
+        let resp = handle_router_info(&state, &req).await;
         let result = resp["result"].as_object().unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(result["i2p.router.bw.inbound.total"], 1000000);
@@ -996,11 +1115,11 @@ mod tests {
     async fn handle_router_info_unrelated_keys_absent() {
         let ri = FakeRouterInfoControl::new();
         ri.set_version("Test".to_string());
-        let ab = crate::i2pcontrol::control_plane::FakeAddressBookControl::new();
+        let state = test_state(ri);
         let req = test_request(serde_json::json!({
             "i2p.router.version": true
         }));
-        let resp = handle_router_info(&ri, &ab, &req).await;
+        let resp = handle_router_info(&state, &req).await;
         let result = resp["result"].as_object().unwrap();
         // Only version should be present, no unrelated keys
         assert_eq!(result.len(), 1);
@@ -1017,12 +1136,12 @@ mod tests {
             ipv6_status: NetworkStatus::Firewalled,
             ..Default::default()
         });
-        let ab = crate::i2pcontrol::control_plane::FakeAddressBookControl::new();
+        let state = test_state(ri);
         let req = test_request(serde_json::json!({
             "i2p.router.net.bw.inbound": true,
             "i2p.router.net.bw.outbound": true,
         }));
-        let resp = handle_router_info(&ri, &ab, &req).await;
+        let resp = handle_router_info(&state, &req).await;
         let result = resp["result"].as_object().unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(result["i2p.router.net.bw.inbound"], "OK");

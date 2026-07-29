@@ -20,7 +20,7 @@ use crate::{
     config::{Config, I2cpConfig, MetricsConfig, SamConfig},
     crypto::{SigningPrivateKey, StaticPrivateKey},
     error::Error,
-    events::{EventManager, EventSubscriber},
+    events::{EventHandle, EventManager, EventSubscriber},
     i2cp::I2cpServer,
     netdb::NetDb,
     primitives::{RouterId, RouterInfo},
@@ -464,6 +464,15 @@ impl<R: Runtime> Router<R> {
     /// Get local router ID.
     pub fn router_id(&self) -> &RouterId {
         &self.router_id
+    }
+
+    /// Get reference to [`EventHandle`] for read-only metric snapshots.
+    ///
+    /// Used by I2PControl to read transport/transit byte counters,
+    /// connected router counts, and tunnel build statistics without
+    /// mutating router state.
+    pub fn event_handle(&self) -> &EventHandle<R> {
+        self.transport_manager.event_handle()
     }
 
     /// Add external address for [`Router`].

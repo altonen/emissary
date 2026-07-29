@@ -74,6 +74,14 @@ impl RouterId {
     pub fn to_vec(&self) -> Vec<u8> {
         base64_decode(self.0.as_bytes()).expect("to succeed")
     }
+
+    /// Return the full Base64-encoded router identity string.
+    ///
+    /// Unlike [`Display`] which truncates to 8 characters, this returns
+    /// the complete Base64 representation required by Proposal 170 selectors.
+    pub fn to_base64(&self) -> &str {
+        &self.0
+    }
 }
 
 impl fmt::Display for RouterId {

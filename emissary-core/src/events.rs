@@ -230,6 +230,96 @@ impl<R: Runtime> EventHandle<R> {
             .fetch_add(_num_tunnel_build_failures, Ordering::Release);
     }
 
+    // --- Read-only snapshot accessors for I2PControl metrics ---
+
+    /// Cumulative inbound transport bytes (read-only snapshot).
+    #[cfg(feature = "events")]
+    pub fn transport_inbound_bytes(&self) -> u64 {
+        self.inbound_bandwidth.load(Ordering::Acquire) as u64
+    }
+
+    #[cfg(not(feature = "events"))]
+    pub fn transport_inbound_bytes(&self) -> u64 {
+        0
+    }
+
+    /// Cumulative outbound transport bytes (read-only snapshot).
+    #[cfg(feature = "events")]
+    pub fn transport_outbound_bytes(&self) -> u64 {
+        self.outbound_bandwidth.load(Ordering::Acquire) as u64
+    }
+
+    #[cfg(not(feature = "events"))]
+    pub fn transport_outbound_bytes(&self) -> u64 {
+        0
+    }
+
+    /// Cumulative inbound transit bytes (read-only snapshot).
+    #[cfg(feature = "events")]
+    pub fn transit_inbound_bytes(&self) -> u64 {
+        self.transit_inbound_bandwidth.load(Ordering::Acquire) as u64
+    }
+
+    #[cfg(not(feature = "events"))]
+    pub fn transit_inbound_bytes(&self) -> u64 {
+        0
+    }
+
+    /// Cumulative outbound transit bytes (read-only snapshot).
+    #[cfg(feature = "events")]
+    pub fn transit_outbound_bytes(&self) -> u64 {
+        self.transit_outbound_bandwidth.load(Ordering::Acquire) as u64
+    }
+
+    #[cfg(not(feature = "events"))]
+    pub fn transit_outbound_bytes(&self) -> u64 {
+        0
+    }
+
+    /// Number of connected routers (read-only snapshot).
+    #[cfg(feature = "events")]
+    pub fn connected_routers(&self) -> usize {
+        self.num_connected_routers.load(Ordering::Acquire)
+    }
+
+    #[cfg(not(feature = "events"))]
+    pub fn connected_routers(&self) -> usize {
+        0
+    }
+
+    /// Number of transit tunnels (read-only snapshot).
+    #[cfg(feature = "events")]
+    pub fn transit_tunnel_count(&self) -> usize {
+        self.num_transit_tunnels.load(Ordering::Acquire)
+    }
+
+    #[cfg(not(feature = "events"))]
+    pub fn transit_tunnel_count(&self) -> usize {
+        0
+    }
+
+    /// Cumulative tunnel build successes (read-only snapshot).
+    #[cfg(feature = "events")]
+    pub fn tunnel_build_successes(&self) -> u64 {
+        self.num_tunnels_built.load(Ordering::Acquire) as u64
+    }
+
+    #[cfg(not(feature = "events"))]
+    pub fn tunnel_build_successes(&self) -> u64 {
+        0
+    }
+
+    /// Cumulative tunnel build failures (read-only snapshot).
+    #[cfg(feature = "events")]
+    pub fn tunnel_build_failures(&self) -> u64 {
+        self.num_tunnel_build_failures.load(Ordering::Acquire) as u64
+    }
+
+    #[cfg(not(feature = "events"))]
+    pub fn tunnel_build_failures(&self) -> u64 {
+        0
+    }
+
     /// Notify the [`EventManager`] that a server destination was started.
     #[inline(always)]
     pub fn server_destination_started(&self, _name: String, _address: String) {

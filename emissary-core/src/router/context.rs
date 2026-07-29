@@ -149,7 +149,10 @@ impl<R: Runtime> RouterContext<R> {
     }
 
     /// Get reference to [`EventHandle`].
-    pub(crate) fn event_handle(&self) -> &EventHandle<R> {
+    ///
+    /// Exposes read-only metric snapshots for I2PControl without
+    /// allowing mutation of router state.
+    pub fn event_handle(&self) -> &EventHandle<R> {
         &self.event_handle
     }
 }

@@ -119,7 +119,7 @@ async fn parse_arguments() -> Arguments {
 /// Setup router and related subsystems.
 async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<RouterContext> {
     // initialize logger with any logging directive given as a cli argument
-    let handle = init_logger!(arguments.log.clone());
+    let (handle, _log_ring) = init_logger!(arguments.log.clone());
 
     // initialize storage for the router
     let storage = Storage::new::<R>(arguments.base_path.clone()).await?;
@@ -369,7 +369,13 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
                     },
                 };
 
-                let instance = i2pcontrol::server::init_server(&server_config, &base_path).await?;
+                let instance = i2pcontrol::server::init_server(
+                    &server_config,
+                    &base_path,
+                    router.router_id().to_base64().to_owned(),
+                    local_router_info.clone(),
+                )
+                .await?;
 
                 let shutdown_tx = i2pcontrol_shutdown_tx.clone();
                 tokio::spawn(async move {
