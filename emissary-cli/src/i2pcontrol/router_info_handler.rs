@@ -151,6 +151,25 @@ async fn assemble_response(
         );
     }
 
+    // --- Router news ---
+    if key_set.contains(rpc::router_info_keys::ROUTER_NEWS) {
+        let news = router_info.router_news();
+        result.insert(
+            rpc::router_info_keys::ROUTER_NEWS.to_string(),
+            serde_json::json!(news),
+        );
+    }
+
+    // --- Clock skew ---
+    if key_set.contains(rpc::router_info_keys::CLOCK_SKEW) {
+        let skew = router_info.clock_skew().await;
+        let value = match skew.skew_seconds {
+            Some(s) => serde_json::json!(s),
+            None => serde_json::json!(null),
+        };
+        result.insert(rpc::router_info_keys::CLOCK_SKEW.to_string(), value);
+    }
+
     // --- Network status ---
     if key_set.contains(rpc::router_info_keys::NET_BW_INBOUND)
         || key_set.contains(rpc::router_info_keys::NET_BW_OUTBOUND)
@@ -166,6 +185,32 @@ async fn assemble_response(
             result.insert(
                 rpc::router_info_keys::NET_BW_OUTBOUND.to_string(),
                 serde_json::json!(network.ipv6_status.as_str()),
+            );
+        }
+    }
+
+    // --- Share ratio and configured BW ---
+    if key_set.contains(rpc::router_info_keys::SHARE_RATIO) {
+        let ratio = router_info.share_ratio().await;
+        result.insert(
+            rpc::router_info_keys::SHARE_RATIO.to_string(),
+            serde_json::json!(ratio),
+        );
+    }
+    if key_set.contains(rpc::router_info_keys::CONFIGURED_BW_INBOUND)
+        || key_set.contains(rpc::router_info_keys::CONFIGURED_BW_OUTBOUND)
+    {
+        let (inbound, outbound) = router_info.configured_bw_limits().await;
+        if key_set.contains(rpc::router_info_keys::CONFIGURED_BW_INBOUND) {
+            result.insert(
+                rpc::router_info_keys::CONFIGURED_BW_INBOUND.to_string(),
+                serde_json::json!(inbound),
+            );
+        }
+        if key_set.contains(rpc::router_info_keys::CONFIGURED_BW_OUTBOUND) {
+            result.insert(
+                rpc::router_info_keys::CONFIGURED_BW_OUTBOUND.to_string(),
+                serde_json::json!(outbound),
             );
         }
     }
@@ -194,6 +239,54 @@ async fn assemble_response(
         let transit = router_info.transit_bytes().await;
         let recent = router_info.recent_transit_traffic().await;
         resolve_bw_selectors(&mut result, &key_set, &transport, &transit, &recent);
+    }
+
+    // --- Tunnel selectors ---
+    if key_set.iter().any(|k| k.starts_with("i2p.router.tunnels.")) {
+        let summary = router_info.tunnel_summary().await;
+        resolve_tunnel_selectors(&mut result, &key_set, &summary);
+    }
+
+    // --- I2PTunnel ---
+    if key_set.contains(rpc::router_info_keys::NET_IPTUNNELS) {
+        let stats = router_info.i2ptunnel_stats().await;
+        result.insert(
+            rpc::router_info_keys::NET_IPTUNNELS.to_string(),
+            serde_json::json!(stats.configured_count),
+        );
+    }
+
+    // --- Peer selectors ---
+    if key_set.iter().any(|k| k.starts_with("i2p.router.peers.")) {
+        resolve_peer_selectors(&mut result, &key_set, router_info).await?;
+    }
+
+    // --- Log selectors ---
+    if key_set.contains(rpc::router_info_keys::LOG_SNAPSHOT) {
+        let snap = router_info.log_snapshot().await;
+        let entries: Vec<serde_json::Value> = snap
+            .entries
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "timestamp": e.timestamp_ms,
+                    "level": e.level,
+                    "target": e.target,
+                    "message": e.message,
+                })
+            })
+            .collect();
+        result.insert(
+            rpc::router_info_keys::LOG_SNAPSHOT.to_string(),
+            serde_json::json!(entries),
+        );
+    }
+    if key_set.contains(rpc::router_info_keys::LOG_CLEAR) {
+        router_info.log_clear().await;
+        result.insert(
+            rpc::router_info_keys::LOG_CLEAR.to_string(),
+            serde_json::json!(true),
+        );
     }
 
     // --- Address-book selectors ---
@@ -560,6 +653,158 @@ fn resolve_bw_selectors(
             serde_json::json!(rate),
         );
     }
+}
+
+/// Resolve tunnel selectors into response entries.
+fn resolve_tunnel_selectors(
+    result: &mut serde_json::Map<String, serde_json::Value>,
+    key_set: &HashSet<&str>,
+    summary: &crate::i2pcontrol::router_info::TunnelSummary,
+) {
+    if key_set.contains(rpc::router_info_keys::TUNNELS_PARTICIPATING) {
+        result.insert(
+            rpc::router_info_keys::TUNNELS_PARTICIPATING.to_string(),
+            serde_json::json!(summary.active_participating),
+        );
+    }
+    if key_set.contains(rpc::router_info_keys::TUNNELS_EXPLORATORY_IN) {
+        result.insert(
+            rpc::router_info_keys::TUNNELS_EXPLORATORY_IN.to_string(),
+            serde_json::json!(summary.exploratory_inbound),
+        );
+    }
+    if key_set.contains(rpc::router_info_keys::TUNNELS_EXPLORATORY_OUT) {
+        result.insert(
+            rpc::router_info_keys::TUNNELS_EXPLORATORY_OUT.to_string(),
+            serde_json::json!(summary.exploratory_outbound),
+        );
+    }
+    if key_set.contains(rpc::router_info_keys::TUNNELS_CLIENT_IN) {
+        result.insert(
+            rpc::router_info_keys::TUNNELS_CLIENT_IN.to_string(),
+            serde_json::json!(summary.client_inbound),
+        );
+    }
+    if key_set.contains(rpc::router_info_keys::TUNNELS_CLIENT_OUT) {
+        result.insert(
+            rpc::router_info_keys::TUNNELS_CLIENT_OUT.to_string(),
+            serde_json::json!(summary.client_outbound),
+        );
+    }
+    if key_set.contains(rpc::router_info_keys::TUNNELS_CONFIGURED) {
+        result.insert(
+            rpc::router_info_keys::TUNNELS_CONFIGURED.to_string(),
+            serde_json::json!(summary.configured),
+        );
+    }
+    if key_set.contains(rpc::router_info_keys::TUNNELS_QUEUE) {
+        result.insert(
+            rpc::router_info_keys::TUNNELS_QUEUE.to_string(),
+            serde_json::json!(summary.queue_depth),
+        );
+    }
+}
+
+/// Resolve peer selectors into response entries.
+async fn resolve_peer_selectors(
+    result: &mut serde_json::Map<String, serde_json::Value>,
+    key_set: &HashSet<&str>,
+    router_info: &dyn RouterInfoControl,
+) -> Result<(), String> {
+    if key_set.contains(rpc::router_info_keys::PEERS_KNOWN_COUNT) {
+        let peers = router_info.known_peers().await;
+        let count = peers.len();
+        result.insert(
+            rpc::router_info_keys::PEERS_KNOWN_COUNT.to_string(),
+            serde_json::json!(count),
+        );
+    }
+    if key_set.contains(rpc::router_info_keys::PEERS_KNOWN) {
+        let peers = router_info.known_peers().await;
+        let ids: Vec<String> = peers.iter().map(|p| p.id.clone()).collect();
+        result.insert(
+            rpc::router_info_keys::PEERS_KNOWN.to_string(),
+            serde_json::json!(ids),
+        );
+    }
+    if key_set.contains(rpc::router_info_keys::PEERS_ACTIVE_COUNT) {
+        let peers = router_info.active_peers().await;
+        let count = peers.len();
+        result.insert(
+            rpc::router_info_keys::PEERS_ACTIVE_COUNT.to_string(),
+            serde_json::json!(count),
+        );
+    }
+    if key_set.contains(rpc::router_info_keys::PEERS_ACTIVE) {
+        let peers = router_info.active_peers().await;
+        let ids: Vec<String> = peers.iter().map(|p| p.id.clone()).collect();
+        result.insert(
+            rpc::router_info_keys::PEERS_ACTIVE.to_string(),
+            serde_json::json!(ids),
+        );
+    }
+    if key_set.contains(rpc::router_info_keys::PEERS_ROUTER_INFO) {
+        // Requires a specific peer ID in params; return empty if not provided
+        result.insert(
+            rpc::router_info_keys::PEERS_ROUTER_INFO.to_string(),
+            serde_json::json!(null),
+        );
+    }
+    if key_set.contains(rpc::router_info_keys::PEERS_BANNED) {
+        let banned = router_info.banned_peers().await;
+        let entries: Vec<serde_json::Value> = banned
+            .iter()
+            .map(|b| {
+                serde_json::json!({
+                    "id": b.id,
+                    "reason": b.reason,
+                    "expiresAt": b.expires_at,
+                })
+            })
+            .collect();
+        result.insert(
+            rpc::router_info_keys::PEERS_BANNED.to_string(),
+            serde_json::json!(entries),
+        );
+    }
+    if key_set.contains(rpc::router_info_keys::PEERS_BANNED_COUNT) {
+        let banned = router_info.banned_peers().await;
+        let count = banned.len();
+        result.insert(
+            rpc::router_info_keys::PEERS_BANNED_COUNT.to_string(),
+            serde_json::json!(count),
+        );
+    }
+    if key_set.contains(rpc::router_info_keys::PEERS_LIMITS) {
+        let limits = router_info.peer_limits().await;
+        result.insert(
+            rpc::router_info_keys::PEERS_LIMITS.to_string(),
+            serde_json::json!({
+                "inbound": limits.configured_inbound,
+                "outbound": limits.configured_outbound,
+            }),
+        );
+    }
+    if key_set.contains(rpc::router_info_keys::PEERS_ACTIVE_STATS) {
+        let stats = router_info.active_peer_stats().await;
+        let entries: Vec<serde_json::Value> = stats
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "peerId": s.peer_id,
+                    "direction": s.direction,
+                    "state": s.state,
+                    "bytesReceived": s.bytes_received,
+                    "bytesSent": s.bytes_sent,
+                })
+            })
+            .collect();
+        result.insert(
+            rpc::router_info_keys::PEERS_ACTIVE_STATS.to_string(),
+            serde_json::json!(entries),
+        );
+    }
+    Ok(())
 }
 
 fn resolve_id(id: &Option<RequestId>) -> RequestId {

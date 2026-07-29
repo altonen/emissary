@@ -96,6 +96,14 @@ pub(crate) struct I2pControlState {
     tunnel_manager: Box<dyn TunnelManagerControl>,
     router_info: Box<dyn RouterInfoControl>,
     semaphore: Semaphore,
+    /// Local router identity in Base64 (retained at startup, never re-read).
+    router_id: String,
+    /// Serialized local RouterInfo bytes (retained at startup).
+    router_info_bytes: Vec<u8>,
+    /// Base64 encoding of serialized RouterInfo.
+    router_info_b64: String,
+    /// Startup time for uptime calculation.
+    startup_time: std::time::Instant,
 }
 
 impl I2pControlState {
@@ -109,6 +117,10 @@ impl I2pControlState {
             tunnel_manager: Box::new(FakeTunnelManagerControl::new()),
             router_info: Box::new(FakeRouterInfoControl::new()),
             semaphore: Semaphore::new(MAX_CONCURRENT_REQUESTS),
+            router_id: String::new(),
+            router_info_bytes: Vec::new(),
+            router_info_b64: String::new(),
+            startup_time: std::time::Instant::now(),
         }
     }
 
@@ -131,6 +143,44 @@ impl I2pControlState {
     #[allow(dead_code)]
     pub fn set_router_info(&mut self, control: Box<dyn RouterInfoControl>) {
         self.router_info = control;
+    }
+
+    /// Set startup-retained values (router identity, serialized RI).
+    ///
+    /// These are retained once at startup and never re-read from disk.
+    pub fn set_startup_values(
+        &mut self,
+        router_id: String,
+        router_info_bytes: Vec<u8>,
+        router_info_b64: String,
+    ) {
+        self.router_id = router_id;
+        self.router_info_bytes = router_info_bytes;
+        self.router_info_b64 = router_info_b64;
+    }
+
+    /// Get the local router identity (Base64).
+    #[allow(dead_code)]
+    pub fn router_id(&self) -> &str {
+        &self.router_id
+    }
+
+    /// Get the serialized RouterInfo bytes.
+    #[allow(dead_code)]
+    pub fn router_info_bytes(&self) -> &[u8] {
+        &self.router_info_bytes
+    }
+
+    /// Get the Base64-encoded serialized RouterInfo.
+    #[allow(dead_code)]
+    pub fn router_info_b64(&self) -> &str {
+        &self.router_info_b64
+    }
+
+    /// Get the uptime since server startup.
+    #[allow(dead_code)]
+    pub fn uptime(&self) -> std::time::Duration {
+        self.startup_time.elapsed()
     }
 
     /// List all tunnel definitions.

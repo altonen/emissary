@@ -69,10 +69,83 @@ impl LogRing {
         }
     }
 
+    /// Redact sensitive content from a log message.
+    ///
+    /// Sanitizes Base64-encoded private keys, passwords, tokens, and
+    /// other sensitive material before the entry enters the ring.
+    fn redact(message: &str) -> String {
+        let mut result = message.to_string();
+
+        // Redact long Base64 strings (likely private keys or signatures)
+        // Match sequences of 40+ Base64 characters
+        let mut redacted = String::new();
+        let mut remaining = result.as_str();
+        while let Some(pos) =
+            remaining.find(|c: char| c.is_alphanumeric() || c == '+' || c == '/' || c == '=')
+        {
+            // Find start of potential Base64 sequence
+            let start =
+                remaining[pos..].find(|c: char| c.is_ascii_alphanumeric() || c == '+' || c == '/');
+            if let Some(start) = start {
+                let sub = &remaining[pos + start..];
+                let mut len = 0;
+                for ch in sub.chars() {
+                    if ch.is_ascii_alphanumeric() || ch == '+' || ch == '/' || ch == '=' {
+                        len += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if len >= 40 {
+                    // This looks like a private key or signature — redact it
+                    redacted.push_str(&remaining[..pos + start]);
+                    redacted.push_str("[REDACTED]");
+                    remaining = &remaining[pos + start + len..];
+                    continue;
+                }
+            }
+            break;
+        }
+        if !redacted.is_empty() {
+            redacted.push_str(remaining);
+            result = redacted;
+        }
+
+        // Redact password= patterns
+        if let Some(idx) = result.find("password=") {
+            let after = idx + 9;
+            if let Some(end) = result[after..].find(|c: char| c == ' ' || c == '&' || c == '\n') {
+                result.replace_range(after..after + end, "[REDACTED]");
+            } else if after < result.len() {
+                result.replace_range(after.., "[REDACTED]");
+            }
+        }
+
+        // Redact token= patterns
+        if let Some(idx) = result.find("token=") {
+            let after = idx + 6;
+            if let Some(end) = result[after..].find(|c: char| c == ' ' || c == '&' || c == '\n') {
+                result.replace_range(after..after + end, "[REDACTED]");
+            } else if after < result.len() {
+                result.replace_range(after.., "[REDACTED]");
+            }
+        }
+
+        result
+    }
+
     /// Push a log entry into the ring. Evicts oldest entries if bounds exceeded.
     ///
-    /// This method is non-blocking and does not perform I/O.
+    /// Sensitive content (private keys, passwords, tokens) is redacted
+    /// before the entry enters the ring. This method is non-blocking
+    /// and does not perform I/O.
     pub fn push(&self, entry: LogEntry) {
+        let entry = LogEntry {
+            timestamp_ms: entry.timestamp_ms,
+            level: entry.level,
+            target: entry.target,
+            message: Self::redact(&entry.message),
+        };
         let entry_size = entry.level.len() + entry.target.len() + entry.message.len() + 64;
         let mut inner = self.inner.lock().unwrap();
 
@@ -477,6 +550,51 @@ mod tests {
         let gen = handle.join().unwrap();
         // Generation is either 0 (before clear) or 1 (after clear)
         assert!(gen <= 1);
+    }
+
+    #[test]
+    fn log_ring_redacts_private_keys() {
+        let ring = LogRing::new(100, 1024 * 1024);
+        ring.push(LogEntry {
+            timestamp_ms: 1000,
+            level: "INFO".to_string(),
+            target: "test".to_string(),
+            message: "key=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA123456789012345678901234567890123456789012345678901234567890".to_string(),
+        });
+
+        let (entries, _) = ring.snapshot();
+        assert!(entries[0].message.contains("[REDACTED]"));
+        assert!(!entries[0].message.contains("1234567890"));
+    }
+
+    #[test]
+    fn log_ring_redacts_password() {
+        let ring = LogRing::new(100, 1024 * 1024);
+        ring.push(LogEntry {
+            timestamp_ms: 1000,
+            level: "INFO".to_string(),
+            target: "test".to_string(),
+            message: "connecting password=secret123 to server".to_string(),
+        });
+
+        let (entries, _) = ring.snapshot();
+        assert!(entries[0].message.contains("password=[REDACTED]"));
+        assert!(!entries[0].message.contains("secret123"));
+    }
+
+    #[test]
+    fn log_ring_redacts_token() {
+        let ring = LogRing::new(100, 1024 * 1024);
+        ring.push(LogEntry {
+            timestamp_ms: 1000,
+            level: "INFO".to_string(),
+            target: "test".to_string(),
+            message: "request token=abc123xyz header".to_string(),
+        });
+
+        let (entries, _) = ring.snapshot();
+        assert!(entries[0].message.contains("token=[REDACTED]"));
+        assert!(!entries[0].message.contains("abc123xyz"));
     }
 
     // --- MetricsSnapshot tests ---

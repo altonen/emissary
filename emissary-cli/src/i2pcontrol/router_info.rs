@@ -397,6 +397,9 @@ pub trait RouterInfoControl: Send + Sync {
     /// Clear the I2PControl log buffer.
     async fn log_clear(&self);
 
+    /// Get router news. Emissary has no news subsystem; returns empty string.
+    fn router_news(&self) -> String;
+
     /// Get bandwidth shares/ratios from configuration.
     async fn share_ratio(&self) -> f64;
 
@@ -438,6 +441,7 @@ struct FakeInner {
     log_generation: u64,
     share_ratio: f64,
     configured_bw: (u64, u64),
+    router_news: String,
 }
 
 impl FakeRouterInfoControl {
@@ -468,6 +472,7 @@ impl FakeRouterInfoControl {
                 log_generation: 0,
                 share_ratio: 0.5,
                 configured_bw: (512, 512),
+                router_news: String::new(),
             }),
         }
     }
@@ -584,6 +589,12 @@ impl FakeRouterInfoControl {
     pub fn set_share_ratio(&self, ratio: f64) {
         let mut inner = self.inner.lock().unwrap();
         inner.share_ratio = ratio;
+    }
+
+    /// Set router news for tests.
+    pub fn set_router_news(&self, news: String) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.router_news = news;
     }
 }
 
@@ -707,6 +718,10 @@ impl RouterInfoControl for FakeRouterInfoControl {
         let mut inner = self.inner.lock().unwrap();
         inner.log_entries.clear();
         inner.log_generation += 1;
+    }
+
+    fn router_news(&self) -> String {
+        String::new()
     }
 
     async fn share_ratio(&self) -> f64 {

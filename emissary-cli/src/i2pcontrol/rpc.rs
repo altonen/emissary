@@ -450,6 +450,44 @@ pub mod router_info_keys {
     pub const NET_BW_INBOUND: &str = "i2p.router.net.bw.inbound";
     pub const NET_BW_OUTBOUND: &str = "i2p.router.net.bw.outbound";
 
+    // --- Router news ---
+    pub const ROUTER_NEWS: &str = "i2p.router.news";
+
+    // --- Clock skew ---
+    pub const CLOCK_SKEW: &str = "i2p.router.clock.skew";
+
+    // --- Share ratio and configured BW ---
+    pub const SHARE_RATIO: &str = "i2p.router.shareRatio";
+    pub const CONFIGURED_BW_INBOUND: &str = "i2p.router.configuredBwInbound";
+    pub const CONFIGURED_BW_OUTBOUND: &str = "i2p.router.configuredBwOutbound";
+
+    // --- Tunnel selectors ---
+    pub const TUNNELS_PARTICIPATING: &str = "i2p.router.tunnels.participating";
+    pub const TUNNELS_EXPLORATORY_IN: &str = "i2p.router.tunnels.exploratoryIn";
+    pub const TUNNELS_EXPLORATORY_OUT: &str = "i2p.router.tunnels.exploratoryOut";
+    pub const TUNNELS_CLIENT_IN: &str = "i2p.router.tunnels.clientIn";
+    pub const TUNNELS_CLIENT_OUT: &str = "i2p.router.tunnels.clientOut";
+    pub const TUNNELS_CONFIGURED: &str = "i2p.router.tunnels.configured";
+    pub const TUNNELS_QUEUE: &str = "i2p.router.tunnels.queue";
+
+    // --- Peer selectors ---
+    pub const PEERS_KNOWN_COUNT: &str = "i2p.router.peers.knownCount";
+    pub const PEERS_KNOWN: &str = "i2p.router.peers.known";
+    pub const PEERS_ACTIVE_COUNT: &str = "i2p.router.peers.activeCount";
+    pub const PEERS_ACTIVE: &str = "i2p.router.peers.active";
+    pub const PEERS_ROUTER_INFO: &str = "i2p.router.peers.routerInfo";
+    pub const PEERS_BANNED: &str = "i2p.router.peers.banned";
+    pub const PEERS_BANNED_COUNT: &str = "i2p.router.peers.bannedCount";
+    pub const PEERS_LIMITS: &str = "i2p.router.peers.limits";
+    pub const PEERS_ACTIVE_STATS: &str = "i2p.router.peers.activeStats";
+
+    // --- I2PTunnel selectors ---
+    pub const NET_IPTUNNELS: &str = "i2p.router.net.i2ptunnels";
+
+    // --- Log selectors ---
+    pub const LOG_SNAPSHOT: &str = "i2p.router.log";
+    pub const LOG_CLEAR: &str = "i2p.router.log.clear";
+
     // --- Address-book selectors (owned by M003) ---
     pub const ADDRESS_BOOK_PRIVATE: &str = "i2p.router.addressbook.private";
     pub const ADDRESS_BOOK_LOCAL: &str = "i2p.router.addressbook.local";
@@ -567,6 +605,35 @@ pub mod router_info_keys {
         IDENTITY,
         NET_BW_INBOUND,
         NET_BW_OUTBOUND,
+        // Router news, clock, share ratio, configured BW
+        ROUTER_NEWS,
+        CLOCK_SKEW,
+        SHARE_RATIO,
+        CONFIGURED_BW_INBOUND,
+        CONFIGURED_BW_OUTBOUND,
+        // Tunnels
+        TUNNELS_PARTICIPATING,
+        TUNNELS_EXPLORATORY_IN,
+        TUNNELS_EXPLORATORY_OUT,
+        TUNNELS_CLIENT_IN,
+        TUNNELS_CLIENT_OUT,
+        TUNNELS_CONFIGURED,
+        TUNNELS_QUEUE,
+        // Peers
+        PEERS_KNOWN_COUNT,
+        PEERS_KNOWN,
+        PEERS_ACTIVE_COUNT,
+        PEERS_ACTIVE,
+        PEERS_ROUTER_INFO,
+        PEERS_BANNED,
+        PEERS_BANNED_COUNT,
+        PEERS_LIMITS,
+        PEERS_ACTIVE_STATS,
+        // I2PTunnel
+        NET_IPTUNNELS,
+        // Logs
+        LOG_SNAPSHOT,
+        LOG_CLEAR,
         // Address book
         ADDRESS_BOOK_PRIVATE,
         ADDRESS_BOOK_LOCAL,
@@ -669,6 +736,30 @@ pub mod router_info_keys {
         IDENTITY,
         NET_BW_INBOUND,
         NET_BW_OUTBOUND,
+        ROUTER_NEWS,
+        CLOCK_SKEW,
+        SHARE_RATIO,
+        CONFIGURED_BW_INBOUND,
+        CONFIGURED_BW_OUTBOUND,
+        TUNNELS_PARTICIPATING,
+        TUNNELS_EXPLORATORY_IN,
+        TUNNELS_EXPLORATORY_OUT,
+        TUNNELS_CLIENT_IN,
+        TUNNELS_CLIENT_OUT,
+        TUNNELS_CONFIGURED,
+        TUNNELS_QUEUE,
+        PEERS_KNOWN_COUNT,
+        PEERS_KNOWN,
+        PEERS_ACTIVE_COUNT,
+        PEERS_ACTIVE,
+        PEERS_ROUTER_INFO,
+        PEERS_BANNED,
+        PEERS_BANNED_COUNT,
+        PEERS_LIMITS,
+        PEERS_ACTIVE_STATS,
+        NET_IPTUNNELS,
+        LOG_SNAPSHOT,
+        LOG_CLEAR,
     ];
 }
 
@@ -770,7 +861,7 @@ mod tests {
 
     #[test]
     fn router_info_selectors_complete() {
-        assert_eq!(router_info_keys::ALL.len(), 97);
+        assert_eq!(router_info_keys::ALL.len(), 121);
         for key in router_info_keys::ALL {
             assert!(is_valid_router_info_selector(key));
         }
