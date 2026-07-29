@@ -122,7 +122,7 @@ async fn shared_tunnel_object_identity_through_production_adapters() {
     tm.create(def).await.unwrap();
 
     // Query through RouterInfo — should see the same tunnel
-    let summary: TunnelSummary = ri.tunnel_summary().await;
+    let summary: TunnelSummary = ri.tunnel_summary().await.unwrap();
     assert_eq!(
         summary.configured, 1,
         "RouterInfo should see the tunnel created through the shared tunnel manager"
@@ -149,7 +149,7 @@ async fn production_router_info_uses_shared_tunnel_service() {
     );
 
     // i2ptunnel_stats should use the shared tunnel service
-    let stats = ri.i2ptunnel_stats().await;
+    let stats = ri.i2ptunnel_stats().await.unwrap();
     assert_eq!(
         stats.configured_count, 0,
         "fresh store should have 0 configured tunnels"
@@ -167,7 +167,7 @@ async fn production_router_info_uses_shared_tunnel_service() {
     };
     tm.create(def).await.unwrap();
 
-    let stats = ri.i2ptunnel_stats().await;
+    let stats = ri.i2ptunnel_stats().await.unwrap();
     assert_eq!(
         stats.configured_count, 1,
         "RouterInfo should see 1 configured tunnel via shared service"

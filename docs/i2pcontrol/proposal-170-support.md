@@ -1,6 +1,6 @@
 # Proposal 170 Support Status
 
-Status: M008 implemented (production composition and durable-state integrity closed)
+Status: M009 implemented (RouterInfo availability and truthfulness closed)
 
 > **Note:** Strict Proposal 170 closure is reopened until M008–M012 close. Prior M005–M007
 > closure records are not accepted as current strict closure after the corrective review.
@@ -79,22 +79,25 @@ Real backend implementations will be added in future milestones.
 
 ## RouterInfo selectors
 
-121 selectors registered and dispatched. See [router-info.md](router-info.md) for the full selector catalog.
+121 selectors registered and dispatched. See [router-info.md](router-info.md) for the full selector catalog and [router-info-source-map.md](router-info-source-map.md) for the complete source map.
 
 | Selector group | Status | Notes |
 |---|---|---|
 | Identity/static | Implemented | Startup-retained values |
 | Router news | Implemented | Empty string (no news subsystem) |
-| Clock skew | Fake | Requires core integration |
-| Network status | Fake | Requires core integration |
-| Share ratio | Fake | Requires config integration |
-| Configured BW | Fake | Requires config integration |
-| UDP/TCP transport | Fake | Requires core integration |
-| NetDB | Fake | Requires core integration |
+| Clock skew | Unavailable | Protocol-permitted null; M010 |
+| Network status | Implemented | EventMetrics firewall status |
+| Share ratio | Implemented | Retained configuration |
+| Configured BW | Implemented | Retained configuration |
+| UDP transport (active, firewalled) | Implemented | EventMetrics firewall status |
+| UDP transport (peers, stats) | Unavailable | M010 |
+| TCP transport | Unavailable | M010 |
+| NetDB | Unavailable | M010 |
 | Bandwidth (all intervals) | Implemented | MetricsSnapshot + RollingWindow |
-| Tunnels | Fake | Requires core integration |
-| I2PTunnel | Fake | Requires M004 adapter |
-| Peers | Fake | Requires core integration |
+| Tunnels (participating, configured) | Implemented | MetricsSnapshot + TunnelManager |
+| Tunnels (exploratory, client, queue) | Unavailable | M010 |
+| I2PTunnel | Implemented | TunnelManager administrative store |
+| Peers | Unavailable | M010 |
 | Logs | Implemented | LogRing with redaction |
 | Address book | Implemented | M003 adapter |
 
@@ -138,7 +141,8 @@ and integration evidence.
 | M002 | Closed | Tunnel domain, persistence, backend trait |
 | M003 | Closed | AddressBook handler |
 | M004 | Closed | TunnelManager contract and stubs |
-| M005 | Corrective pass required | RouterInfo inspection (121 selectors, bounded metrics, logs) |
-| M006 | Corrective pass required | ClientServicesInfo (composition wiring complete) |
+| M005 | Closed (corrective) | RouterInfo inspection (121 selectors, bounded metrics, logs) |
+| M006 | Closed (corrective) | ClientServicesInfo (composition wiring complete) |
 | M007 | Corrective pass required | Conformance and strict closure |
 | M008 | Closed | Production composition and durable-state integrity |
+| M009 | Closed | RouterInfo availability and truthfulness |

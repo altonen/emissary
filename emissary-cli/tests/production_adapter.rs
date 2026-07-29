@@ -289,9 +289,9 @@ async fn production_router_info_identity_and_version() {
         tunnel_mgr,
     );
     assert_eq!(ri.router_identity().unwrap(), "test-router-id-b64");
-    assert_eq!(ri.router_version(), "Emissary 0.5.0");
-    assert_eq!(ri.share_ratio().await, 0.5);
-    let (in_bw, out_bw) = ri.configured_bw_limits().await;
+    assert_eq!(ri.router_version().unwrap(), "Emissary 0.5.0");
+    assert_eq!(ri.share_ratio().await.unwrap(), 0.5);
+    let (in_bw, out_bw) = ri.configured_bw_limits().await.unwrap();
     assert_eq!(in_bw, 1024);
     assert_eq!(out_bw, 512);
 }
@@ -311,7 +311,7 @@ async fn production_router_info_network_status_unknown_initially() {
         log_ring,
         tunnel_mgr,
     );
-    let network = ri.network_snapshot().await;
+    let network = ri.network_snapshot().await.unwrap();
     assert_eq!(network.ipv4_status, NetworkStatus::Unknown);
     assert_eq!(network.ipv6_status, NetworkStatus::Unknown);
     assert!(!network.firewalled);
@@ -334,7 +334,7 @@ async fn production_router_info_network_status_after_set() {
         log_ring,
         tunnel_mgr,
     );
-    let network = ri.network_snapshot().await;
+    let network = ri.network_snapshot().await.unwrap();
     assert_eq!(network.ipv4_status, NetworkStatus::Ok);
     assert_eq!(network.ipv6_status, NetworkStatus::Firewalled);
     assert!(network.firewalled);
@@ -355,7 +355,7 @@ async fn production_router_info_clock_skew_unknown() {
         log_ring,
         tunnel_mgr,
     );
-    let skew = ri.clock_skew().await;
+    let skew = ri.clock_skew().await.unwrap();
     assert!(skew.skew_seconds.is_none());
 }
 
@@ -378,11 +378,11 @@ async fn production_router_info_transport_bytes_from_event_handle() {
         log_ring,
         tunnel_mgr,
     );
-    let tb = ri.transport_bytes().await;
+    let tb = ri.transport_bytes().await.unwrap();
     assert_eq!(tb.received, 1500);
     assert_eq!(tb.sent, 2000);
 
-    let trans = ri.transit_bytes().await;
+    let trans = ri.transit_bytes().await.unwrap();
     assert_eq!(trans.received, 500);
     assert_eq!(trans.sent, 700);
 }
@@ -404,7 +404,7 @@ async fn production_router_info_tunnel_build_stats() {
         log_ring,
         tunnel_mgr,
     );
-    let stats = ri.tunnel_build_stats().await;
+    let stats = ri.tunnel_build_stats().await.unwrap();
     assert_eq!(stats.successes, 10);
     assert_eq!(stats.failures, 5);
 }
@@ -430,11 +430,11 @@ async fn production_router_info_log_round_trip() {
         Arc::clone(&log_ring),
         tunnel_mgr,
     );
-    let snap = ri.log_snapshot().await;
+    let snap = ri.log_snapshot().await.unwrap();
     assert_eq!(snap.entries.len(), 1);
     assert_eq!(snap.entries[0].message, "hello");
-    ri.log_clear().await;
-    let snap = ri.log_snapshot().await;
+    ri.log_clear().await.unwrap();
+    let snap = ri.log_snapshot().await.unwrap();
     assert!(snap.entries.is_empty());
     assert_eq!(snap.generation, 1);
 }
@@ -473,7 +473,7 @@ async fn production_router_info_i2ptunnel_stats() {
         log_ring,
         tm_arc,
     );
-    let stats = ri.i2ptunnel_stats().await;
+    let stats = ri.i2ptunnel_stats().await.unwrap();
     assert_eq!(stats.configured_count, 1);
 }
 
@@ -493,7 +493,7 @@ async fn production_router_info_udp_snapshot() {
         log_ring,
         tunnel_mgr,
     );
-    let udp = ri.udp_snapshot().await;
+    let udp = ri.udp_snapshot().await.unwrap();
     assert!(udp.active);
     assert!(udp.firewalled);
 }
@@ -515,7 +515,7 @@ fn production_router_info_returns_no_router_news() {
         log_ring,
         tunnel_mgr,
     );
-    assert_eq!(ri.router_news(), "");
+    assert_eq!(ri.router_news().unwrap(), "");
 }
 
 #[test]

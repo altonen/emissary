@@ -41,7 +41,7 @@ use emissary_cli::i2pcontrol::production::{
     ProductionRouterInfoControl, ProductionTunnelManagerControl,
 };
 use emissary_cli::i2pcontrol::router_info::{
-    ActivePeerStats, I2PTunnelStats, LogSnapshot, NetworkSnapshot, PeerLimits,
+    ActivePeerStats, I2PTunnelStats, InspectionError, LogSnapshot, NetworkSnapshot, PeerLimits,
     RecentTransitTraffic, RouterInfoControl, TransitBytes, TransportBytes, TunnelBuildStats,
     TunnelSummary,
 };
@@ -294,40 +294,54 @@ fn selector_registry_address_book_partition() {
 }
 
 #[test]
-fn production_adapter_returns_empty_for_unimplemented_selectors() {
+fn production_adapter_returns_unavailable_for_unimplemented_selectors() {
     // The production adapter does not yet wire known peers, active peers,
-    // banned peers, peer limits, or netdb summaries. The handler must
-    // receive empty results, not fabricated values.
+    // banned peers, peer limits, or netdb summaries. The methods must
+    // return Err(Unavailable) rather than fabricated default values.
     let rt = tokio::runtime::Runtime::new().unwrap();
     let ri = make_production_router_info();
     rt.block_on(async {
-        assert!(ri.known_peers().await.is_empty());
-        assert!(ri.active_peers().await.is_empty());
-        assert!(ri.banned_peers().await.is_empty());
-        assert!(ri.active_peer_stats().await.is_empty());
-        assert!(ri.peer_router_info("any").await.unwrap().is_none());
-        let limits = ri.peer_limits().await;
-        assert_eq!(limits.configured_inbound, 0);
-        assert_eq!(limits.configured_outbound, 0);
-        assert_eq!(limits.effective_inbound, 0);
-        assert_eq!(limits.effective_outbound, 0);
+        assert!(matches!(
+            ri.known_peers().await,
+            Err(InspectionError::Unavailable { .. })
+        ));
+        assert!(matches!(
+            ri.active_peers().await,
+            Err(InspectionError::Unavailable { .. })
+        ));
+        assert!(matches!(
+            ri.banned_peers().await,
+            Err(InspectionError::Unavailable { .. })
+        ));
+        assert!(matches!(
+            ri.active_peer_stats().await,
+            Err(InspectionError::Unavailable { .. })
+        ));
+        assert!(matches!(
+            ri.peer_router_info("any").await,
+            Err(InspectionError::Unavailable { .. })
+        ));
+        assert!(matches!(
+            ri.peer_limits().await,
+            Err(InspectionError::Unavailable { .. })
+        ));
     });
 }
 
 #[test]
 fn production_adapter_does_not_silently_truncate() {
-    // The production adapter has no truncation; it returns whatever the
-    // underlying source provides. Empty collections are returned as empty,
-    // not as error.
+    // Log snapshot and netdb use real sources; empty/zero is a truthful
+    // result when the source reports it, not a fabrication.
     let rt = tokio::runtime::Runtime::new().unwrap();
     let ri = make_production_router_info();
     rt.block_on(async {
-        let snap = ri.log_snapshot().await;
+        let snap = ri.log_snapshot().await.unwrap();
         assert!(snap.entries.is_empty());
-        let netdb = ri.netdb_snapshot().await;
-        // Default netdb snapshot has known_profiles=0, not 1 or some fabricated
-        // value. This proves we are not silently truncating a 1-element list.
-        assert_eq!(netdb.known_profiles, 0);
+        // NetDb is unavailable (not yet wired), not zero
+        assert!(matches!(
+            ri.netdb_snapshot().await,
+            Err(InspectionError::Unavailable { .. })
+        ));
     });
 }
 
@@ -479,6 +493,91 @@ fn control_plane_has_no_tunnel_methods() {
             assert!(
                 !trait_body.contains("fn is_tunnel_type_supported"),
                 "ControlPlane must not have is_tunnel_type_supported method"
+            );
+        }
+    }
+}
+
+// --- M009 static guards ---
+
+/// Guard: no fabricated NetDbSnapshot::default() in production RouterInfo.
+///
+/// Catches the defect where netdb_snapshot returns a default struct
+/// instead of returning Unavailable when the source is not wired.
+#[test]
+fn no_fabricated_netdb_default_in_production() {
+    let src = read_source("src/i2pcontrol/production.rs");
+    let non_test = src.split("#[cfg(test)]").next().unwrap_or(&src);
+    assert!(
+        !non_test.contains("NetDbSnapshot::default()"),
+        "Production RouterInfo must not return fabricated NetDbSnapshot::default()"
+    );
+}
+
+/// Guard: no fabricated TcpSnapshot::default() in production RouterInfo.
+///
+/// Catches the defect where tcp_snapshot returns a default struct
+/// instead of returning Unavailable when the source is not wired.
+#[test]
+fn no_fabricated_tcp_default_in_production() {
+    let src = read_source("src/i2pcontrol/production.rs");
+    let non_test = src.split("#[cfg(test)]").next().unwrap_or(&src);
+    assert!(
+        !non_test.contains("TcpSnapshot::default()"),
+        "Production RouterInfo must not return fabricated TcpSnapshot::default()"
+    );
+}
+
+/// Guard: no Vec::new() used as an unavailable source response.
+///
+/// Catches the defect where empty vectors are returned for sources
+/// that are not wired, making them indistinguishable from legitimate
+/// empty peer lists.
+#[test]
+fn no_vec_new_as_unavailable_response() {
+    let src = read_source("src/i2pcontrol/production.rs");
+    let non_test = src.split("#[cfg(test)]").next().unwrap_or(&src);
+    // Only check within RouterInfoControl impl methods (between
+    // "impl RouterInfoControl" and the closing "}").
+    if let Some(impl_start) = non_test.find("impl RouterInfoControl") {
+        if let Some(impl_end) = non_test[impl_start..].find("\n}") {
+            let impl_body = &non_test[impl_start..impl_start + impl_end + 2];
+            assert!(
+                !impl_body.contains("Vec::new()"),
+                "Production RouterInfo must not use Vec::new() for unavailable sources; use Err(Unavailable) instead"
+            );
+        }
+    }
+}
+
+/// Guard: no PeerLimits::default() in production RouterInfo.
+///
+/// Catches the defect where peer_limits returns a default struct
+/// instead of returning Unavailable when the source is not wired.
+#[test]
+fn no_fabricated_peer_limits_default_in_production() {
+    let src = read_source("src/i2pcontrol/production.rs");
+    let non_test = src.split("#[cfg(test)]").next().unwrap_or(&src);
+    assert!(
+        !non_test.contains("PeerLimits::default()"),
+        "Production RouterInfo must not return fabricated PeerLimits::default()"
+    );
+}
+
+/// Guard: no unwrap_or(0) error suppression in production RouterInfo.
+///
+/// Catches the defect where tunnel query failures are silently
+/// converted to zero counts.
+#[test]
+fn no_error_suppressing_unwrap_or_zero_in_router_info() {
+    let src = read_source("src/i2pcontrol/production.rs");
+    let non_test = src.split("#[cfg(test)]").next().unwrap_or(&src);
+    if let Some(impl_start) = non_test.find("impl RouterInfoControl") {
+        if let Some(impl_end) = non_test[impl_start..].find("\n}") {
+            let impl_body = &non_test[impl_start..impl_start + impl_end + 2];
+            assert!(
+                !impl_body.contains("unwrap_or(0)"),
+                "Production RouterInfo must not use unwrap_or(0) to suppress errors"
             );
         }
     }

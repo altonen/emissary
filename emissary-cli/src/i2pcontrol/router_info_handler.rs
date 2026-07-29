@@ -24,7 +24,7 @@
 use std::collections::HashSet;
 
 use crate::i2pcontrol::address_book::resolve_address_book_selectors;
-use crate::i2pcontrol::router_info::RouterInfoControl;
+use crate::i2pcontrol::router_info::{InspectionError, RouterInfoControl};
 use crate::i2pcontrol::rpc::{
     self, JsonRpcErrorResponse, JsonRpcRequest, JsonRpcSuccess, RequestId,
 };
@@ -45,6 +45,37 @@ const MAX_LOG_ENTRIES: usize = 10000;
 
 /// Maximum number of banned peers.
 const MAX_BANNED_PEERS: usize = 10000;
+
+/// Convert an `InspectionError` into a sanitized error message suitable
+/// for the JSON-RPC error envelope. No internal paths, backtraces, or
+/// secret material are included.
+fn inspection_error_message(err: &InspectionError) -> String {
+    match err {
+        InspectionError::Unavailable { group } => {
+            format!("{group} data unavailable")
+        }
+        InspectionError::TemporarilyUnavailable { group } => {
+            format!("{group} temporarily unavailable")
+        }
+        InspectionError::QueryFailed { group } => {
+            format!("{group} query failed")
+        }
+        InspectionError::ResultTooLarge { group, limit } => {
+            format!("{group} result exceeds bound of {limit} items")
+        }
+        InspectionError::InvalidPeerId => "invalid peer identifier".into(),
+        InspectionError::InternalInvariant => "internal inspection error".into(),
+    }
+}
+
+/// Map an `InspectionError` to a JSON-RPC error code.
+fn inspection_error_code(err: &InspectionError) -> i32 {
+    match err {
+        InspectionError::ResultTooLarge { .. } => rpc::error_codes::INTERNAL_ERROR,
+        InspectionError::InvalidPeerId => rpc::error_codes::INVALID_PARAMS,
+        _ => rpc::error_codes::INTERNAL_ERROR,
+    }
+}
 
 /// Estimate worst-case output bytes for the requested selector set.
 ///
@@ -163,17 +194,26 @@ pub(crate) async fn handle_router_info(
             serde_json::to_value(&response).unwrap()
         }
         Err(e) => {
-            tracing::error!(target: LOG_TARGET, "RouterInfo assembly failed: {e}");
-            error_response(id, rpc::error_codes::INTERNAL_ERROR, e)
+            let code = inspection_error_code(&e);
+            let msg = inspection_error_message(&e);
+            tracing::error!(
+                target: LOG_TARGET,
+                "RouterInfo assembly failed: {msg}"
+            );
+            error_response(id, code, msg)
         }
     }
 }
 
 /// Assemble the response object containing only requested keys.
+///
+/// Each snapshot group is queried at most once per request. A failure
+/// in any non-nullable group aborts the entire request with no partial
+/// result.
 async fn assemble_response(
     state: &crate::i2pcontrol::server::I2pControlState,
     requested_keys: &[&str],
-) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+) -> Result<serde_json::Map<String, serde_json::Value>, InspectionError> {
     let router_info = state.router_info();
     let address_book = state.address_book_control();
     let mut result = serde_json::Map::new();
@@ -184,7 +224,7 @@ async fn assemble_response(
 
     let key_set: HashSet<&str> = requested_keys.iter().copied().collect();
 
-    // --- Identity and static router data ---
+    // --- Identity and static router data (retained group) ---
     if key_set.contains(rpc::router_info_keys::IDENTITY) {
         let identity = router_info.router_identity()?;
         result.insert(
@@ -194,7 +234,7 @@ async fn assemble_response(
     }
 
     if key_set.contains(rpc::router_info_keys::VERSION) {
-        let version = router_info.router_version();
+        let version = router_info.router_version()?;
         result.insert(
             rpc::router_info_keys::VERSION.to_string(),
             serde_json::json!(version),
@@ -202,7 +242,7 @@ async fn assemble_response(
     }
 
     if key_set.contains(rpc::router_info_keys::UPTIME) {
-        let uptime = router_info.router_uptime_ms();
+        let uptime = router_info.router_uptime_ms()?;
         result.insert(
             rpc::router_info_keys::UPTIME.to_string(),
             serde_json::json!(uptime),
@@ -211,7 +251,7 @@ async fn assemble_response(
 
     // --- Router news ---
     if key_set.contains(rpc::router_info_keys::ROUTER_NEWS) {
-        let news = router_info.router_news();
+        let news = router_info.router_news()?;
         result.insert(
             rpc::router_info_keys::ROUTER_NEWS.to_string(),
             serde_json::json!(news),
@@ -220,7 +260,7 @@ async fn assemble_response(
 
     // --- Clock skew ---
     if key_set.contains(rpc::router_info_keys::CLOCK_SKEW) {
-        let skew = router_info.clock_skew().await;
+        let skew = router_info.clock_skew().await?;
         let value = match skew.skew_seconds {
             Some(s) => serde_json::json!(s),
             None => serde_json::json!(null),
@@ -232,7 +272,7 @@ async fn assemble_response(
     if key_set.contains(rpc::router_info_keys::NET_BW_INBOUND)
         || key_set.contains(rpc::router_info_keys::NET_BW_OUTBOUND)
     {
-        let network = router_info.network_snapshot().await;
+        let network = router_info.network_snapshot().await?;
         if key_set.contains(rpc::router_info_keys::NET_BW_INBOUND) {
             result.insert(
                 rpc::router_info_keys::NET_BW_INBOUND.to_string(),
@@ -249,7 +289,7 @@ async fn assemble_response(
 
     // --- Share ratio and configured BW ---
     if key_set.contains(rpc::router_info_keys::SHARE_RATIO) {
-        let ratio = router_info.share_ratio().await;
+        let ratio = router_info.share_ratio().await?;
         result.insert(
             rpc::router_info_keys::SHARE_RATIO.to_string(),
             serde_json::json!(ratio),
@@ -258,7 +298,7 @@ async fn assemble_response(
     if key_set.contains(rpc::router_info_keys::CONFIGURED_BW_INBOUND)
         || key_set.contains(rpc::router_info_keys::CONFIGURED_BW_OUTBOUND)
     {
-        let (inbound, outbound) = router_info.configured_bw_limits().await;
+        let (inbound, outbound) = router_info.configured_bw_limits().await?;
         if key_set.contains(rpc::router_info_keys::CONFIGURED_BW_INBOUND) {
             result.insert(
                 rpc::router_info_keys::CONFIGURED_BW_INBOUND.to_string(),
@@ -273,27 +313,26 @@ async fn assemble_response(
         }
     }
 
-    // --- UDP transport ---
+    // --- UDP transport (one group query) ---
     if key_set.iter().any(|k| k.starts_with("i2p.router.udp.")) {
-        let udp = router_info.udp_snapshot().await;
+        let udp = router_info.udp_snapshot().await?;
         resolve_udp_selectors(&mut result, &key_set, &udp);
     }
 
-    // --- TCP transport ---
+    // --- TCP transport (one group query) ---
     if key_set.iter().any(|k| k.starts_with("i2p.router.tcp.")) {
-        let tcp = router_info.tcp_snapshot().await;
+        let tcp = router_info.tcp_snapshot().await?;
         resolve_tcp_selectors(&mut result, &key_set, &tcp);
     }
 
-    // --- NetDB ---
+    // --- NetDB (one group query) ---
     if key_set.iter().any(|k| k.starts_with("i2p.router.netdb.")) {
-        let netdb = router_info.netdb_snapshot().await;
+        let netdb = router_info.netdb_snapshot().await?;
         resolve_netdb_selectors(&mut result, &key_set, &netdb);
     }
 
-    // --- Bandwidth ---
+    // --- Bandwidth (one group query) ---
     if key_set.iter().any(|k| k.starts_with("i2p.router.bw.")) {
-        // Read cumulative bytes from MetricsSnapshot (fed by transport/tunnel events)
         let metrics = state.metrics_snapshot();
         let snapshot = metrics.snapshot();
         let transport = crate::i2pcontrol::router_info::TransportBytes {
@@ -304,7 +343,6 @@ async fn assemble_response(
             received: snapshot.total_transit_received,
             sent: snapshot.total_transit_sent,
         };
-        // Read rolling window data
         let rolling = state.rolling_window().read();
         let recent = crate::i2pcontrol::router_info::RecentTransitTraffic {
             inbound_1s: rolling.inbound_1s,
@@ -321,15 +359,15 @@ async fn assemble_response(
         resolve_bw_selectors(&mut result, &key_set, &transport, &transit, &recent);
     }
 
-    // --- Tunnel selectors ---
+    // --- Tunnel selectors (one group query) ---
     if key_set.iter().any(|k| k.starts_with("i2p.router.tunnels.")) {
-        let summary = router_info.tunnel_summary().await;
+        let summary = router_info.tunnel_summary().await?;
         resolve_tunnel_selectors(&mut result, &key_set, &summary);
     }
 
     // --- I2PTunnel ---
     if key_set.contains(rpc::router_info_keys::NET_IPTUNNELS) {
-        let stats = router_info.i2ptunnel_stats().await;
+        let stats = router_info.i2ptunnel_stats().await?;
         result.insert(
             rpc::router_info_keys::NET_IPTUNNELS.to_string(),
             serde_json::json!(stats.configured_count),
@@ -343,13 +381,12 @@ async fn assemble_response(
 
     // --- Log selectors ---
     if key_set.contains(rpc::router_info_keys::LOG_SNAPSHOT) {
-        let snap = router_info.log_snapshot().await;
+        let snap = router_info.log_snapshot().await?;
         if snap.entries.len() > MAX_LOG_ENTRIES {
-            return Err(format!(
-                "Log snapshot entries ({}) exceeds limit ({})",
-                snap.entries.len(),
-                MAX_LOG_ENTRIES
-            ));
+            return Err(InspectionError::ResultTooLarge {
+                group: crate::i2pcontrol::router_info::InspectionGroup::Log,
+                limit: MAX_LOG_ENTRIES,
+            });
         }
         let entries: Vec<serde_json::Value> = snap
             .entries
@@ -369,7 +406,7 @@ async fn assemble_response(
         );
     }
     if key_set.contains(rpc::router_info_keys::LOG_CLEAR) {
-        router_info.log_clear().await;
+        router_info.log_clear().await?;
         result.insert(
             rpc::router_info_keys::LOG_CLEAR.to_string(),
             serde_json::json!(true),
@@ -383,7 +420,11 @@ async fn assemble_response(
         .filter(|k| rpc::router_info_keys::ADDRESS_BOOK_KEYS.contains(k))
         .collect();
     if !address_book_keys.is_empty() {
-        let ab_result = resolve_address_book_selectors(address_book, &address_book_keys).await?;
+        let ab_result = resolve_address_book_selectors(address_book, &address_book_keys)
+            .await
+            .map_err(|_| InspectionError::QueryFailed {
+                group: crate::i2pcontrol::router_info::InspectionGroup::AddressBook,
+            })?;
         for (k, v) in ab_result {
             result.insert(k, v);
         }
@@ -795,9 +836,9 @@ async fn resolve_peer_selectors(
     result: &mut serde_json::Map<String, serde_json::Value>,
     key_set: &HashSet<&str>,
     router_info: &dyn RouterInfoControl,
-) -> Result<(), String> {
+) -> Result<(), InspectionError> {
     if key_set.contains(rpc::router_info_keys::PEERS_KNOWN_COUNT) {
-        let peers = router_info.known_peers().await;
+        let peers = router_info.known_peers().await?;
         let count = peers.len();
         result.insert(
             rpc::router_info_keys::PEERS_KNOWN_COUNT.to_string(),
@@ -805,13 +846,12 @@ async fn resolve_peer_selectors(
         );
     }
     if key_set.contains(rpc::router_info_keys::PEERS_KNOWN) {
-        let peers = router_info.known_peers().await;
+        let peers = router_info.known_peers().await?;
         if peers.len() > MAX_PEER_IDENTITIES {
-            return Err(format!(
-                "Known peers count ({}) exceeds limit ({})",
-                peers.len(),
-                MAX_PEER_IDENTITIES
-            ));
+            return Err(InspectionError::ResultTooLarge {
+                group: crate::i2pcontrol::router_info::InspectionGroup::PeerList,
+                limit: MAX_PEER_IDENTITIES,
+            });
         }
         let ids: Vec<String> = peers.iter().map(|p| p.id.clone()).collect();
         result.insert(
@@ -820,7 +860,7 @@ async fn resolve_peer_selectors(
         );
     }
     if key_set.contains(rpc::router_info_keys::PEERS_ACTIVE_COUNT) {
-        let peers = router_info.active_peers().await;
+        let peers = router_info.active_peers().await?;
         let count = peers.len();
         result.insert(
             rpc::router_info_keys::PEERS_ACTIVE_COUNT.to_string(),
@@ -828,13 +868,12 @@ async fn resolve_peer_selectors(
         );
     }
     if key_set.contains(rpc::router_info_keys::PEERS_ACTIVE) {
-        let peers = router_info.active_peers().await;
+        let peers = router_info.active_peers().await?;
         if peers.len() > MAX_PEER_IDENTITIES {
-            return Err(format!(
-                "Active peers count ({}) exceeds limit ({})",
-                peers.len(),
-                MAX_PEER_IDENTITIES
-            ));
+            return Err(InspectionError::ResultTooLarge {
+                group: crate::i2pcontrol::router_info::InspectionGroup::PeerList,
+                limit: MAX_PEER_IDENTITIES,
+            });
         }
         let ids: Vec<String> = peers.iter().map(|p| p.id.clone()).collect();
         result.insert(
@@ -850,13 +889,12 @@ async fn resolve_peer_selectors(
         );
     }
     if key_set.contains(rpc::router_info_keys::PEERS_BANNED) {
-        let banned = router_info.banned_peers().await;
+        let banned = router_info.banned_peers().await?;
         if banned.len() > MAX_BANNED_PEERS {
-            return Err(format!(
-                "Banned peers count ({}) exceeds limit ({})",
-                banned.len(),
-                MAX_BANNED_PEERS
-            ));
+            return Err(InspectionError::ResultTooLarge {
+                group: crate::i2pcontrol::router_info::InspectionGroup::PeerStats,
+                limit: MAX_BANNED_PEERS,
+            });
         }
         let entries: Vec<serde_json::Value> = banned
             .iter()
@@ -874,7 +912,7 @@ async fn resolve_peer_selectors(
         );
     }
     if key_set.contains(rpc::router_info_keys::PEERS_BANNED_COUNT) {
-        let banned = router_info.banned_peers().await;
+        let banned = router_info.banned_peers().await?;
         let count = banned.len();
         result.insert(
             rpc::router_info_keys::PEERS_BANNED_COUNT.to_string(),
@@ -882,7 +920,7 @@ async fn resolve_peer_selectors(
         );
     }
     if key_set.contains(rpc::router_info_keys::PEERS_LIMITS) {
-        let limits = router_info.peer_limits().await;
+        let limits = router_info.peer_limits().await?;
         result.insert(
             rpc::router_info_keys::PEERS_LIMITS.to_string(),
             serde_json::json!({
@@ -892,13 +930,12 @@ async fn resolve_peer_selectors(
         );
     }
     if key_set.contains(rpc::router_info_keys::PEERS_ACTIVE_STATS) {
-        let stats = router_info.active_peer_stats().await;
+        let stats = router_info.active_peer_stats().await?;
         if stats.len() > MAX_ACTIVE_PEER_STATS {
-            return Err(format!(
-                "Active peer stats count ({}) exceeds limit ({})",
-                stats.len(),
-                MAX_ACTIVE_PEER_STATS
-            ));
+            return Err(InspectionError::ResultTooLarge {
+                group: crate::i2pcontrol::router_info::InspectionGroup::PeerStats,
+                limit: MAX_ACTIVE_PEER_STATS,
+            });
         }
         let entries: Vec<serde_json::Value> = stats
             .iter()
@@ -1096,7 +1133,6 @@ mod tests {
     async fn handle_router_info_bw_selectors() {
         let ri = FakeRouterInfoControl::new();
         let state = test_state(ri);
-        // Feed the MetricsSnapshot (bandwidth now reads from here)
         state.metrics_snapshot().record_transport_received(1000000);
         state.metrics_snapshot().record_transport_sent(500000);
         let req = test_request(serde_json::json!({
@@ -1120,7 +1156,6 @@ mod tests {
         }));
         let resp = handle_router_info(&state, &req).await;
         let result = resp["result"].as_object().unwrap();
-        // Only version should be present, no unrelated keys
         assert_eq!(result.len(), 1);
         assert!(result.contains_key("i2p.router.version"));
         assert!(!result.contains_key("i2p.router.uptime"));
@@ -1145,5 +1180,44 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert_eq!(result["i2p.router.net.bw.inbound"], "OK");
         assert_eq!(result["i2p.router.net.bw.outbound"], "Firewalled");
+    }
+
+    #[tokio::test]
+    async fn handle_router_info_unavailable_returns_error() {
+        // Fake defaults to Unavailable for all groups
+        let ri = FakeRouterInfoControl::new();
+        let state = test_state(ri);
+        let req = test_request(serde_json::json!({"i2p.router.netdb.active": true}));
+        let resp = handle_router_info(&state, &req).await;
+        assert!(resp.get("error").is_some());
+        assert!(resp.get("result").is_none());
+        assert_eq!(resp["error"]["code"], -32603);
+    }
+
+    #[tokio::test]
+    async fn handle_router_info_available_zero_is_success() {
+        let ri = FakeRouterInfoControl::new();
+        ri.set_known_peers(Vec::new());
+        let state = test_state(ri);
+        let req = test_request(serde_json::json!({"i2p.router.peers.knownCount": true}));
+        let resp = handle_router_info(&state, &req).await;
+        let result = resp["result"].as_object().unwrap();
+        assert_eq!(result["i2p.router.peers.knownCount"], 0);
+    }
+
+    #[tokio::test]
+    async fn handle_router_info_no_partial_on_failure() {
+        let ri = FakeRouterInfoControl::new();
+        ri.set_version("Test".to_string());
+        // netdb defaults to Unavailable
+        let state = test_state(ri);
+        let req = test_request(serde_json::json!({
+            "i2p.router.version": true,
+            "i2p.router.netdb.active": true
+        }));
+        let resp = handle_router_info(&state, &req).await;
+        // netdb failure should abort the entire request
+        assert!(resp.get("error").is_some());
+        assert!(resp.get("result").is_none());
     }
 }

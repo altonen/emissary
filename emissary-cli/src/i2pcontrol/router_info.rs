@@ -23,11 +23,104 @@
 //! immutable snapshots. No mutation, no private keys, no EventSubscriber.
 
 use std::collections::HashMap;
+use std::fmt;
 
 use async_trait::async_trait;
 
 #[allow(dead_code)]
 const LOG_TARGET: &str = "emissary::i2pcontrol::router_info";
+
+// --- Inspection error vocabulary ---
+
+/// Snapshot group for grouped request dispatch.
+///
+/// Each group corresponds to one coherent source query per request.
+/// The handler queries a group at most once when any selector in the
+/// group is requested.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InspectionGroup {
+    Retained,
+    Network,
+    UdpTransport,
+    TcpTransport,
+    NetDb,
+    TrafficMetrics,
+    TunnelSummary,
+    PeerList,
+    PeerLookup,
+    PeerStats,
+    I2PTunnel,
+    Log,
+    AddressBook,
+}
+
+impl fmt::Display for InspectionGroup {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Retained => write!(f, "retained"),
+            Self::Network => write!(f, "network"),
+            Self::UdpTransport => write!(f, "udp-transport"),
+            Self::TcpTransport => write!(f, "tcp-transport"),
+            Self::NetDb => write!(f, "netdb"),
+            Self::TrafficMetrics => write!(f, "traffic-metrics"),
+            Self::TunnelSummary => write!(f, "tunnel-summary"),
+            Self::PeerList => write!(f, "peer-list"),
+            Self::PeerLookup => write!(f, "peer-lookup"),
+            Self::PeerStats => write!(f, "peer-stats"),
+            Self::I2PTunnel => write!(f, "i2ptunnel"),
+            Self::Log => write!(f, "log"),
+            Self::AddressBook => write!(f, "address-book"),
+        }
+    }
+}
+
+/// Typed error for RouterInfo inspection failures.
+///
+/// Errors map to sanitized JSON-RPC error responses. No private keys,
+/// file paths, or internal backtraces are exposed in `Display` output.
+#[derive(Debug, Clone)]
+pub enum InspectionError {
+    /// Source group not wired or not yet implemented.
+    Unavailable { group: InspectionGroup },
+    /// Source temporarily unavailable (e.g. transient query failure).
+    TemporarilyUnavailable { group: InspectionGroup },
+    /// Source query failed.
+    QueryFailed { group: InspectionGroup },
+    /// Result exceeds protocol or resource bounds.
+    ResultTooLarge {
+        group: InspectionGroup,
+        limit: usize,
+    },
+    /// Invalid peer identifier in lookup request.
+    InvalidPeerId,
+    /// Internal invariant violation (should never occur).
+    InternalInvariant,
+}
+
+impl fmt::Display for InspectionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unavailable { group } => {
+                write!(f, "{group} data unavailable")
+            }
+            Self::TemporarilyUnavailable { group } => {
+                write!(f, "{group} temporarily unavailable")
+            }
+            Self::QueryFailed { group } => {
+                write!(f, "{group} query failed")
+            }
+            Self::ResultTooLarge { group, limit } => {
+                write!(f, "{group} result exceeds bound of {limit} items")
+            }
+            Self::InvalidPeerId => write!(f, "invalid peer identifier"),
+            Self::InternalInvariant => {
+                write!(f, "internal inspection invariant violation")
+            }
+        }
+    }
+}
+
+impl std::error::Error for InspectionError {}
 
 // --- Bounded snapshot DTOs ---
 
@@ -335,150 +428,161 @@ use serde::Serialize;
 /// - No private keys, tunnel session keys, or authentication tokens.
 /// - No direct references into mutable core collections.
 /// - Read operations do not block router progress.
+/// - Methods returning `Result` distinguish unavailable, failed, and
+///   successful-but-empty states.
 #[async_trait]
 pub trait RouterInfoControl: Send + Sync {
     /// Get the local router identity as Base64-encoded serialized RouterInfo.
-    fn router_identity(&self) -> Result<String, String>;
+    fn router_identity(&self) -> Result<String, InspectionError>;
 
     /// Get router version string.
-    fn router_version(&self) -> String;
+    fn router_version(&self) -> Result<String, InspectionError>;
 
     /// Get router uptime in milliseconds.
-    fn router_uptime_ms(&self) -> u64;
+    fn router_uptime_ms(&self) -> Result<u64, InspectionError>;
 
     /// Get network reachability snapshot.
-    async fn network_snapshot(&self) -> NetworkSnapshot;
+    async fn network_snapshot(&self) -> Result<NetworkSnapshot, InspectionError>;
 
     /// Get clock skew estimate.
-    async fn clock_skew(&self) -> ClockSkew;
+    async fn clock_skew(&self) -> Result<ClockSkew, InspectionError>;
 
     /// Get cumulative transport bytes.
-    async fn transport_bytes(&self) -> TransportBytes;
+    async fn transport_bytes(&self) -> Result<TransportBytes, InspectionError>;
 
     /// Get rolling transit traffic snapshot.
-    async fn recent_transit_traffic(&self) -> RecentTransitTraffic;
+    async fn recent_transit_traffic(&self) -> Result<RecentTransitTraffic, InspectionError>;
 
     /// Get cumulative transit bytes.
-    async fn transit_bytes(&self) -> TransitBytes;
+    async fn transit_bytes(&self) -> Result<TransitBytes, InspectionError>;
 
     /// Get tunnel build success/failure stats.
-    async fn tunnel_build_stats(&self) -> TunnelBuildStats;
+    async fn tunnel_build_stats(&self) -> Result<TunnelBuildStats, InspectionError>;
 
     /// Get tunnel summary counts.
-    async fn tunnel_summary(&self) -> TunnelSummary;
+    async fn tunnel_summary(&self) -> Result<TunnelSummary, InspectionError>;
 
     /// Get NetDB summary.
-    async fn netdb_snapshot(&self) -> NetDbSnapshot;
+    async fn netdb_snapshot(&self) -> Result<NetDbSnapshot, InspectionError>;
 
     /// Get UDP transport snapshot.
-    async fn udp_snapshot(&self) -> UdpSnapshot;
+    async fn udp_snapshot(&self) -> Result<UdpSnapshot, InspectionError>;
 
     /// Get TCP transport snapshot.
-    async fn tcp_snapshot(&self) -> TcpSnapshot;
+    async fn tcp_snapshot(&self) -> Result<TcpSnapshot, InspectionError>;
 
     /// Get known peers (canonical stored peer set).
-    async fn known_peers(&self) -> Vec<PeerIdentity>;
+    async fn known_peers(&self) -> Result<Vec<PeerIdentity>, InspectionError>;
 
     /// Get active peers (live transport sessions).
-    async fn active_peers(&self) -> Vec<PeerIdentity>;
+    async fn active_peers(&self) -> Result<Vec<PeerIdentity>, InspectionError>;
 
     /// Get a serialized RouterInfo for a specific peer.
-    async fn peer_router_info(&self, peer_id: &str) -> Result<Option<String>, String>;
+    ///
+    /// `Ok(None)` means the source was queried successfully and the peer
+    /// is not present. It must not mean the source is not wired.
+    async fn peer_router_info(&self, peer_id: &str) -> Result<Option<String>, InspectionError>;
 
     /// Get banned peers.
-    async fn banned_peers(&self) -> Vec<BannedPeer>;
+    async fn banned_peers(&self) -> Result<Vec<BannedPeer>, InspectionError>;
 
     /// Get configured and effective peer/transport limits.
-    async fn peer_limits(&self) -> PeerLimits;
+    async fn peer_limits(&self) -> Result<PeerLimits, InspectionError>;
 
     /// Get active peer transport statistics.
-    async fn active_peer_stats(&self) -> Vec<ActivePeerStats>;
+    async fn active_peer_stats(&self) -> Result<Vec<ActivePeerStats>, InspectionError>;
 
     /// Get I2PTunnel quick statistics from M004.
-    async fn i2ptunnel_stats(&self) -> I2PTunnelStats;
+    async fn i2ptunnel_stats(&self) -> Result<I2PTunnelStats, InspectionError>;
 
     /// Get log buffer snapshot.
-    async fn log_snapshot(&self) -> LogSnapshot;
+    async fn log_snapshot(&self) -> Result<LogSnapshot, InspectionError>;
 
     /// Clear the I2PControl log buffer.
-    async fn log_clear(&self);
+    async fn log_clear(&self) -> Result<(), InspectionError>;
 
     /// Get router news. Emissary has no news subsystem; returns empty string.
-    fn router_news(&self) -> String;
+    fn router_news(&self) -> Result<String, InspectionError>;
 
     /// Get bandwidth shares/ratios from configuration.
-    async fn share_ratio(&self) -> f64;
+    async fn share_ratio(&self) -> Result<f64, InspectionError>;
 
     /// Get configured bandwidth limits.
-    async fn configured_bw_limits(&self) -> (u64, u64);
+    async fn configured_bw_limits(&self) -> Result<(u64, u64), InspectionError>;
 }
 
 // --- Fake implementation for testing ---
 
 /// Fake implementation of RouterInfoControl for unit tests.
 ///
-/// Returns configurable stub values. No real router state.
+/// Defaults every snapshot group to `Err(InspectionError::Unavailable)`.
+/// Tests must explicitly configure each requested snapshot group to prove
+/// that returned values are known facts rather than constructor defaults.
 pub struct FakeRouterInfoControl {
     inner: std::sync::Mutex<FakeInner>,
 }
 
 struct FakeInner {
-    identity: String,
-    version: String,
-    uptime_ms: u64,
-    network: NetworkSnapshot,
-    clock_skew: ClockSkew,
-    transport_bytes: TransportBytes,
-    recent_transit: RecentTransitTraffic,
-    transit_bytes: TransitBytes,
-    build_stats: TunnelBuildStats,
-    tunnel_summary: TunnelSummary,
-    netdb: NetDbSnapshot,
-    udp: UdpSnapshot,
-    tcp: TcpSnapshot,
-    known_peers: Vec<PeerIdentity>,
-    active_peers: Vec<PeerIdentity>,
+    identity: Result<String, InspectionError>,
+    version: Result<String, InspectionError>,
+    uptime_ms: Result<u64, InspectionError>,
+    network: Result<NetworkSnapshot, InspectionError>,
+    clock_skew: Result<ClockSkew, InspectionError>,
+    transport_bytes: Result<TransportBytes, InspectionError>,
+    recent_transit: Result<RecentTransitTraffic, InspectionError>,
+    transit_bytes: Result<TransitBytes, InspectionError>,
+    build_stats: Result<TunnelBuildStats, InspectionError>,
+    tunnel_summary: Result<TunnelSummary, InspectionError>,
+    netdb: Result<NetDbSnapshot, InspectionError>,
+    udp: Result<UdpSnapshot, InspectionError>,
+    tcp: Result<TcpSnapshot, InspectionError>,
+    known_peers: Result<Vec<PeerIdentity>, InspectionError>,
+    active_peers: Result<Vec<PeerIdentity>, InspectionError>,
     peer_ris: HashMap<String, String>,
-    banned_peers: Vec<BannedPeer>,
-    peer_limits: PeerLimits,
-    active_peer_stats: Vec<ActivePeerStats>,
-    i2ptunnel_stats: I2PTunnelStats,
+    banned_peers: Result<Vec<BannedPeer>, InspectionError>,
+    peer_limits: Result<PeerLimits, InspectionError>,
+    active_peer_stats: Result<Vec<ActivePeerStats>, InspectionError>,
+    i2ptunnel_stats: Result<I2PTunnelStats, InspectionError>,
     log_entries: Vec<LogEntry>,
     log_generation: u64,
-    share_ratio: f64,
-    configured_bw: (u64, u64),
-    router_news: String,
+    share_ratio: Result<f64, InspectionError>,
+    configured_bw: Result<(u64, u64), InspectionError>,
+    router_news: Result<String, InspectionError>,
+}
+
+fn unavailable(group: InspectionGroup) -> InspectionError {
+    InspectionError::Unavailable { group }
 }
 
 impl FakeRouterInfoControl {
     pub fn new() -> Self {
         Self {
             inner: std::sync::Mutex::new(FakeInner {
-                identity: String::new(),
-                version: "Emissary 0.4.0".to_string(),
-                uptime_ms: 0,
-                network: NetworkSnapshot::default(),
-                clock_skew: ClockSkew::default(),
-                transport_bytes: TransportBytes::default(),
-                recent_transit: RecentTransitTraffic::default(),
-                transit_bytes: TransitBytes::default(),
-                build_stats: TunnelBuildStats::default(),
-                tunnel_summary: TunnelSummary::default(),
-                netdb: NetDbSnapshot::default(),
-                udp: UdpSnapshot::default(),
-                tcp: TcpSnapshot::default(),
-                known_peers: Vec::new(),
-                active_peers: Vec::new(),
+                identity: Err(unavailable(InspectionGroup::Retained)),
+                version: Err(unavailable(InspectionGroup::Retained)),
+                uptime_ms: Err(unavailable(InspectionGroup::Retained)),
+                network: Err(unavailable(InspectionGroup::Network)),
+                clock_skew: Err(unavailable(InspectionGroup::Network)),
+                transport_bytes: Err(unavailable(InspectionGroup::TrafficMetrics)),
+                recent_transit: Err(unavailable(InspectionGroup::TrafficMetrics)),
+                transit_bytes: Err(unavailable(InspectionGroup::TrafficMetrics)),
+                build_stats: Err(unavailable(InspectionGroup::TrafficMetrics)),
+                tunnel_summary: Err(unavailable(InspectionGroup::TunnelSummary)),
+                netdb: Err(unavailable(InspectionGroup::NetDb)),
+                udp: Err(unavailable(InspectionGroup::UdpTransport)),
+                tcp: Err(unavailable(InspectionGroup::TcpTransport)),
+                known_peers: Err(unavailable(InspectionGroup::PeerList)),
+                active_peers: Err(unavailable(InspectionGroup::PeerList)),
                 peer_ris: HashMap::new(),
-                banned_peers: Vec::new(),
-                peer_limits: PeerLimits::default(),
-                active_peer_stats: Vec::new(),
-                i2ptunnel_stats: I2PTunnelStats::default(),
+                banned_peers: Err(unavailable(InspectionGroup::PeerStats)),
+                peer_limits: Err(unavailable(InspectionGroup::PeerStats)),
+                active_peer_stats: Err(unavailable(InspectionGroup::PeerStats)),
+                i2ptunnel_stats: Err(unavailable(InspectionGroup::I2PTunnel)),
                 log_entries: Vec::new(),
                 log_generation: 0,
-                share_ratio: 0.5,
-                configured_bw: (512, 512),
-                router_news: String::new(),
+                share_ratio: Err(unavailable(InspectionGroup::Retained)),
+                configured_bw: Err(unavailable(InspectionGroup::Retained)),
+                router_news: Err(unavailable(InspectionGroup::Retained)),
             }),
         }
     }
@@ -486,73 +590,73 @@ impl FakeRouterInfoControl {
     /// Set the router identity for tests.
     pub fn set_identity(&self, identity: String) {
         let mut inner = self.inner.lock().unwrap();
-        inner.identity = identity;
+        inner.identity = Ok(identity);
     }
 
     /// Set the router version for tests.
     pub fn set_version(&self, version: String) {
         let mut inner = self.inner.lock().unwrap();
-        inner.version = version;
+        inner.version = Ok(version);
     }
 
     /// Set uptime for tests.
     pub fn set_uptime_ms(&self, ms: u64) {
         let mut inner = self.inner.lock().unwrap();
-        inner.uptime_ms = ms;
+        inner.uptime_ms = Ok(ms);
     }
 
     /// Set network snapshot for tests.
     pub fn set_network(&self, network: NetworkSnapshot) {
         let mut inner = self.inner.lock().unwrap();
-        inner.network = network;
+        inner.network = Ok(network);
     }
 
     /// Set transport bytes for tests.
     pub fn set_transport_bytes(&self, bytes: TransportBytes) {
         let mut inner = self.inner.lock().unwrap();
-        inner.transport_bytes = bytes;
+        inner.transport_bytes = Ok(bytes);
     }
 
     /// Set tunnel build stats for tests.
     pub fn set_build_stats(&self, stats: TunnelBuildStats) {
         let mut inner = self.inner.lock().unwrap();
-        inner.build_stats = stats;
+        inner.build_stats = Ok(stats);
     }
 
     /// Set tunnel summary for tests.
     pub fn set_tunnel_summary(&self, summary: TunnelSummary) {
         let mut inner = self.inner.lock().unwrap();
-        inner.tunnel_summary = summary;
+        inner.tunnel_summary = Ok(summary);
     }
 
     /// Set netdb snapshot for tests.
     pub fn set_netdb(&self, netdb: NetDbSnapshot) {
         let mut inner = self.inner.lock().unwrap();
-        inner.netdb = netdb;
+        inner.netdb = Ok(netdb);
     }
 
     /// Set UDP snapshot for tests.
     pub fn set_udp(&self, udp: UdpSnapshot) {
         let mut inner = self.inner.lock().unwrap();
-        inner.udp = udp;
+        inner.udp = Ok(udp);
     }
 
     /// Set TCP snapshot for tests.
     pub fn set_tcp(&self, tcp: TcpSnapshot) {
         let mut inner = self.inner.lock().unwrap();
-        inner.tcp = tcp;
+        inner.tcp = Ok(tcp);
     }
 
     /// Set known peers for tests.
     pub fn set_known_peers(&self, peers: Vec<PeerIdentity>) {
         let mut inner = self.inner.lock().unwrap();
-        inner.known_peers = peers;
+        inner.known_peers = Ok(peers);
     }
 
     /// Set active peers for tests.
     pub fn set_active_peers(&self, peers: Vec<PeerIdentity>) {
         let mut inner = self.inner.lock().unwrap();
-        inner.active_peers = peers;
+        inner.active_peers = Ok(peers);
     }
 
     /// Insert a peer RouterInfo for tests.
@@ -564,25 +668,25 @@ impl FakeRouterInfoControl {
     /// Set banned peers for tests.
     pub fn set_banned_peers(&self, peers: Vec<BannedPeer>) {
         let mut inner = self.inner.lock().unwrap();
-        inner.banned_peers = peers;
+        inner.banned_peers = Ok(peers);
     }
 
     /// Set peer limits for tests.
     pub fn set_peer_limits(&self, limits: PeerLimits) {
         let mut inner = self.inner.lock().unwrap();
-        inner.peer_limits = limits;
+        inner.peer_limits = Ok(limits);
     }
 
     /// Set active peer stats for tests.
     pub fn set_active_peer_stats(&self, stats: Vec<ActivePeerStats>) {
         let mut inner = self.inner.lock().unwrap();
-        inner.active_peer_stats = stats;
+        inner.active_peer_stats = Ok(stats);
     }
 
     /// Set I2PTunnel stats for tests.
     pub fn set_i2ptunnel_stats(&self, stats: I2PTunnelStats) {
         let mut inner = self.inner.lock().unwrap();
-        inner.i2ptunnel_stats = stats;
+        inner.i2ptunnel_stats = Ok(stats);
     }
 
     /// Add a log entry for tests.
@@ -594,13 +698,13 @@ impl FakeRouterInfoControl {
     /// Set share ratio for tests.
     pub fn set_share_ratio(&self, ratio: f64) {
         let mut inner = self.inner.lock().unwrap();
-        inner.share_ratio = ratio;
+        inner.share_ratio = Ok(ratio);
     }
 
     /// Set router news for tests.
     pub fn set_router_news(&self, news: String) {
         let mut inner = self.inner.lock().unwrap();
-        inner.router_news = news;
+        inner.router_news = Ok(news);
     }
 }
 
@@ -612,132 +716,134 @@ impl Default for FakeRouterInfoControl {
 
 #[async_trait]
 impl RouterInfoControl for FakeRouterInfoControl {
-    fn router_identity(&self) -> Result<String, String> {
+    fn router_identity(&self) -> Result<String, InspectionError> {
         let inner = self.inner.lock().unwrap();
-        Ok(inner.identity.clone())
+        inner.identity.clone()
     }
 
-    fn router_version(&self) -> String {
+    fn router_version(&self) -> Result<String, InspectionError> {
         let inner = self.inner.lock().unwrap();
         inner.version.clone()
     }
 
-    fn router_uptime_ms(&self) -> u64 {
+    fn router_uptime_ms(&self) -> Result<u64, InspectionError> {
         let inner = self.inner.lock().unwrap();
-        inner.uptime_ms
+        inner.uptime_ms.clone()
     }
 
-    async fn network_snapshot(&self) -> NetworkSnapshot {
+    async fn network_snapshot(&self) -> Result<NetworkSnapshot, InspectionError> {
         let inner = self.inner.lock().unwrap();
         inner.network.clone()
     }
 
-    async fn clock_skew(&self) -> ClockSkew {
+    async fn clock_skew(&self) -> Result<ClockSkew, InspectionError> {
         let inner = self.inner.lock().unwrap();
         inner.clock_skew.clone()
     }
 
-    async fn transport_bytes(&self) -> TransportBytes {
+    async fn transport_bytes(&self) -> Result<TransportBytes, InspectionError> {
         let inner = self.inner.lock().unwrap();
         inner.transport_bytes.clone()
     }
 
-    async fn recent_transit_traffic(&self) -> RecentTransitTraffic {
+    async fn recent_transit_traffic(&self) -> Result<RecentTransitTraffic, InspectionError> {
         let inner = self.inner.lock().unwrap();
         inner.recent_transit.clone()
     }
 
-    async fn transit_bytes(&self) -> TransitBytes {
+    async fn transit_bytes(&self) -> Result<TransitBytes, InspectionError> {
         let inner = self.inner.lock().unwrap();
         inner.transit_bytes.clone()
     }
 
-    async fn tunnel_build_stats(&self) -> TunnelBuildStats {
+    async fn tunnel_build_stats(&self) -> Result<TunnelBuildStats, InspectionError> {
         let inner = self.inner.lock().unwrap();
         inner.build_stats.clone()
     }
 
-    async fn tunnel_summary(&self) -> TunnelSummary {
+    async fn tunnel_summary(&self) -> Result<TunnelSummary, InspectionError> {
         let inner = self.inner.lock().unwrap();
         inner.tunnel_summary.clone()
     }
 
-    async fn netdb_snapshot(&self) -> NetDbSnapshot {
+    async fn netdb_snapshot(&self) -> Result<NetDbSnapshot, InspectionError> {
         let inner = self.inner.lock().unwrap();
         inner.netdb.clone()
     }
 
-    async fn udp_snapshot(&self) -> UdpSnapshot {
+    async fn udp_snapshot(&self) -> Result<UdpSnapshot, InspectionError> {
         let inner = self.inner.lock().unwrap();
         inner.udp.clone()
     }
 
-    async fn tcp_snapshot(&self) -> TcpSnapshot {
+    async fn tcp_snapshot(&self) -> Result<TcpSnapshot, InspectionError> {
         let inner = self.inner.lock().unwrap();
         inner.tcp.clone()
     }
 
-    async fn known_peers(&self) -> Vec<PeerIdentity> {
+    async fn known_peers(&self) -> Result<Vec<PeerIdentity>, InspectionError> {
         let inner = self.inner.lock().unwrap();
         inner.known_peers.clone()
     }
 
-    async fn active_peers(&self) -> Vec<PeerIdentity> {
+    async fn active_peers(&self) -> Result<Vec<PeerIdentity>, InspectionError> {
         let inner = self.inner.lock().unwrap();
         inner.active_peers.clone()
     }
 
-    async fn peer_router_info(&self, peer_id: &str) -> Result<Option<String>, String> {
+    async fn peer_router_info(&self, peer_id: &str) -> Result<Option<String>, InspectionError> {
         let inner = self.inner.lock().unwrap();
         Ok(inner.peer_ris.get(peer_id).cloned())
     }
 
-    async fn banned_peers(&self) -> Vec<BannedPeer> {
+    async fn banned_peers(&self) -> Result<Vec<BannedPeer>, InspectionError> {
         let inner = self.inner.lock().unwrap();
         inner.banned_peers.clone()
     }
 
-    async fn peer_limits(&self) -> PeerLimits {
+    async fn peer_limits(&self) -> Result<PeerLimits, InspectionError> {
         let inner = self.inner.lock().unwrap();
         inner.peer_limits.clone()
     }
 
-    async fn active_peer_stats(&self) -> Vec<ActivePeerStats> {
+    async fn active_peer_stats(&self) -> Result<Vec<ActivePeerStats>, InspectionError> {
         let inner = self.inner.lock().unwrap();
         inner.active_peer_stats.clone()
     }
 
-    async fn i2ptunnel_stats(&self) -> I2PTunnelStats {
+    async fn i2ptunnel_stats(&self) -> Result<I2PTunnelStats, InspectionError> {
         let inner = self.inner.lock().unwrap();
         inner.i2ptunnel_stats.clone()
     }
 
-    async fn log_snapshot(&self) -> LogSnapshot {
+    async fn log_snapshot(&self) -> Result<LogSnapshot, InspectionError> {
         let inner = self.inner.lock().unwrap();
-        LogSnapshot {
+        Ok(LogSnapshot {
             entries: inner.log_entries.clone(),
             generation: inner.log_generation,
-        }
+        })
     }
 
-    async fn log_clear(&self) {
+    async fn log_clear(&self) -> Result<(), InspectionError> {
         let mut inner = self.inner.lock().unwrap();
         inner.log_entries.clear();
         inner.log_generation += 1;
+        Ok(())
     }
 
-    fn router_news(&self) -> String {
-        String::new()
-    }
-
-    async fn share_ratio(&self) -> f64 {
+    fn router_news(&self) -> Result<String, InspectionError> {
         let inner = self.inner.lock().unwrap();
-        inner.share_ratio
+        inner.router_news.clone()
     }
 
-    async fn configured_bw_limits(&self) -> (u64, u64) {
+    async fn share_ratio(&self) -> Result<f64, InspectionError> {
         let inner = self.inner.lock().unwrap();
-        inner.configured_bw
+        inner.share_ratio.clone()
+    }
+
+    async fn configured_bw_limits(&self) -> Result<(u64, u64), InspectionError> {
+        let inner = self.inner.lock().unwrap();
+        inner.configured_bw.clone()
     }
 }
 
@@ -765,50 +871,83 @@ mod tests {
         assert!(skew.skew_seconds.is_none());
     }
 
-    #[tokio::test]
-    async fn fake_router_info_control_defaults() {
-        let fake = FakeRouterInfoControl::new();
-        assert_eq!(fake.router_version(), "Emissary 0.4.0");
-        assert_eq!(fake.router_uptime_ms(), 0);
-        assert!(fake.router_identity().unwrap().is_empty());
+    #[test]
+    fn inspection_group_display() {
+        assert_eq!(InspectionGroup::Retained.to_string(), "retained");
+        assert_eq!(InspectionGroup::Network.to_string(), "network");
+        assert_eq!(InspectionGroup::UdpTransport.to_string(), "udp-transport");
+        assert_eq!(InspectionGroup::TcpTransport.to_string(), "tcp-transport");
+        assert_eq!(InspectionGroup::NetDb.to_string(), "netdb");
+        assert_eq!(
+            InspectionGroup::TrafficMetrics.to_string(),
+            "traffic-metrics"
+        );
+        assert_eq!(InspectionGroup::TunnelSummary.to_string(), "tunnel-summary");
+        assert_eq!(InspectionGroup::PeerList.to_string(), "peer-list");
+        assert_eq!(InspectionGroup::PeerLookup.to_string(), "peer-lookup");
+        assert_eq!(InspectionGroup::PeerStats.to_string(), "peer-stats");
+        assert_eq!(InspectionGroup::I2PTunnel.to_string(), "i2ptunnel");
+        assert_eq!(InspectionGroup::Log.to_string(), "log");
+        assert_eq!(InspectionGroup::AddressBook.to_string(), "address-book");
+    }
 
-        let network = fake.network_snapshot().await;
-        assert_eq!(network.ipv4_status, NetworkStatus::Unknown);
+    #[test]
+    fn inspection_error_display_no_secrets() {
+        let err = InspectionError::Unavailable {
+            group: InspectionGroup::NetDb,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("netdb"));
+        assert!(!msg.contains("/"));
+        assert!(!msg.contains("key"));
 
-        let skew = fake.clock_skew().await;
-        assert!(skew.skew_seconds.is_none());
-
-        let tb = fake.transport_bytes().await;
-        assert_eq!(tb.received, 0);
-        assert_eq!(tb.sent, 0);
-
-        let bs = fake.tunnel_build_stats().await;
-        assert_eq!(bs.successes, 0);
-        assert_eq!(bs.failures, 0);
-
-        let peers = fake.known_peers().await;
-        assert!(peers.is_empty());
-
-        let active = fake.active_peers().await;
-        assert!(active.is_empty());
+        let err = InspectionError::InvalidPeerId;
+        assert!(!err.to_string().contains("/"));
     }
 
     #[tokio::test]
-    async fn fake_router_info_control_setters() {
+    async fn fake_defaults_to_unavailable() {
+        let fake = FakeRouterInfoControl::new();
+        assert!(fake.router_identity().is_err());
+        assert!(fake.router_version().is_err());
+        assert!(fake.router_uptime_ms().is_err());
+        assert!(fake.network_snapshot().await.is_err());
+        assert!(fake.clock_skew().await.is_err());
+        assert!(fake.transport_bytes().await.is_err());
+        assert!(fake.recent_transit_traffic().await.is_err());
+        assert!(fake.transit_bytes().await.is_err());
+        assert!(fake.tunnel_build_stats().await.is_err());
+        assert!(fake.tunnel_summary().await.is_err());
+        assert!(fake.netdb_snapshot().await.is_err());
+        assert!(fake.udp_snapshot().await.is_err());
+        assert!(fake.tcp_snapshot().await.is_err());
+        assert!(fake.known_peers().await.is_err());
+        assert!(fake.active_peers().await.is_err());
+        assert!(fake.banned_peers().await.is_err());
+        assert!(fake.peer_limits().await.is_err());
+        assert!(fake.active_peer_stats().await.is_err());
+        assert!(fake.i2ptunnel_stats().await.is_err());
+        assert!(fake.share_ratio().await.is_err());
+        assert!(fake.configured_bw_limits().await.is_err());
+        assert!(fake.router_news().is_err());
+    }
+
+    #[tokio::test]
+    async fn fake_setters_prove_known_facts() {
         let fake = FakeRouterInfoControl::new();
         fake.set_identity("test-identity-b64".to_string());
         fake.set_version("Test 1.0".to_string());
         fake.set_uptime_ms(60000);
 
         assert_eq!(fake.router_identity().unwrap(), "test-identity-b64");
-        assert_eq!(fake.router_version(), "Test 1.0");
-        assert_eq!(fake.router_uptime_ms(), 60000);
+        assert_eq!(fake.router_version().unwrap(), "Test 1.0");
+        assert_eq!(fake.router_uptime_ms().unwrap(), 60000);
 
         fake.set_transport_bytes(TransportBytes {
             received: 1024,
             sent: 2048,
         });
-        let tb = fake.transport_bytes().await;
+        let tb = fake.transport_bytes().await.unwrap();
         assert_eq!(tb.received, 1024);
         assert_eq!(tb.sent, 2048);
 
@@ -816,9 +955,20 @@ mod tests {
             successes: 10,
             failures: 2,
         });
-        let bs = fake.tunnel_build_stats().await;
+        let bs = fake.tunnel_build_stats().await.unwrap();
         assert_eq!(bs.successes, 10);
         assert_eq!(bs.failures, 2);
+    }
+
+    #[tokio::test]
+    async fn fake_available_zero_distinct_from_unavailable() {
+        let fake = FakeRouterInfoControl::new();
+        // Unset peers should be unavailable
+        assert!(fake.known_peers().await.is_err());
+        // Explicitly configured empty peers should succeed
+        fake.set_known_peers(Vec::new());
+        let peers = fake.known_peers().await.unwrap();
+        assert!(peers.is_empty());
     }
 
     #[tokio::test]
@@ -831,13 +981,13 @@ mod tests {
             message: "hello".to_string(),
         });
 
-        let snap = fake.log_snapshot().await;
+        let snap = fake.log_snapshot().await.unwrap();
         assert_eq!(snap.entries.len(), 1);
         assert_eq!(snap.generation, 0);
 
-        fake.log_clear().await;
+        fake.log_clear().await.unwrap();
 
-        let snap = fake.log_snapshot().await;
+        let snap = fake.log_snapshot().await.unwrap();
         assert!(snap.entries.is_empty());
         assert_eq!(snap.generation, 1);
     }

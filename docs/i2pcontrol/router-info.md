@@ -1,6 +1,6 @@
 # RouterInfo Method
 
-Status: M005 implemented (corrective pass)
+Status: M009 implemented (availability and truthfulness)
 
 This document describes the Proposal 170 `RouterInfo` JSON-RPC method implementation in Emissary.
 
@@ -107,11 +107,14 @@ Per-selector item bounds enforce limits on returned collections.
 
 ## Null/unavailable behavior
 
-- Clock skew: `null` when not yet determined
-- Router news: empty string (no news subsystem)
+- Clock skew: `null` when not yet determined (protocol-permitted nullable)
+- Router news: empty string (no news subsystem; retained constant)
 - Peer RouterInfo: `null` when no peer ID specified
 - Network status: exact string codes ("OK", "Firewalled", "Testing", etc.)
-- Share ratio: `0.0` when no real config adapter
+- Share ratio: from retained configuration
+- Unavailable non-null selectors: return JSON-RPC error with no partial result
+- Available-zero selectors: return successful zero/empty values
+- Source failure: distinguished from unavailable and from empty
 
 ## Read-only architecture
 
@@ -122,9 +125,9 @@ Per-selector item bounds enforce limits on returned collections.
 - Log redaction applied before ring insertion
 - Core remains free of HTTP/JSON-RPC dependencies
 
-## Limitations (deferred)
+## Limitations (deferred to M010)
 
-- Production `RouterInfoControl` adapter requires core integration
-- `RouterInspectionHandle` in `emissary-core` not yet implemented
-- Clock skew, network status, UDP/TCP, NetDB, tunnels, peers use `FakeRouterInfoControl`
-- Integration/contention/performance tests require full router
+- NetDB, TCP transport, peer list/lookup/stats: `unsupported-inspection`
+- UDP transport peers (integrated, coinficient, critical, etc.): `unsupported-inspection`
+- Tunnel exploratory/client inbound/outbound, queue depth: `unsupported-inspection`
+- Clock skew estimator: not yet implemented

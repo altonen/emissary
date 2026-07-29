@@ -40,9 +40,10 @@ use crate::i2pcontrol::domain::address_book::{
 use crate::i2pcontrol::domain::tunnel::{TunnelDefinition, TunnelName, TunnelType};
 use crate::i2pcontrol::observability::LogRing;
 use crate::i2pcontrol::router_info::{
-    ActivePeerStats, BannedPeer, ClockSkew, I2PTunnelStats, LogEntry, LogSnapshot, NetworkSnapshot,
-    NetworkStatus, PeerIdentity, PeerLimits, RecentTransitTraffic, RouterInfoControl, TransitBytes,
-    TransportBytes, TunnelBuildStats, TunnelSummary,
+    ActivePeerStats, BannedPeer, ClockSkew, I2PTunnelStats, InspectionError, InspectionGroup,
+    LogEntry, LogSnapshot, NetworkSnapshot, NetworkStatus, PeerIdentity, PeerLimits,
+    RecentTransitTraffic, RouterInfoControl, TransitBytes, TransportBytes, TunnelBuildStats,
+    TunnelSummary,
 };
 use crate::i2pcontrol::stores::address_book_store::AddressBookStore;
 use crate::i2pcontrol::stores::tunnel_store::TunnelStore;
@@ -529,24 +530,24 @@ impl ProductionRouterInfoControl {
 
 #[async_trait]
 impl RouterInfoControl for ProductionRouterInfoControl {
-    fn router_identity(&self) -> Result<String, String> {
+    fn router_identity(&self) -> Result<String, InspectionError> {
         Ok(self.router_id_b64.clone())
     }
 
-    fn router_version(&self) -> String {
-        self.version.clone()
+    fn router_version(&self) -> Result<String, InspectionError> {
+        Ok(self.version.clone())
     }
 
-    fn router_uptime_ms(&self) -> u64 {
-        self.startup.elapsed().as_millis() as u64
+    fn router_uptime_ms(&self) -> Result<u64, InspectionError> {
+        Ok(self.startup.elapsed().as_millis() as u64)
     }
 
-    async fn network_snapshot(&self) -> NetworkSnapshot {
+    async fn network_snapshot(&self) -> Result<NetworkSnapshot, InspectionError> {
         let ipv4 = Self::firewall_status_to_network(self.metrics.ipv4_firewall_status());
         let ipv6 = Self::firewall_status_to_network(self.metrics.ipv6_firewall_status());
         let firewalled = ipv4 == NetworkStatus::Firewalled || ipv6 == NetworkStatus::Firewalled;
         let hidden = ipv4 == NetworkStatus::Hidden || ipv6 == NetworkStatus::Hidden;
-        NetworkSnapshot {
+        Ok(NetworkSnapshot {
             ipv4_status: ipv4,
             ipv6_status: ipv6,
             error: None,
@@ -554,114 +555,134 @@ impl RouterInfoControl for ProductionRouterInfoControl {
             firewalled,
             hidden,
             reachability_disabled: false,
-        }
+        })
     }
 
-    async fn clock_skew(&self) -> ClockSkew {
-        // Emissary derives clock skew from firewall status observations but
-        // does not expose an estimator cache yet. Until a passive estimator
-        // is added, return the canonical "unknown" sentinel so callers
-        // distinguish not-yet-known from zero skew per M001 nullability.
-        ClockSkew::default()
+    async fn clock_skew(&self) -> Result<ClockSkew, InspectionError> {
+        Ok(ClockSkew::default())
     }
 
-    async fn transport_bytes(&self) -> TransportBytes {
-        TransportBytes {
+    async fn transport_bytes(&self) -> Result<TransportBytes, InspectionError> {
+        Ok(TransportBytes {
             received: self.metrics.transport_inbound_bytes(),
             sent: self.metrics.transport_outbound_bytes(),
-        }
+        })
     }
 
-    async fn recent_transit_traffic(&self) -> RecentTransitTraffic {
-        // The handler computes rolling-window values from the shared
-        // RollingWindow resource; this adapter returns zero baseline
-        // values for those intervals. The handler overrides these when
-        // a RollingWindow is present.
-        RecentTransitTraffic::default()
+    async fn recent_transit_traffic(&self) -> Result<RecentTransitTraffic, InspectionError> {
+        Ok(RecentTransitTraffic::default())
     }
 
-    async fn transit_bytes(&self) -> TransitBytes {
-        TransitBytes {
+    async fn transit_bytes(&self) -> Result<TransitBytes, InspectionError> {
+        Ok(TransitBytes {
             received: self.metrics.transit_inbound_bytes(),
             sent: self.metrics.transit_outbound_bytes(),
-        }
+        })
     }
 
-    async fn tunnel_build_stats(&self) -> TunnelBuildStats {
-        TunnelBuildStats {
+    async fn tunnel_build_stats(&self) -> Result<TunnelBuildStats, InspectionError> {
+        Ok(TunnelBuildStats {
             successes: self.metrics.tunnel_build_successes(),
             failures: self.metrics.tunnel_build_failures(),
-        }
+        })
     }
 
-    async fn tunnel_summary(&self) -> TunnelSummary {
-        TunnelSummary {
+    async fn tunnel_summary(&self) -> Result<TunnelSummary, InspectionError> {
+        let configured = self.tunnel_manager.list().await.map(|l| l.len()).map_err(|_| {
+            InspectionError::QueryFailed {
+                group: InspectionGroup::TunnelSummary,
+            }
+        })?;
+        Ok(TunnelSummary {
             active_participating: self.metrics.transit_tunnel_count(),
-            configured: self.tunnel_manager.list().await.map(|l| l.len()).unwrap_or(0),
+            configured,
             exploratory_inbound: 0,
             exploratory_outbound: 0,
             client_inbound: 0,
             client_outbound: 0,
             queue_depth: 0,
-        }
+        })
     }
 
-    async fn netdb_snapshot(&self) -> crate::i2pcontrol::router_info::NetDbSnapshot {
-        // NetDb summary is not yet exposed via bounded queries. Return
-        // canonical defaults so callers can detect absence without fabricated
-        // values; the handler will reflect the empty state truthfully.
-        crate::i2pcontrol::router_info::NetDbSnapshot::default()
+    async fn netdb_snapshot(
+        &self,
+    ) -> Result<crate::i2pcontrol::router_info::NetDbSnapshot, InspectionError> {
+        Err(InspectionError::Unavailable {
+            group: InspectionGroup::NetDb,
+        })
     }
 
-    async fn udp_snapshot(&self) -> crate::i2pcontrol::router_info::UdpSnapshot {
+    async fn udp_snapshot(
+        &self,
+    ) -> Result<crate::i2pcontrol::router_info::UdpSnapshot, InspectionError> {
         let firewalled = self.metrics.ipv4_firewall_status() == FirewallStatus::Firewalled
             || self.metrics.ipv6_firewall_status() == FirewallStatus::Firewalled;
-        crate::i2pcontrol::router_info::UdpSnapshot {
+        Ok(crate::i2pcontrol::router_info::UdpSnapshot {
             active: true,
             firewalled,
             hidden: false,
             cookie_active: false,
             ..Default::default()
-        }
+        })
     }
 
-    async fn tcp_snapshot(&self) -> crate::i2pcontrol::router_info::TcpSnapshot {
-        crate::i2pcontrol::router_info::TcpSnapshot::default()
+    async fn tcp_snapshot(
+        &self,
+    ) -> Result<crate::i2pcontrol::router_info::TcpSnapshot, InspectionError> {
+        Err(InspectionError::Unavailable {
+            group: InspectionGroup::TcpTransport,
+        })
     }
 
-    async fn known_peers(&self) -> Vec<PeerIdentity> {
-        Vec::new()
+    async fn known_peers(&self) -> Result<Vec<PeerIdentity>, InspectionError> {
+        Err(InspectionError::Unavailable {
+            group: InspectionGroup::PeerList,
+        })
     }
 
-    async fn active_peers(&self) -> Vec<PeerIdentity> {
-        Vec::new()
+    async fn active_peers(&self) -> Result<Vec<PeerIdentity>, InspectionError> {
+        Err(InspectionError::Unavailable {
+            group: InspectionGroup::PeerList,
+        })
     }
 
-    async fn peer_router_info(&self, _peer_id: &str) -> Result<Option<String>, String> {
-        Ok(None)
+    async fn peer_router_info(&self, _peer_id: &str) -> Result<Option<String>, InspectionError> {
+        Err(InspectionError::Unavailable {
+            group: InspectionGroup::PeerLookup,
+        })
     }
 
-    async fn banned_peers(&self) -> Vec<BannedPeer> {
-        Vec::new()
+    async fn banned_peers(&self) -> Result<Vec<BannedPeer>, InspectionError> {
+        Err(InspectionError::Unavailable {
+            group: InspectionGroup::PeerStats,
+        })
     }
 
-    async fn peer_limits(&self) -> PeerLimits {
-        PeerLimits::default()
+    async fn peer_limits(&self) -> Result<PeerLimits, InspectionError> {
+        Err(InspectionError::Unavailable {
+            group: InspectionGroup::PeerStats,
+        })
     }
 
-    async fn active_peer_stats(&self) -> Vec<ActivePeerStats> {
-        Vec::new()
+    async fn active_peer_stats(&self) -> Result<Vec<ActivePeerStats>, InspectionError> {
+        Err(InspectionError::Unavailable {
+            group: InspectionGroup::PeerStats,
+        })
     }
 
-    async fn i2ptunnel_stats(&self) -> I2PTunnelStats {
-        let configured = self.tunnel_manager.list().await.map(|l| l.len()).unwrap_or(0);
-        I2PTunnelStats {
+    async fn i2ptunnel_stats(&self) -> Result<I2PTunnelStats, InspectionError> {
+        let configured = self.tunnel_manager.list().await.map(|l| l.len()).map_err(|_| {
+            InspectionError::QueryFailed {
+                group: InspectionGroup::I2PTunnel,
+            }
+        })?;
+        Ok(I2PTunnelStats {
             configured_count: configured,
             active_count: 0,
-        }
+        })
     }
 
-    async fn log_snapshot(&self) -> LogSnapshot {
+    async fn log_snapshot(&self) -> Result<LogSnapshot, InspectionError> {
         let (entries, generation) = self.log_ring.snapshot();
         let owned: Vec<LogEntry> = entries
             .into_iter()
@@ -672,26 +693,27 @@ impl RouterInfoControl for ProductionRouterInfoControl {
                 message: e.message,
             })
             .collect();
-        LogSnapshot {
+        Ok(LogSnapshot {
             entries: owned,
             generation,
-        }
+        })
     }
 
-    async fn log_clear(&self) {
+    async fn log_clear(&self) -> Result<(), InspectionError> {
         self.log_ring.clear();
+        Ok(())
     }
 
-    fn router_news(&self) -> String {
-        String::new()
+    fn router_news(&self) -> Result<String, InspectionError> {
+        Ok(String::new())
     }
 
-    async fn share_ratio(&self) -> f64 {
-        self.share_ratio
+    async fn share_ratio(&self) -> Result<f64, InspectionError> {
+        Ok(self.share_ratio)
     }
 
-    async fn configured_bw_limits(&self) -> (u64, u64) {
-        (self.configured_bandwidth_in, self.configured_bandwidth_out)
+    async fn configured_bw_limits(&self) -> Result<(u64, u64), InspectionError> {
+        Ok((self.configured_bandwidth_in, self.configured_bandwidth_out))
     }
 }
 

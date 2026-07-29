@@ -1,6 +1,6 @@
 # I2PControl Inspection Architecture
 
-Status: M008 implemented (production composition closed)
+Status: M009 implemented (RouterInfo availability and truthfulness closed)
 
 This document describes the read-only inspection architecture for I2PControl Proposal 170 in Emissary.
 
@@ -81,7 +81,9 @@ Defines the read-only interface for router inspection:
 - Log snapshot/clear
 - Address book state
 
-Production implementation requires core integration. Current implementation uses `FakeRouterInfoControl` for testing.
+All methods return `Result<T, InspectionError>` to distinguish unavailable,
+failed, and successfully-empty states. The `InspectionGroup` enum identifies
+snapshot groups for grouped request dispatch.
 
 ### MetricsSnapshot
 
@@ -168,7 +170,10 @@ Handler calls LogRing::clear() for log clear
 
 ## Testing approach
 
-- All 649 tests use `FakeRouterInfoControl`
+- All tests use `FakeRouterInfoControl` which defaults to `Unavailable`
+- Available-zero vs unavailable tests prove truthful state
+- Handler tests verify no partial results on failure
+- Static guards prevent fabricated defaults in production
 - Unit tests per selector group
 - `router_info_selectors_complete` test verifies selector count
 - `unrelated_keys_absent` test verifies only-requested-key behavior
@@ -179,8 +184,7 @@ Handler calls LogRing::clear() for log clear
 
 ## Remaining work
 
-- Production `RouterInfoControl` adapter (requires core `RouterInspectionHandle`)
-- `RouterInspectionHandle` in `emissary-core` (typed bounded queries)
-- Integration tests with real router state
-- Contention/performance benchmarks
-- Static compile-time guards
+- Bounded core inspection for NetDB, transport, tunnel, and peer snapshots (M010)
+- ClientServicesInfo live state (M011)
+- Real TLS and request resource hardening (M012)
+- Production conformance and independent reclosure (M013)
