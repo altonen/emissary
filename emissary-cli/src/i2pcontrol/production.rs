@@ -570,7 +570,9 @@ impl RouterInfoControl for ProductionRouterInfoControl {
     }
 
     async fn recent_transit_traffic(&self) -> Result<RecentTransitTraffic, InspectionError> {
-        Ok(RecentTransitTraffic::default())
+        Err(InspectionError::Unavailable {
+            group: InspectionGroup::TrafficMetrics,
+        })
     }
 
     async fn transit_bytes(&self) -> Result<TransitBytes, InspectionError> {
@@ -618,10 +620,8 @@ impl RouterInfoControl for ProductionRouterInfoControl {
         let firewalled = self.metrics.ipv4_firewall_status() == FirewallStatus::Firewalled
             || self.metrics.ipv6_firewall_status() == FirewallStatus::Firewalled;
         Ok(crate::i2pcontrol::router_info::UdpSnapshot {
-            active: true,
+            active: self.metrics.connected_routers() > 0,
             firewalled,
-            hidden: false,
-            cookie_active: false,
             ..Default::default()
         })
     }
@@ -678,7 +678,6 @@ impl RouterInfoControl for ProductionRouterInfoControl {
         })?;
         Ok(I2PTunnelStats {
             configured_count: configured,
-            active_count: 0,
         })
     }
 

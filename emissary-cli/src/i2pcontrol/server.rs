@@ -95,7 +95,7 @@ impl I2pControlConfig {
 /// dependencies supplied explicitly. Test state is constructed via
 /// [`new_test`] which installs fake adapters. The generic `new()` is
 /// retained only for internal composition in `init_server`.
-pub(crate) struct I2pControlState {
+pub struct I2pControlState {
     token_service: TokenService,
     #[allow(dead_code)]
     password: String,
@@ -158,6 +158,37 @@ impl I2pControlState {
     /// Available only in test builds.
     #[cfg(test)]
     pub fn new_test(password: String) -> Self {
+        use super::control_plane::{
+            FakeAddressBookControl, FakeControlPlane, FakeTunnelManagerControl,
+        };
+        use super::router_info::FakeRouterInfoControl;
+        let metrics_snapshot = super::observability::MetricsSnapshot::new();
+        let rolling_window = Arc::new(super::observability::RollingWindow::default());
+        let log_ring = Arc::new(super::observability::LogRing::default());
+        Self {
+            token_service: TokenService::new(),
+            password,
+            control_plane: Arc::new(FakeControlPlane::new()),
+            address_book_control: Arc::new(FakeAddressBookControl::new()),
+            tunnel_manager: Arc::new(FakeTunnelManagerControl::new()),
+            router_info: Arc::new(FakeRouterInfoControl::new()),
+            semaphore: Semaphore::new(MAX_CONCURRENT_REQUESTS),
+            router_id: String::new(),
+            router_info_bytes: Vec::new(),
+            router_info_b64: String::new(),
+            startup_time: std::time::Instant::now(),
+            metrics_snapshot,
+            rolling_window,
+            log_ring,
+            service_registry: ServiceRegistry::new(),
+        }
+    }
+
+    /// Create test state with fake adapters (public for integration tests).
+    ///
+    /// This constructor is identical to `new_test` but available outside
+    /// `cfg(test)` so integration tests can exercise the handler.
+    pub fn new_for_test(password: String) -> Self {
         use super::control_plane::{
             FakeAddressBookControl, FakeControlPlane, FakeTunnelManagerControl,
         };

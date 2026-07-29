@@ -44,7 +44,7 @@ Emissary source, snapshot group, bounds, availability, and M010 work-package.
 
 | Wire key | JSON type | Nullability | Source | Bound | Current availability | Unavailable behavior | M010 owner |
 |---|---|---|---|---|---|---|---|
-| `i2p.router.udp.active` | boolean | non-null | `event-metric` | — | implemented (firewall-derived) | error | — |
+| `i2p.router.udp.active` | boolean | non-null | `event-metric` | — | implemented (connected-routers-derived) | error | — |
 | `i2p.router.udp.cookie.active` | boolean | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
 | `i2p.router.udp.integratedPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | M010 |
 | `i2p.router.udp.firewalled` | boolean | non-null | `event-metric` | — | implemented (firewall-derived) | error | — |

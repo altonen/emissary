@@ -359,7 +359,6 @@ pub struct TcpSnapshot {
 #[derive(Debug, Clone, Default)]
 pub struct I2PTunnelStats {
     pub configured_count: usize,
-    pub active_count: usize,
 }
 
 /// Bounded log entry for I2PControl buffer.

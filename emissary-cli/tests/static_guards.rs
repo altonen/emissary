@@ -582,3 +582,42 @@ fn no_error_suppressing_unwrap_or_zero_in_router_info() {
         }
     }
 }
+
+/// Guard: no fabricated RecentTransitTraffic::default() in production RouterInfo.
+///
+/// Catches the defect where recent_transit_traffic returns a default struct
+/// with all-zero counters instead of returning Unavailable when the rolling
+/// window source is not wired.
+#[test]
+fn no_fabricated_recent_transit_default_in_production() {
+    let src = read_source("src/i2pcontrol/production.rs");
+    let non_test = src.split("#[cfg(test)]").next().unwrap_or(&src);
+    if let Some(impl_start) = non_test.find("impl RouterInfoControl") {
+        if let Some(impl_end) = non_test[impl_start..].find("\n}") {
+            let impl_body = &non_test[impl_start..impl_start + impl_end + 2];
+            assert!(
+                !impl_body.contains("RecentTransitTraffic::default()"),
+                "Production RouterInfo must not return fabricated RecentTransitTraffic::default()"
+            );
+        }
+    }
+}
+
+/// Guard: no fabricated active: true hardcoded in UDP snapshot.
+///
+/// Catches the defect where udp_snapshot hardcodes active: true instead
+/// of deriving from actual transport metrics.
+#[test]
+fn no_hardcoded_udp_active_true_in_production() {
+    let src = read_source("src/i2pcontrol/production.rs");
+    let non_test = src.split("#[cfg(test)]").next().unwrap_or(&src);
+    if let Some(impl_start) = non_test.find("impl RouterInfoControl") {
+        if let Some(impl_end) = non_test[impl_start..].find("\n}") {
+            let impl_body = &non_test[impl_start..impl_start + impl_end + 2];
+            assert!(
+                !impl_body.contains("active: true"),
+                "Production RouterInfo must not hardcode active: true in UDP snapshot"
+            );
+        }
+    }
+}

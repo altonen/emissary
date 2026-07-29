@@ -481,6 +481,7 @@ async fn production_router_info_i2ptunnel_stats() {
 async fn production_router_info_udp_snapshot() {
     let metrics = make_metrics();
     metrics.set_firewall(FirewallStatus::Firewalled, FirewallStatus::Unknown);
+    metrics.connected_routers.fetch_add(1, Ordering::Release);
     let tunnel_mgr = make_tunnel_manager();
     let log_ring = Arc::new(LogRing::default());
     let ri = ProductionRouterInfoControl::new(
@@ -496,6 +497,25 @@ async fn production_router_info_udp_snapshot() {
     let udp = ri.udp_snapshot().await.unwrap();
     assert!(udp.active);
     assert!(udp.firewalled);
+}
+
+#[tokio::test]
+async fn production_router_info_udp_active_false_when_no_connected_routers() {
+    let metrics = make_metrics();
+    let tunnel_mgr = make_tunnel_manager();
+    let log_ring = Arc::new(LogRing::default());
+    let ri = ProductionRouterInfoControl::new(
+        String::new(),
+        "test".to_string(),
+        0.0,
+        0,
+        0,
+        metrics,
+        log_ring,
+        tunnel_mgr,
+    );
+    let udp = ri.udp_snapshot().await.unwrap();
+    assert!(!udp.active);
 }
 
 // --- Static guards ---

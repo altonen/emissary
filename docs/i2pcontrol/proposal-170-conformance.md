@@ -1,6 +1,6 @@
 # Proposal 170 Conformance Matrix
 
-Status: normative inventory for the Proposal 170 workstream
+Status: normative inventory for the Proposal 170 workstream (M009 RouterInfo availability and truthfulness applied)
 
 This document records every Proposal 170 method, selector, parameter, action, tunnel type,
 JSON type, nullability rule, validation rule, data source, expected milestone owner, and
