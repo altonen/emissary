@@ -1,6 +1,6 @@
 # I2PControl Proposal 170 Milestone 007 — Conformance, Hardening, and Strict Closure
 
-Status: ready
+Status: closed
 
 Planning baseline: `ec289c77183d4f1010829ff255d8dbe90a941ad8` (`master`)
 

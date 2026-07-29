@@ -449,9 +449,9 @@ The subsystem closes only when the exact completion definition in `plans/000-lon
 | Milestone | Status | Implementation plan | Closure record | Blockers |
 |---|---|---|---|---|
 | 001 | closed | `plans/implementation/i2pcontrol-proposal-170/001-contract-matrix-and-i2pcontrol-foundation.md` | `plans/closure/i2pcontrol-proposal-170/001-closure.md` | — |
-| 002 | closing | `plans/implementation/i2pcontrol-proposal-170/002-control-plane-domain-and-persistence.md` | `plans/closure/i2pcontrol-proposal-170/002-closure.md` | — |
+| 002 | closed | `plans/implementation/i2pcontrol-proposal-170/002-control-plane-domain-and-persistence.md` | `plans/closure/i2pcontrol-proposal-170/002-closure.md` | — |
 | 003 | closed | `plans/implementation/i2pcontrol-proposal-170/003-address-book-administrative-api.md` | `plans/closure/i2pcontrol-proposal-170/003-closure.md` | — |
 | 004 | closed | `plans/implementation/i2pcontrol-proposal-170/004-tunnel-manager-contract-and-stubs.md` | `plans/closure/i2pcontrol-proposal-170/004-closure.md` | — |
-| 005 | not started | — | — | M002 interface; later integration with M003/M004 |
-| 006 | not started | — | — | M004 and M005 closure |
-| 007 | not started | — | — | M003–M006 closure |
+| 005 | closed | `plans/implementation/i2pcontrol-proposal-170/005-router-info-inspection.md` | `plans/closure/i2pcontrol-proposal-170/005-closure.md` | — |
+| 006 | closed | `plans/implementation/i2pcontrol-proposal-170/006-client-services-info.md` | `plans/closure/i2pcontrol-proposal-170/006-closure.md` | — |
+| 007 | closed | `plans/implementation/i2pcontrol-proposal-170/007-conformance-hardening-and-strict-closure.md` | `plans/closure/i2pcontrol-proposal-170/007-closure.md` | — |

@@ -25,14 +25,13 @@ Canonical direction:
 
 | Subsystem | Status | Roadmap | Current milestone | Dependencies or blockers |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | active | `plans/subsystems/i2pcontrol-proposal-170-roadmap.md` | M006 ready | M001–M005 closed |
+| I2PControl Proposal 170 | closed | `plans/subsystems/i2pcontrol-proposal-170-roadmap.md` | M007 closed | — |
 
 ## Dependency-ready implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | 005 — RouterInfo inspection and exact selectors | active | `plans/implementation/i2pcontrol-proposal-170/005-router-info-inspection.md` | M001–M004 closed |
-| I2PControl Proposal 170 | 007 — conformance, hardening, and strict closure | ready | `plans/implementation/i2pcontrol-proposal-170/007-conformance-hardening-and-strict-closure.md` | M003–M006 closed |
+No active dependency-ready implementation plans.
 
 ## Active closure work
 
@@ -69,6 +68,7 @@ The following work is intentionally outside the active Proposal 170 handoff and 
 | I2PControl Proposal 170 | 004 — TunnelManager contract and explicit stubs | `plans/closure/i2pcontrol-proposal-170/004-closure.md` | `595036b` | M005 activated; M006 activated |
 | I2PControl Proposal 170 | 005 — RouterInfo inspection and exact selectors | `plans/closure/i2pcontrol-proposal-170/005-closure.md` | HEAD | M006 activated |
 | I2PControl Proposal 170 | 006 — ClientServicesInfo | `plans/closure/i2pcontrol-proposal-170/006-closure.md` | HEAD | M007 activated |
+| I2PControl Proposal 170 | 007 — conformance, hardening, and strict closure | `plans/closure/i2pcontrol-proposal-170/007-closure.md` | `d708d30818c0f09b9b1d50131b2ff61a66a8b246` | Proposal 170 workstream complete |
 
 ## Registry maintenance rules
 
