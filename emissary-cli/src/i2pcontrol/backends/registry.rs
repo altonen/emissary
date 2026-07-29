@@ -26,6 +26,7 @@ use crate::i2pcontrol::domain::tunnel::{TunnelType, ALL_TUNNEL_ACTIONS, ALL_TUNN
 ///
 /// Construction fails if any `TunnelType` lacks a backend or if duplicates
 /// are detected. Every valid tunnel type maps to exactly one backend.
+#[derive(Clone)]
 pub struct TunnelBackendRegistry {
     backends: HashMap<TunnelType, Arc<dyn TunnelBackend>>,
 }

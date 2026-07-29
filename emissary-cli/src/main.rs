@@ -369,13 +369,29 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
                     },
                 };
 
-                let instance = i2pcontrol::server::init_server(
-                    &server_config,
-                    &base_path,
+                let share_ratio =
+                    router_config.bandwidth.as_ref().map(|b| b.share_ratio).unwrap_or(0.0);
+                let (bw_in, bw_out) = router_config
+                    .bandwidth
+                    .as_ref()
+                    .map(|b| (b.bandwidth as u64, b.bandwidth as u64))
+                    .unwrap_or((0, 0));
+                let metrics = Arc::new(i2pcontrol::production::EventHandleMetrics::new(
+                    router.event_handle().clone(),
+                ));
+
+                let ctx = i2pcontrol::server::ServerInitContext::new(
                     router.router_id().to_base64().to_owned(),
                     local_router_info.clone(),
                 )
-                .await?;
+                .with_event_metrics(metrics)
+                .with_share_ratio(share_ratio)
+                .with_configured_bandwidth(bw_in, bw_out)
+                .with_production_address_book()
+                .with_production_tunnel_manager();
+
+                let instance =
+                    i2pcontrol::server::init_server(&server_config, &base_path, ctx).await?;
 
                 let shutdown_tx = i2pcontrol_shutdown_tx.clone();
                 tokio::spawn(async move {

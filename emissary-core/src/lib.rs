@@ -65,6 +65,11 @@ mod transport;
 mod tunnel;
 mod util;
 
+/// Re-export of the firewall status enum used by `EventHandle` so that
+/// inspection adapters can map firewall-side values to protocol wire codes
+/// without depending on the private transport module.
+pub use transport::FirewallStatus;
+
 pub mod crypto;
 pub mod events;
 pub mod i2np;

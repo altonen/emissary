@@ -24,7 +24,6 @@
 use std::collections::HashSet;
 
 use crate::i2pcontrol::address_book::resolve_address_book_selectors;
-use crate::i2pcontrol::control_plane::AddressBookControl;
 use crate::i2pcontrol::router_info::RouterInfoControl;
 use crate::i2pcontrol::rpc::{
     self, JsonRpcErrorResponse, JsonRpcRequest, JsonRpcSuccess, RequestId,

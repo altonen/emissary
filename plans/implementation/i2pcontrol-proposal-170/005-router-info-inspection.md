@@ -1,6 +1,6 @@
 # I2PControl Proposal 170 Milestone 005 — RouterInfo Inspection and Exact Selectors
 
-Status: corrective_pass_required
+Status: closed
 
 Planning baseline: `95a37f029cd37b8b00fbebddbdc178e3f168fbdc` (`master`)
 

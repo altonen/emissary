@@ -37,10 +37,14 @@ use core::{
 #[cfg(feature = "events")]
 use alloc::sync::Arc;
 #[cfg(feature = "events")]
-use core::{
-    mem,
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use core::mem;
+#[cfg(feature = "events")]
+use core::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(feature = "events")]
+use std::sync::Mutex;
+
+#[cfg(not(feature = "events"))]
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 /// Default update interval.
 #[cfg(feature = "events")]
@@ -123,11 +127,20 @@ pub struct EventHandle<R: Runtime> {
     /// Cumulative outbound bandwidth used by all transit tunnels.
     transit_outbound_bandwidth: Arc<AtomicUsize>,
 
+    /// Latest IPv4 firewall status (cache for I2PControl read-only access).
+    ipv4_firewall_status: Arc<AtomicUsize>,
+
+    /// Latest IPv6 firewall status (cache for I2PControl read-only access).
+    ipv6_firewall_status: Arc<AtomicUsize>,
+
     /// Update interval.
     update_interval: Duration,
 
     /// Event timer.
-    timer: Option<R::Timer>,
+    ///
+    /// Wrapped in a `Mutex` so the handle is `Sync`; the timer is only
+    /// polled through the `Future` impl, never concurrently.
+    timer: Option<Mutex<R::Timer>>,
 }
 
 #[cfg(feature = "events")]
@@ -143,8 +156,10 @@ impl<R: Runtime> Clone for EventHandle<R> {
             num_tunnels_built: Arc::clone(&self.num_tunnels_built),
             transit_inbound_bandwidth: Arc::clone(&self.transit_inbound_bandwidth),
             transit_outbound_bandwidth: Arc::clone(&self.transit_outbound_bandwidth),
+            ipv4_firewall_status: Arc::clone(&self.ipv4_firewall_status),
+            ipv6_firewall_status: Arc::clone(&self.ipv6_firewall_status),
             update_interval: self.update_interval,
-            timer: Some(R::timer(self.update_interval)),
+            timer: Some(Mutex::new(R::timer(self.update_interval))),
         }
     }
 }
@@ -341,20 +356,58 @@ impl<R: Runtime> EventHandle<R> {
     #[inline(always)]
     pub fn set_ipv4_status(&self, _status: FirewallStatus) {
         #[cfg(feature = "events")]
-        let _ = self.event_tx.try_send(SubsystemEvent::FirewallStatus {
-            status: _status,
-            ipv4: true,
-        });
+        {
+            self.ipv4_firewall_status.store(_status as usize, Ordering::Release);
+            let _ = self.event_tx.try_send(SubsystemEvent::FirewallStatus {
+                status: _status,
+                ipv4: true,
+            });
+        }
     }
 
     /// Set IPv6 status.
     #[inline(always)]
     pub fn set_ipv6_status(&self, _status: FirewallStatus) {
         #[cfg(feature = "events")]
-        let _ = self.event_tx.try_send(SubsystemEvent::FirewallStatus {
-            status: _status,
-            ipv4: false,
-        });
+        {
+            self.ipv6_firewall_status.store(_status as usize, Ordering::Release);
+            let _ = self.event_tx.try_send(SubsystemEvent::FirewallStatus {
+                status: _status,
+                ipv4: false,
+            });
+        }
+    }
+
+    /// Get the latest IPv4 firewall status (read-only snapshot).
+    #[cfg(feature = "events")]
+    pub fn ipv4_firewall_status(&self) -> FirewallStatus {
+        match self.ipv4_firewall_status.load(Ordering::Acquire) {
+            1 => FirewallStatus::Firewalled,
+            2 => FirewallStatus::Ok,
+            3 => FirewallStatus::SymmetricNat,
+            _ => FirewallStatus::Unknown,
+        }
+    }
+
+    #[cfg(not(feature = "events"))]
+    pub fn ipv4_firewall_status(&self) -> FirewallStatus {
+        FirewallStatus::Unknown
+    }
+
+    /// Get the latest IPv6 firewall status (read-only snapshot).
+    #[cfg(feature = "events")]
+    pub fn ipv6_firewall_status(&self) -> FirewallStatus {
+        match self.ipv6_firewall_status.load(Ordering::Acquire) {
+            1 => FirewallStatus::Firewalled,
+            2 => FirewallStatus::Ok,
+            3 => FirewallStatus::SymmetricNat,
+            _ => FirewallStatus::Unknown,
+        }
+    }
+
+    #[cfg(not(feature = "events"))]
+    pub fn ipv6_firewall_status(&self) -> FirewallStatus {
+        FirewallStatus::Unknown
     }
 
     /// Create new `EventHandle` for tests.
@@ -372,6 +425,8 @@ impl<R: Runtime> EventHandle<R> {
             num_tunnels_built: Default::default(),
             transit_inbound_bandwidth: Default::default(),
             transit_outbound_bandwidth: Default::default(),
+            ipv4_firewall_status: Default::default(),
+            ipv6_firewall_status: Default::default(),
             update_interval: UPDATE_INTERVAL,
             timer: None,
         }
@@ -382,20 +437,24 @@ impl<R: Runtime> Future for EventHandle<R> {
     type Output = ();
 
     #[cfg(feature = "events")]
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match &mut self.timer {
-            None => Poll::Pending,
-            Some(timer) => {
-                futures::ready!(timer.poll_unpin(cx));
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        let timer_slot = match this.timer.as_ref() {
+            None => return Poll::Pending,
+            Some(slot) => slot,
+        };
+        let mut timer = match timer_slot.lock() {
+            Ok(t) => t,
+            Err(_) => return Poll::Pending,
+        };
+        futures::ready!(timer.poll_unpin(cx));
 
-                // create new timer and register it into the executor
-                let mut timer = R::timer(self.update_interval);
-                let _ = timer.poll_unpin(cx);
-                self.timer = Some(timer);
+        // create new timer and register it into the executor
+        let mut new_timer = R::timer(this.update_interval);
+        let _ = new_timer.poll_unpin(cx);
+        *timer = new_timer;
 
-                Poll::Ready(())
-            }
-        }
+        Poll::Ready(())
     }
 
     #[cfg(not(feature = "events"))]
@@ -570,6 +629,8 @@ impl<R: Runtime> EventManager<R> {
             num_tunnels_built: Default::default(),
             transit_inbound_bandwidth: Default::default(),
             transit_outbound_bandwidth: Default::default(),
+            ipv4_firewall_status: Default::default(),
+            ipv6_firewall_status: Default::default(),
             update_interval,
             timer: None,
         };
@@ -588,6 +649,8 @@ impl<R: Runtime> EventManager<R> {
                     num_tunnels_built: Arc::clone(&handle.num_tunnels_built),
                     transit_inbound_bandwidth: Arc::clone(&handle.transit_inbound_bandwidth),
                     transit_outbound_bandwidth: Arc::clone(&handle.transit_outbound_bandwidth),
+                    ipv4_firewall_status: Arc::clone(&handle.ipv4_firewall_status),
+                    ipv6_firewall_status: Arc::clone(&handle.ipv6_firewall_status),
                     update_interval,
                     timer: None,
                 },

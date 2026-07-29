@@ -35,6 +35,10 @@ use super::control_plane::{
     FakeTunnelManagerControl, TunnelManagerControl,
 };
 use super::errors::I2pControlError;
+use super::production::{
+    EventMetrics, ProductionAddressBookControl, ProductionControlPlane,
+    ProductionRouterInfoControl, ProductionTunnelManagerControl,
+};
 use super::router_info::{FakeRouterInfoControl, RouterInfoControl};
 use super::rpc::{
     self, AuthenticateParams, AuthenticateResult, JsonRpcErrorResponse, JsonRpcRequest,
@@ -110,6 +114,8 @@ pub(crate) struct I2pControlState {
     metrics_snapshot: super::observability::MetricsSnapshot,
     /// Rolling traffic window (fed by transport byte accounting).
     rolling_window: Arc<super::observability::RollingWindow>,
+    /// Shared log ring for I2PControl snapshot/clear.
+    log_ring: Arc<super::observability::LogRing>,
 }
 
 impl I2pControlState {
@@ -117,6 +123,7 @@ impl I2pControlState {
     pub fn new(password: String) -> Self {
         let metrics_snapshot = super::observability::MetricsSnapshot::new();
         let rolling_window = Arc::new(super::observability::RollingWindow::default());
+        let log_ring = Arc::new(super::observability::LogRing::default());
         Self {
             token_service: TokenService::new(),
             password,
@@ -131,7 +138,14 @@ impl I2pControlState {
             startup_time: std::time::Instant::now(),
             metrics_snapshot,
             rolling_window,
+            log_ring,
         }
+    }
+
+    /// Get a clone of the shared log ring (used by the production router
+    /// info adapter for I2PControl log snapshot/clear).
+    pub fn log_ring_arc(&self) -> Arc<super::observability::LogRing> {
+        Arc::clone(&self.log_ring)
     }
 
     /// Get a reference to the token service.
@@ -173,6 +187,26 @@ impl I2pControlState {
     #[allow(dead_code)]
     pub fn set_router_info(&mut self, control: Box<dyn RouterInfoControl>) {
         self.router_info = control;
+    }
+
+    /// Replace the address book control plane with a production adapter.
+    pub fn set_address_book_control_production(&mut self, control: Box<dyn AddressBookControl>) {
+        self.address_book_control = control;
+    }
+
+    /// Replace the tunnel manager control plane with a production adapter.
+    pub fn set_tunnel_manager_production(&mut self, control: Box<dyn TunnelManagerControl>) {
+        self.tunnel_manager = control;
+    }
+
+    /// Replace the router info control plane with a production adapter.
+    pub fn set_router_info_production(&mut self, control: Box<dyn RouterInfoControl>) {
+        self.router_info = control;
+    }
+
+    /// Replace the control plane with a production adapter.
+    pub fn set_control_plane_production(&mut self, control: Box<dyn ControlPlane>) {
+        self.control_plane = control;
     }
 
     /// Set startup-retained values (router identity, serialized RI).
@@ -357,6 +391,81 @@ pub struct ServerInstance {
     bind: SocketAddr,
 }
 
+/// Bundle of dependencies used to construct the production I2PControl server.
+///
+/// All fields are optional. When present, they replace the corresponding
+/// fakes with production adapters. The fakes are retained as defaults so
+/// that headless test environments and unit tests can build a server
+/// without supplying real router state.
+pub struct ServerInitContext {
+    /// Local router identity in Base64.
+    pub router_id: String,
+    /// Serialized local RouterInfo bytes.
+    pub router_info_bytes: Vec<u8>,
+    /// Event metrics source for bandwidth and tunnel build counters.
+    ///
+    /// When `None`, a default zeroed source is used.
+    pub event_metrics: Option<Arc<dyn EventMetrics>>,
+    /// Share ratio from the active configuration.
+    pub share_ratio: f64,
+    /// Configured inbound bandwidth limit in bytes/second.
+    pub configured_bandwidth_in: u64,
+    /// Configured outbound bandwidth limit in bytes/second.
+    pub configured_bandwidth_out: u64,
+    /// Whether to use the production address book adapter.
+    pub use_production_address_book: bool,
+    /// Whether to use the production tunnel manager adapter.
+    pub use_production_tunnel_manager: bool,
+}
+
+impl ServerInitContext {
+    /// Create a new init context with the required startup values and
+    /// sensible defaults for optional dependencies.
+    pub fn new(router_id: String, router_info_bytes: Vec<u8>) -> Self {
+        Self {
+            router_id,
+            router_info_bytes,
+            event_metrics: None,
+            share_ratio: 0.0,
+            configured_bandwidth_in: 0,
+            configured_bandwidth_out: 0,
+            use_production_address_book: false,
+            use_production_tunnel_manager: false,
+        }
+    }
+
+    /// Set the event metrics source.
+    pub fn with_event_metrics(mut self, metrics: Arc<dyn EventMetrics>) -> Self {
+        self.event_metrics = Some(metrics);
+        self
+    }
+
+    /// Set the share ratio.
+    pub fn with_share_ratio(mut self, ratio: f64) -> Self {
+        self.share_ratio = ratio;
+        self
+    }
+
+    /// Set the configured bandwidth limits.
+    pub fn with_configured_bandwidth(mut self, inbound: u64, outbound: u64) -> Self {
+        self.configured_bandwidth_in = inbound;
+        self.configured_bandwidth_out = outbound;
+        self
+    }
+
+    /// Enable the production address book adapter rooted at the given path.
+    pub fn with_production_address_book(mut self) -> Self {
+        self.use_production_address_book = true;
+        self
+    }
+
+    /// Enable the production tunnel manager adapter rooted at the given path.
+    pub fn with_production_tunnel_manager(mut self) -> Self {
+        self.use_production_tunnel_manager = true;
+        self
+    }
+}
+
 /// Initialize the I2PControl server: validate config, set up TLS, bind the port.
 ///
 /// Returns a `ServerInstance` ready to serve, or an error if startup fails.
@@ -365,8 +474,7 @@ pub struct ServerInstance {
 pub async fn init_server(
     config: &I2pControlConfig,
     base_path: &std::path::Path,
-    router_id: String,
-    router_info_bytes: Vec<u8>,
+    ctx: ServerInitContext,
 ) -> Result<ServerInstance, I2pControlError> {
     config.validate()?;
 
@@ -375,9 +483,114 @@ pub async fn init_server(
     let _tls_acceptor = tokio_rustls::TlsAcceptor::from(tls_config);
 
     // Build shared state with startup-retained values
+    let router_info_bytes = ctx.router_info_bytes.clone();
     let router_info_b64 = base64_encode(&router_info_bytes);
     let mut state = I2pControlState::new(config.password.clone());
-    state.set_startup_values(router_id, router_info_bytes, router_info_b64);
+    state.set_startup_values(ctx.router_id, router_info_bytes, router_info_b64);
+
+    // Wire production adapters as requested. Each branch is independent so
+    // a single failure does not affect unrelated adapters.
+    if ctx.use_production_address_book {
+        let dir = base_path.join("addressbooks");
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            tracing::warn!(
+                target: LOG_TARGET,
+                ?e,
+                dir = %dir.display(),
+                "failed to create address book dir, falling back to fake",
+            );
+        } else {
+            let ab = ProductionAddressBookControl::new(dir);
+            if let Err(e) = ab.load().await {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    ?e,
+                    "failed to load address book store, falling back to fake",
+                );
+            } else {
+                state.set_address_book_control_production(Box::new(ab));
+            }
+        }
+    }
+
+    if ctx.use_production_tunnel_manager {
+        let dir = base_path.join("tunnels");
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            tracing::warn!(
+                target: LOG_TARGET,
+                ?e,
+                dir = %dir.display(),
+                "failed to create tunnel store dir, falling back to fake",
+            );
+        } else {
+            match ProductionTunnelManagerControl::new(dir) {
+                Ok(tm) => {
+                    if let Err(e) = tm.load().await {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            ?e,
+                            "failed to load tunnel store, falling back to fake",
+                        );
+                    } else {
+                        state.set_tunnel_manager_production(Box::new(tm));
+                    }
+                }
+                Err(e) => tracing::warn!(
+                    target: LOG_TARGET,
+                    ?e,
+                    "failed to create production tunnel manager, falling back to fake",
+                ),
+            }
+        }
+    }
+
+    // Wire the production control plane when we have event metrics. The
+    // production router info adapter needs the tunnel manager; if a fake
+    // is in use, the configured tunnel count is reported as 0.
+    if let Some(metrics) = ctx.event_metrics.clone() {
+        let cp = ProductionControlPlane::new(
+            state.router_id.clone(),
+            env!("CARGO_PKG_VERSION").to_string(),
+            Arc::clone(&metrics),
+        );
+        state.set_control_plane_production(Box::new(cp));
+
+        // Build a router info adapter. If the user enabled the production
+        // tunnel manager, point the adapter at the same directory; otherwise
+        // build a fresh in-memory adapter.
+        let tm_arc: Arc<ProductionTunnelManagerControl> = if ctx.use_production_tunnel_manager {
+            let dir = base_path.join("tunnels");
+            ProductionTunnelManagerControl::new(dir).ok().map(Arc::new).unwrap_or_else(|| {
+                // Use a safe fallback directory.
+                let dir = std::env::temp_dir().join("emissary-i2pcontrol-tunnels-fallback");
+                let _ = std::fs::create_dir_all(&dir);
+                Arc::new(
+                    ProductionTunnelManagerControl::new(dir)
+                        .expect("tunnel store directory was created"),
+                )
+            })
+        } else {
+            let dir = std::env::temp_dir().join("emissary-i2pcontrol-tunnels-fallback");
+            let _ = std::fs::create_dir_all(&dir);
+            Arc::new(
+                ProductionTunnelManagerControl::new(dir)
+                    .expect("tunnel store directory was created"),
+            )
+        };
+        let log_ring = state.log_ring_arc();
+        let ri = ProductionRouterInfoControl::new(
+            state.router_id.clone(),
+            env!("CARGO_PKG_VERSION").to_string(),
+            ctx.share_ratio,
+            ctx.configured_bandwidth_in,
+            ctx.configured_bandwidth_out,
+            metrics,
+            log_ring,
+            tm_arc,
+        );
+        state.set_router_info_production(Box::new(ri));
+    }
+
     let state = Arc::new(state);
 
     // Bind listener — this verifies the port is available

@@ -183,8 +183,8 @@ pub struct MetricsConfig {
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct BandwidthConfig {
-    bandwidth: usize,
-    share_ratio: f64,
+    pub bandwidth: usize,
+    pub share_ratio: f64,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
