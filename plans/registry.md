@@ -1,6 +1,6 @@
 # Emissary Active Planning Registry
 
-This file is the compact control surface for active planning. It links current documents and blockers without duplicating their detailed requirements.
+This file is the compact control surface for active planning. It links current documents and blockers without duplicating detailed requirements.
 
 Canonical direction:
 
@@ -15,9 +15,9 @@ Canonical direction:
 - **ready** — dependencies and interfaces are satisfied; plan may be handed off.
 - **active** — implementation or closure work is in progress.
 - **blocked** — a named dependency or evidence requirement prevents progress.
-- **closing** — implementation landed and closure evidence is being gathered.
+- **closing** — implementation landed and independent closure evidence is being gathered.
 - **closed** — closure record accepted.
-- **conditionally closed** — substantial work landed, but a named correctness or evidence finding prevents strict closure.
+- **conditionally closed** — substantial work landed, but a genuinely external limitation prevents strict closure.
 - **corrective pass required** — a prior closure was invalidated by a material implementation or evidence defect.
 - **superseded** — replaced by another document.
 - **archived** — inactive and retained for traceability.
@@ -26,13 +26,13 @@ Canonical direction:
 
 | Subsystem | Status | Roadmap | Current milestone | Dependencies or blockers |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | closed | `plans/subsystems/i2pcontrol-proposal-170-roadmap.md` | M013 closed | — |
+| I2PControl Proposal 170 | active narrow corrective work | `plans/subsystems/i2pcontrol-proposal-170-roadmap.md` | M014 ready | M013 strict closure invalidated by residual current-state, source-wiring, service-fencing, SAM, connection-bound, and closure-evidence defects |
 
 ## Dependency-ready implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies |
 |---|---|---|---|---|
-| — | — | — | — | — |
+| I2PControl Proposal 170 | 014 — spec-constrained truthfulness and local hardening | ready | `plans/implementation/i2pcontrol-proposal-170/014-spec-constrained-truthfulness-and-local-hardening.md` | baseline `2f0508dc73b8d8e5d7429effcbe4dbee8797833c`; existing Proposal 170 contract and M008 production boundary |
 
 ## Active closure work
 
@@ -42,74 +42,92 @@ Canonical direction:
 
 ## Blocked implementation plans
 
-These plans are written for full-workstream handoff but MUST NOT execute until the named activation rule is satisfied and the registry moves the plan to `ready`.
-
 | Subsystem | Milestone | Status | Implementation plan | Blocker |
 |---|---|---|---|---|
-| — | — | — | — | — |
+| I2PControl Proposal 170 | 015 — focused independent reclosure | blocked | `plans/implementation/i2pcontrol-proposal-170/015-focused-independent-reclosure.md` | M014 implementation complete; frozen reviewed head; M014 moved to `closing`; reviewer distinct from final implementation agent |
 
-## Deferred unregistered work
+## Corrective scope guard
 
-The following work remains intentionally outside the active Proposal 170 corrective handoff and MUST NOT be pulled into M008–M013:
+M014/M015 are confined to exact Proposal 170 correctness.
 
-- real runtime implementations for missing tunnel types;
-- lifecycle migration of existing startup-managed tunnels;
-- runtime resolver adoption and precedence for Proposal 170 address books;
+Primary production boundary:
+
+- `emissary-cli/src/i2pcontrol/**`
+
+Permitted exceptions:
+
+- minimal composition wiring in `emissary-cli/src/main.rs` and `emissary-cli/src/logger.rs`;
+- one minimal bounded read-only core seam only when the exact Proposal contract cannot be met through existing handles or compatible unavailable behavior.
+
+The workstream must not add or modify:
+
+- `.github/workflows/**`;
+- CI jobs, platform matrices, required checks, coverage gates, or generated evidence bundles;
+- release, crates.io, GitHub publishing, or packaging automation;
 - frontend management surfaces;
-- protocol additions beyond Proposal 170;
-- broader router, NetDB, transport, tunnel, peer-selection, or congestion behavior changes;
-- release or publishing automation.
+- runtime address-book precedence;
+- missing tunnel data planes or BOB;
+- router, transport, NetDB, tunnel-pool, peer-selection, congestion, or general security architecture;
+- general metrics, logging, task-supervision, inspection, or verification frameworks.
 
 ## Corrective finding ownership
 
-| Finding | Severity at reopening | Owning milestone |
+| Finding | Severity | Owner |
 |---|---|---|
-| Production store failures fall back to fake controls | high | M008 (resolved) |
-| RouterInfo and handlers do not share one loaded tunnel control | high | M008 (resolved) |
-| Query failures are suppressed into empty/absent/zero state | high | M008/M009 (resolved) |
-| RouterInfo hard-coded/default production snapshots | high | M009/M010 (resolved) |
-| Missing bounded NetDB/peer/transport/tunnel inspection | medium/high by selector | M010 (resolved) |
-| ClientServices I2PTunnel inventory stale until restart | medium | M011 (resolved) |
-| SAM sessions always empty and proxy starting state can appear enabled | medium | M011 (SAM: known core limitation; proxy state: resolved) |
-| TLS acceptor discarded; raw listener served as plaintext | high | M012 (resolved) |
-| Body/resource limits enforced after buffering or not proven | high | M012 (resolved) |
-| Tautological adversarial tests counted as evidence | high evidence defect | M012/M013 (resolved) |
-| Final closure was not independent | high closure defect | M013 (resolved) |
+| Startup `CoreSnapshot` presented as current RouterInfo state | medium | M014 |
+| UDP/TCP active inferred from aggregate connected-router count | medium | M014 |
+| bandwidth/recent traffic selectors read disconnected local state | medium | M014 |
+| RouterInfo uses a fresh ring instead of tracing-backed application ring | medium | M014 |
+| service observer generation fencing is global across categories | medium | M014 |
+| active SAM sessions can appear as unconditional empty success | medium, contract-dependent | M014 |
+| TLS connection tasks not count-bounded before spawn | medium | M014 |
+| M013 closure and support docs overstate strict completion | closure defect | M015 |
 
-## Recently closed or historically recorded work
+## Deferred unregistered work
 
-These rows preserve traceability. M005–M007 historical closure records are not accepted as current strict closure after the corrective review.
+The following remain intentionally outside Proposal 170 corrective scope:
 
-| Subsystem | Milestone | Historical closure record | Historical reviewed commit | Current follow-up |
-|---|---|---|---|---|
-| I2PControl Proposal 170 | 013 — production conformance and independent reclosure | `plans/closure/i2pcontrol-proposal-170/013-closure.md` | `3d0e17a` | Strictly closed; subsystem complete |
-| I2PControl Proposal 170 | 012 — real TLS and request resource hardening | `plans/closure/i2pcontrol-proposal-170/012-closure.md` | `3d0e17a` | Strictly closed; M013 dependency satisfied |
-| I2PControl Proposal 170 | 011 — ClientServicesInfo live state | `plans/closure/i2pcontrol-proposal-170/011-closure.md` | `8b186b0` | Strictly closed; M013 dependency satisfied |
-| I2PControl Proposal 170 | 010 — bounded core router inspection | `plans/closure/i2pcontrol-proposal-170/010-closure.md` | HEAD | Strictly closed; M011/M012 unblocked |
-| I2PControl Proposal 170 | 009 — RouterInfo availability and truthfulness | `plans/closure/i2pcontrol-proposal-170/009-closure.md` | `c9b4f4d` | Strictly closed; M010 activated |
-| I2PControl Proposal 170 | 008 — production composition and durable-state integrity | `plans/closure/i2pcontrol-proposal-170/008-closure.md` | `b35d9ad` baseline | Strictly closed; M009 activated |
-| I2PControl Proposal 170 | 001 — contract matrix and I2PControl foundation | `plans/closure/i2pcontrol-proposal-170/001-closure.md` | `9b43484a21d5a1291c4881cdae62a36c527f8c0f` | Revalidate at M013; TLS correction owned by M012 |
-| I2PControl Proposal 170 | 002 — control-plane domain and persistence | `plans/closure/i2pcontrol-proposal-170/002-closure.md` | `6c92a71` | Revalidate at M013; production composition owned by M008 |
-| I2PControl Proposal 170 | 003 — AddressBook administrative API | `plans/closure/i2pcontrol-proposal-170/003-closure.md` | `9d2f646` | Revalidate fail-closed behavior at M008/M013 |
-| I2PControl Proposal 170 | 004 — TunnelManager contract and explicit stubs | `plans/closure/i2pcontrol-proposal-170/004-closure.md` | `595036b` | Revalidate shared service/live visibility at M008/M011/M013 |
-| I2PControl Proposal 170 | 005 — RouterInfo inspection | `plans/closure/i2pcontrol-proposal-170/005-closure.md` | historical HEAD | corrective pass required; M009/M010 |
-| I2PControl Proposal 170 | 006 — ClientServicesInfo | `plans/closure/i2pcontrol-proposal-170/006-closure.md` | historical HEAD | corrective pass required; M011 |
-| I2PControl Proposal 170 | 007 — conformance and strict closure | `plans/closure/i2pcontrol-proposal-170/007-closure.md` | `d708d30818c0f09b9b1d50131b2ff61a66a8b246` | superseded as closure gate by M012/M013 |
+- real runtime implementations for missing tunnel types;
+- lifecycle migration of existing startup-managed tunnels;
+- runtime resolver adoption and precedence for Proposal administrative address books;
+- frontend management surfaces;
+- protocol additions beyond Proposal 170;
+- broader router, NetDB, transport, tunnel, peer-selection, congestion, or security work;
+- release or publishing automation;
+- CI expansion.
+
+## Historical records
+
+M001–M004 remain historical foundations.
+
+M005–M007 are superseded.
+
+M008 materially corrected production composition and is not reopened absent a direct regression.
+
+M009 remains the availability/error boundary; M014 corrects residual source wiring.
+
+M010–M012 have residual corrective findings owned by M014.
+
+M013 is no longer accepted as the current strict closure gate and is superseded by M015.
+
+| Milestone | Historical closure | Current disposition |
+|---|---|---|
+| 008 | `plans/closure/i2pcontrol-proposal-170/008-closure.md` | retained |
+| 009 | `plans/closure/i2pcontrol-proposal-170/009-closure.md` | retained with residual M014 corrections |
+| 010 | `plans/closure/i2pcontrol-proposal-170/010-closure.md` | corrective pass required; M014 |
+| 011 | `plans/closure/i2pcontrol-proposal-170/011-closure.md` | corrective pass required; M014 |
+| 012 | `plans/closure/i2pcontrol-proposal-170/012-closure.md` | corrective pass required; M014 |
+| 013 | `plans/closure/i2pcontrol-proposal-170/013-closure.md` | strict closure invalidated; superseded by M015 |
 
 ## Registry maintenance rules
 
-1. Add a subsystem roadmap only when it is active enough to reason about.
-2. Register an implementation plan as ready only after dependency and handoff review.
-3. Prewritten future plans remain blocked until their explicit activation rule is satisfied.
-4. Before activating a prewritten plan, update its repository baseline and reconcile it against dependency closure evidence and current code.
-5. Move a ready plan to active when implementation starts.
-6. Move it to closing when production work lands and independent closure review begins.
-7. Mark it closed only when the linked closure record says closed and no unresolved high- or medium-severity finding remains.
-8. Use conditionally closed only when named external or operational evidence prevents strict closure without concealing an implementation defect.
-9. Use corrective pass required when a later review invalidates a prior closure.
-10. Record blockers precisely and link the document that owns resolution.
-11. Move closed rows out of active sections after recording them under recently closed work.
-12. Preserve traceability when archiving or superseding.
-13. Do not copy detailed milestone requirements into this registry.
-14. When one milestone closes, activate only the next dependency-ready handoff or explicitly approved parallel set.
-15. Final closure review must be independent from the final implementation agent.
+1. Register only dependency-ready work as `ready`.
+2. Keep prewritten dependent work `blocked` until its exact activation rule is satisfied.
+3. Move implementation to `closing`, not `closed`, when code lands.
+4. Final closure review must be independent from the final implementation agent.
+5. Mark `closed` only with an accepted closure record and zero unresolved high/medium findings.
+6. Do not conceal implementation defects behind `conditionally closed`.
+7. Preserve exact scope and blocker ownership.
+8. Do not expand planning into CI, release, or broad security loops.
+9. For M014/M015, targeted local package verification is sufficient; absence of remote CI is not itself a blocker.
+10. If M015 rejects closure, amend M014 narrowly before creating additional milestones.
