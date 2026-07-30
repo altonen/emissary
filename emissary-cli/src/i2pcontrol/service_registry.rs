@@ -37,7 +37,6 @@
 //! - Concurrent readers/writers produce coherent before-or-after snapshots.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 /// Sanitized failure description suitable for API responses.
@@ -238,21 +237,23 @@ pub struct StaleGenerationError {
 struct ServiceRegistryInner {
     /// Current entries for each service category.
     entries: RwLock<HashMap<ServiceCategory, ServiceEntry>>,
-    /// Monotonic generation counter. Incremented on each new producer.
-    generation: AtomicU64,
+    /// Per-category monotonic generation counters. Each category's counter
+    /// is incremented only when a new handle is allocated for that category,
+    /// so allocating a SOCKS handle does not invalidate an HTTP handle.
+    generations: RwLock<HashMap<ServiceCategory, u64>>,
 }
 
 impl std::fmt::Debug for ServiceRegistryInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ServiceRegistryInner")
-            .field("generation", &self.generation.load(Ordering::Relaxed))
-            .finish()
+        let gens = self.generations.read().expect("service registry lock poisoned");
+        f.debug_struct("ServiceRegistryInner").field("generations", &*gens).finish()
     }
 }
 
 impl ServiceRegistryInner {
     fn new() -> Self {
         let mut entries = HashMap::new();
+        let mut generations = HashMap::new();
         for &cat in ServiceCategory::ALL {
             entries.insert(
                 cat,
@@ -262,19 +263,23 @@ impl ServiceRegistryInner {
                     metadata: ServiceMetadata::default(),
                 },
             );
+            generations.insert(cat, 1);
         }
         Self {
             entries: RwLock::new(entries),
-            generation: AtomicU64::new(1),
+            generations: RwLock::new(generations),
         }
     }
 
-    /// Allocate a new generation for a producer.
-    fn next_generation(&self) -> u64 {
-        self.generation.fetch_add(1, Ordering::SeqCst) + 1
+    /// Allocate a new generation for a producer of the given category.
+    fn next_generation(&self, category: ServiceCategory) -> u64 {
+        let mut gens = self.generations.write().expect("service registry lock poisoned");
+        let gen = gens.entry(category).or_insert(1);
+        *gen += 1;
+        *gen
     }
 
-    /// Update a service entry if the generation is current.
+    /// Update a service entry if the generation is current for its category.
     fn update_service(
         &self,
         category: ServiceCategory,
@@ -282,8 +287,11 @@ impl ServiceRegistryInner {
         state: ObservedServiceState,
         metadata: ServiceMetadata,
     ) -> Result<(), StaleGenerationError> {
-        // Check if this handle's generation is still current.
-        let current = self.generation.load(Ordering::SeqCst);
+        // Check if this handle's generation is still current for its category.
+        let current = {
+            let gens = self.generations.read().expect("service registry lock poisoned");
+            *gens.get(&category).unwrap_or(&1)
+        };
         if handle_generation < current {
             return Err(StaleGenerationError {
                 handle_generation,
@@ -306,7 +314,14 @@ impl ServiceRegistryInner {
     /// Take an immutable snapshot.
     fn snapshot(&self) -> ServiceSnapshot {
         let entries = self.entries.read().expect("service registry lock poisoned");
-        let generation = self.generation.load(Ordering::SeqCst);
+        let generation = self
+            .generations
+            .read()
+            .expect("service registry lock poisoned")
+            .values()
+            .copied()
+            .max()
+            .unwrap_or(1);
         let vec: Vec<ServiceEntry> = ServiceCategory::ALL
             .iter()
             .filter_map(|&cat| entries.get(&cat).cloned())
@@ -354,11 +369,13 @@ impl ServiceRegistry {
 
     /// Allocate a new update handle for the given category.
     ///
-    /// Each call increments the generation counter. Only the most-recently
-    /// allocated handle for a category can successfully update; older
-    /// handles receive [`StaleGenerationError`].
+    /// Each call increments the generation counter for that category only.
+    /// Only the most-recently allocated handle for a category can
+    /// successfully update; older handles receive [`StaleGenerationError`].
+    /// Allocating a handle for one category does not invalidate handles
+    /// for other categories.
     pub fn allocate_handle(&self, category: ServiceCategory) -> ServiceUpdateHandle {
-        let generation = self.inner.next_generation();
+        let generation = self.inner.next_generation(category);
         ServiceUpdateHandle {
             category,
             generation,
@@ -377,10 +394,11 @@ impl ServiceRegistry {
         self.inner.reset();
     }
 
-    /// Get the current generation counter value.
+    /// Get the current generation counter value for a category.
     #[allow(dead_code)]
-    pub fn current_generation(&self) -> u64 {
-        self.inner.generation.load(Ordering::SeqCst)
+    pub fn current_generation(&self, category: ServiceCategory) -> u64 {
+        let gens = self.inner.generations.read().expect("service registry lock poisoned");
+        *gens.get(&category).unwrap_or(&1)
     }
 }
 
@@ -407,13 +425,17 @@ mod tests {
     #[test]
     fn allocate_handle_increments_generation() {
         let reg = ServiceRegistry::new();
-        let gen1 = reg.current_generation();
+        let gen1 = reg.current_generation(ServiceCategory::HttpProxy);
         let _h1 = reg.allocate_handle(ServiceCategory::HttpProxy);
-        let gen2 = reg.current_generation();
+        let gen2 = reg.current_generation(ServiceCategory::HttpProxy);
         assert!(gen2 > gen1);
+        // Allocating for a different category does not affect HttpProxy generation.
         let _h2 = reg.allocate_handle(ServiceCategory::Socks);
-        let gen3 = reg.current_generation();
-        assert!(gen3 > gen2);
+        let gen3 = reg.current_generation(ServiceCategory::HttpProxy);
+        assert_eq!(
+            gen3, gen2,
+            "allocating SOCKS handle must not invalidate HTTP handle"
+        );
     }
 
     #[test]
@@ -440,12 +462,41 @@ mod tests {
     fn stale_generation_rejected() {
         let reg = ServiceRegistry::new();
         let old_handle = reg.allocate_handle(ServiceCategory::Socks);
-        // Allocate a newer handle (simulates a new task taking over).
+        // Allocate a newer handle for the same category (simulates a new task taking over).
         let _new_handle = reg.allocate_handle(ServiceCategory::Socks);
         let result = old_handle.update(ObservedServiceState::Listening, ServiceMetadata::default());
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.handle_generation < err.current_generation);
+    }
+
+    #[test]
+    fn cross_category_handle_independence() {
+        let reg = ServiceRegistry::new();
+        let http_handle = reg.allocate_handle(ServiceCategory::HttpProxy);
+        let _socks_handle = reg.allocate_handle(ServiceCategory::Socks);
+        // Allocating SOCKS handle does not invalidate HTTP handle.
+        let result = http_handle.update(
+            ObservedServiceState::Listening,
+            ServiceMetadata {
+                enabled: true,
+                host: Some("127.0.0.1".into()),
+                port: Some(4444),
+                ..Default::default()
+            },
+        );
+        assert!(
+            result.is_ok(),
+            "HTTP handle must remain valid after SOCKS allocation"
+        );
+        // Allocating a new HTTP handle invalidates the old HTTP handle.
+        let _new_http = reg.allocate_handle(ServiceCategory::HttpProxy);
+        let result =
+            http_handle.update(ObservedServiceState::Listening, ServiceMetadata::default());
+        assert!(
+            result.is_err(),
+            "old HTTP handle must be stale after new HTTP allocation"
+        );
     }
 
     #[test]

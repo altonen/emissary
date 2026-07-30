@@ -26,13 +26,13 @@ Canonical direction:
 
 | Subsystem | Status | Roadmap | Current milestone | Dependencies or blockers |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | active narrow corrective work | `plans/subsystems/i2pcontrol-proposal-170-roadmap.md` | M014 ready | M013 strict closure invalidated by residual current-state, source-wiring, service-fencing, SAM, connection-bound, and closure-evidence defects |
+| I2PControl Proposal 170 | active narrow corrective work | `plans/subsystems/i2pcontrol-proposal-170-roadmap.md` | M014 closing | M015 blocked on frozen M014 head and independent reviewer |
 
 ## Dependency-ready implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | 014 — spec-constrained truthfulness and local hardening | ready | `plans/implementation/i2pcontrol-proposal-170/014-spec-constrained-truthfulness-and-local-hardening.md` | baseline `2f0508dc73b8d8e5d7429effcbe4dbee8797833c`; existing Proposal 170 contract and M008 production boundary |
+| I2PControl Proposal 170 | 014 — spec-constrained truthfulness and local hardening | closing | `plans/implementation/i2pcontrol-proposal-170/014-spec-constrained-truthfulness-and-local-hardening.md` | implementation landed; frozen head for M015 independent review |
 
 ## Active closure work
 
@@ -44,7 +44,7 @@ Canonical direction:
 
 | Subsystem | Milestone | Status | Implementation plan | Blocker |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | 015 — focused independent reclosure | blocked | `plans/implementation/i2pcontrol-proposal-170/015-focused-independent-reclosure.md` | M014 implementation complete; frozen reviewed head; M014 moved to `closing`; reviewer distinct from final implementation agent |
+| I2PControl Proposal 170 | 015 — focused independent reclosure | blocked | `plans/implementation/i2pcontrol-proposal-170/015-focused-independent-reclosure.md` | M014 closing; frozen reviewed head required; reviewer distinct from final implementation agent |
 
 ## Corrective scope guard
 

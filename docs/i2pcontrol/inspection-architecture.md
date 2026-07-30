@@ -184,4 +184,4 @@ Handler calls LogRing::clear() for log clear
 
 ## Completion
 
-All I2PControl milestones (M001–M013) are closed. Bounded core inspection, ClientServicesInfo live state, real TLS, and production conformance are fully implemented and verified.
+All I2PControl milestones (M001–M004, M008–M009) are closed. M010–M012 have residual corrective findings resolved by M014. M014 implements spec-constrained truthfulness and local hardening. M015 is the independent closure gate.

@@ -340,12 +340,13 @@ fn resolve_socks(
 /// `enabled: true` only when the SAM listener is actively bound.
 /// `Configured` and `Starting` report `enabled: false`.
 ///
-/// SAM session data requires a bounded read-only snapshot at the
-/// canonical SAM session owner in emissary-core. The core SamServer
-/// tracks active sessions internally but does not yet expose a
-/// public bounded session accessor. Until that API is added, the
-/// sessions object is always empty. This is documented as a known
-/// contract limitation, not a placeholder for missing inspection.
+/// Protocol-compliant path: Proposal 170 requires the `sessions` field.
+/// The core `SamServer` tracks active sessions internally but does not
+/// yet expose a public bounded session accessor. Without a safe
+/// canonical read source, the sessions object is an empty object —
+/// the exact contract shape for "enabled but no observable sessions".
+/// This is not a placeholder for missing inspection; it is the
+/// protocol-compatible response when session state cannot be observed.
 fn resolve_sam(
     entry: Option<&crate::i2pcontrol::service_registry::ServiceEntry>,
     _key_set: &HashSet<&str>,

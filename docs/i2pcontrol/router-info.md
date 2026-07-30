@@ -1,6 +1,6 @@
 # RouterInfo Method
 
-Status: M009 implemented (availability and truthfulness)
+Status: M009 implemented (availability and truthfulness), M014 corrected (stale source removal, live metrics, per-category fencing)
 
 This document describes the Proposal 170 `RouterInfo` JSON-RPC method implementation in Emissary.
 
@@ -22,13 +22,13 @@ All 121 Proposal 170 RouterInfo selectors are registered in `rpc.rs` and verifie
 | Network status | `i2p.router.net.bw.*` | 2 | EventMetrics firewall status |
 | Share ratio | `i2p.router.shareRatio` | 1 | Retained configuration |
 | Configured BW | `i2p.router.configuredbw.*` | 2 | Retained configuration |
-| UDP transport | `i2p.router.udp.*` | 7 | EventMetrics (active, firewalled); unsupported-inspection (peer counts) |
+| UDP transport | `i2p.router.udp.*` | 7 | unsupported-inspection (no transport-specific source) |
 | TCP transport | `i2p.router.tcp.*` | 7 | unsupported-inspection |
 | NetDB | `i2p.router.netdb.*` | 10 | unsupported-inspection |
 | Bandwidth | `i2p.router.bw.*` | 14 | MetricsSnapshot + RollingWindow |
-| Tunnels | `i2p.router.tunnels.*` | 7 | MetricsSnapshot + TunnelManager (participating, configured); unsupported-inspection (exploratory, client, queue) |
+| Tunnels | `i2p.router.tunnels.*` | 7 | EventMetrics (participating, live); administrative-store (configured); unsupported-inspection (exploratory, client, queue) |
 | I2PTunnel | `i2p.router.iptunnels` | 1 | TunnelManager administrative store |
-| Peers | `i2p.router.peers.*` | 10 | unsupported-inspection |
+| Peers | `i2p.router.peers.*` | 10 | unsupported-inspection (no live source) |
 | Logs | `i2p.router.log.*` | 2 | LogRing (tracing layer) |
 | Address book | `i2p.router.addressbook.*` | 6 | AddressBook administrative store |
 
@@ -127,6 +127,6 @@ Per-selector item bounds enforce limits on returned collections.
 
 ## Limitations (permanent unsupported-inspection)
 
-- NetDB, TCP transport, peer list/lookup/stats: `unsupported-inspection`
-- UDP transport peers (integrated, coinficient, critical, etc.): `unsupported-inspection`
+- NetDB, TCP transport, UDP transport, peer list/lookup/stats: `unsupported-inspection`
 - Tunnel exploratory/client inbound/outbound, queue depth: `unsupported-inspection`
+- UDP/TCP active/firewalled: no transport-specific canonical source in `EventMetrics`

@@ -1,6 +1,6 @@
 # RouterInfo Selector Source Map
 
-Status: M010 implemented (bounded core router inspection)
+Status: M010 implemented (bounded core router inspection), M014 corrected (stale source removal)
 
 This document is the single source of truth for every Proposal 170 RouterInfo
 selector's wire key, output type, nullability, semantic definition, canonical
@@ -13,7 +13,7 @@ Emissary source, snapshot group, bounds, availability, and M010 work-package.
 | `retained` | Identity, serialized local RouterInfo, version, configured values, startup time |
 | `event-metric` | Existing atomic counters or cached statuses from `EventMetrics` |
 | `administrative-store` | Shared `AddressBook` or `TunnelManager` state |
-| `core-inspection` | Bounded runtime/NetDB/transport/tunnel snapshot required from M010 |
+| `core-inspection` | Bounded runtime/NetDB/transport/tunnel snapshot required from M010; now unused in production adapter after M014 removed startup-owned snapshot |
 | `protocol-defined-empty` | Protocol semantics explicitly define absence as empty |
 | `nullable-unavailable` | Protocol permits null where value is unknown |
 | `unsupported-inspection` | Selector validated but no truthful source exists; fails explicitly |
@@ -44,10 +44,10 @@ Emissary source, snapshot group, bounds, availability, and M010 work-package.
 
 | Wire key | JSON type | Nullability | Source | Bound | Current availability | Unavailable behavior | M010 owner |
 |---|---|---|---|---|---|---|---|
-| `i2p.router.udp.active` | boolean | non-null | `core-inspection` | — | implemented (transport snapshot) | error | — |
+| `i2p.router.udp.active` | boolean | non-null | `unsupported-inspection` | — | unavailable (no transport-specific source) | error | M014 |
 | `i2p.router.udp.cookie.active` | boolean | non-null | `unsupported-inspection` | — | unavailable | error | — |
 | `i2p.router.udp.integratedPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | — |
-| `i2p.router.udp.firewalled` | boolean | non-null | `core-inspection` | — | implemented (transport snapshot) | error | — |
+| `i2p.router.udp.firewalled` | boolean | non-null | `unsupported-inspection` | — | unavailable (no transport-specific source) | error | M014 |
 | `i2p.router.udp.hidden` | boolean | non-null | `unsupported-inspection` | — | unavailable | error | — |
 | `i2p.router.udp.coinficientPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | — |
 | `i2p.router.udp.criticalPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | — |
@@ -60,14 +60,14 @@ Emissary source, snapshot group, bounds, availability, and M010 work-package.
 | `i2p.router.udp.peerStats` | object | non-null | `unsupported-inspection` | — | unavailable | error | — |
 | `i2p.router.udp.standardPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | — |
 | `i2p.router.udp.unreachablePeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | — |
-| `i2p.router.udp.totalPeers` | integer | non-null | `core-inspection` | — | implemented (profile count) | error | — |
-| `i2p.router.udp.currentPeers` | integer | non-null | `core-inspection` | — | implemented (connected count) | error | — |
+| `i2p.router.udp.totalPeers` | integer | non-null | `unsupported-inspection` | — | unavailable (no transport-specific source) | error | M014 |
+| `i2p.router.udp.currentPeers` | integer | non-null | `unsupported-inspection` | — | unavailable (no transport-specific source) | error | M014 |
 
 ### TCP transport group
 
 | Wire key | JSON type | Nullability | Source | Bound | Current availability | Unavailable behavior | M010 owner |
 |---|---|---|---|---|---|---|---|
-| `i2p.router.tcp.active` | boolean | non-null | `core-inspection` | — | implemented (transport snapshot) | error | — |
+| `i2p.router.tcp.active` | boolean | non-null | `unsupported-inspection` | — | unavailable (no transport-specific source) | error | M014 |
 | `i2p.router.tcp.integratedPeers` | integer | non-null | `unsupported-inspection` | — | unavailable | error | — |
 | `i2p.router.tcp.firewalled` | boolean | non-null | `unsupported-inspection` | — | unavailable | error | — |
 | `i2p.router.tcp.hosts` | string | non-null | `unsupported-inspection` | — | unavailable | error | — |
@@ -150,13 +150,13 @@ Emissary source, snapshot group, bounds, availability, and M010 work-package.
 
 | Wire key | JSON type | Nullability | Source | Bound | Current availability | Unavailable behavior | M010 owner |
 |---|---|---|---|---|---|---|---|
-| `i2p.router.tunnels.participating` | integer | non-null | `core-inspection` | — | implemented (transport snapshot) | error | — |
-| `i2p.router.tunnels.exploratoryIn` | integer | non-null | `unsupported-inspection` | — | unavailable (tunnel pool task not inspectable) | error | — |
-| `i2p.router.tunnels.exploratoryOut` | integer | non-null | `unsupported-inspection` | — | unavailable (tunnel pool task not inspectable) | error | — |
-| `i2p.router.tunnels.clientIn` | integer | non-null | `unsupported-inspection` | — | unavailable (tunnel pool task not inspectable) | error | — |
-| `i2p.router.tunnels.clientOut` | integer | non-null | `unsupported-inspection` | — | unavailable (tunnel pool task not inspectable) | error | — |
+| `i2p.router.tunnels.participating` | integer | non-null | `event-metric` | — | implemented (live transit tunnel count) | error | M014 |
+| `i2p.router.tunnels.exploratoryIn` | integer | non-null | `unsupported-inspection` | — | unavailable (no live source) | error | M014 |
+| `i2p.router.tunnels.exploratoryOut` | integer | non-null | `unsupported-inspection` | — | unavailable (no live source) | error | M014 |
+| `i2p.router.tunnels.clientIn` | integer | non-null | `unsupported-inspection` | — | unavailable (no live source) | error | M014 |
+| `i2p.router.tunnels.clientOut` | integer | non-null | `unsupported-inspection` | — | unavailable (no live source) | error | M014 |
 | `i2p.router.tunnels.configured` | integer | non-null | `administrative-store` | — | implemented | error | — |
-| `i2p.router.tunnels.queue` | integer | non-null | `unsupported-inspection` | — | unavailable (tunnel pool task not inspectable) | error | — |
+| `i2p.router.tunnels.queue` | integer | non-null | `unsupported-inspection` | — | unavailable (no live source) | error | M014 |
 
 ### I2PTunnel group
 
@@ -168,10 +168,10 @@ Emissary source, snapshot group, bounds, availability, and M010 work-package.
 
 | Wire key | JSON type | Nullability | Source | Bound | Current availability | Unavailable behavior | M010 owner |
 |---|---|---|---|---|---|---|---|
-| `i2p.router.peers.knownCount` | integer | non-null | `core-inspection` | — | implemented (profile count) | error | — |
-| `i2p.router.peers.known` | array | non-null | `core-inspection` | 10,000 | implemented (bounded profile IDs) | error | — |
-| `i2p.router.peers.activeCount` | integer | non-null | `core-inspection` | — | implemented (connected count) | error | — |
-| `i2p.router.peers.active` | array | non-null | `core-inspection` | 10,000 | implemented (bounded connected IDs) | error | — |
+| `i2p.router.peers.knownCount` | integer | non-null | `unsupported-inspection` | — | unavailable (no live source) | error | M014 |
+| `i2p.router.peers.known` | array | non-null | `unsupported-inspection` | 10,000 | unavailable (no live source) | error | M014 |
+| `i2p.router.peers.activeCount` | integer | non-null | `unsupported-inspection` | — | unavailable (no live source) | error | M014 |
+| `i2p.router.peers.active` | array | non-null | `unsupported-inspection` | 10,000 | unavailable (no live source) | error | M014 |
 | `i2p.router.peers.banned` | array | non-null | `unsupported-inspection` | 10,000 | unavailable (no canonical ban owner) | error | — |
 | `i2p.router.peers.bannedCount` | integer | non-null | `unsupported-inspection` | — | unavailable (no canonical ban owner) | error | — |
 
@@ -179,7 +179,7 @@ Emissary source, snapshot group, bounds, availability, and M010 work-package.
 
 | Wire key | JSON type | Nullability | Source | Bound | Current availability | Unavailable behavior | M010 owner |
 |---|---|---|---|---|---|---|---|
-| `i2p.router.peers.routerInfo` | string/null | nullable | `core-inspection` | 4 MB | implemented (bounded peer RI lookup) | error | — |
+| `i2p.router.peers.routerInfo` | string/null | nullable | `unsupported-inspection` | 4 MB | unavailable (no live source) | error | M014 |
 
 ### Peer stats group
 

@@ -66,6 +66,14 @@ const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Total request deadline from connection accept to response completion (seconds).
 const REQUEST_DEADLINE: Duration = Duration::from_secs(60);
 
+/// Maximum concurrent TLS connection tasks spawned by the accept loop.
+///
+/// Bounds the number of in-progress TLS handshakes plus active HTTP
+/// connections to prevent unbounded task creation from rapid reconnects.
+/// This is independent of `MAX_CONCURRENT_REQUESTS` which limits
+/// in-flight JSON-RPC dispatch within already-established connections.
+const MAX_CONNECTION_TASKS: usize = 128;
+
 /// I2PControl server configuration.
 #[derive(Debug, Clone)]
 pub struct I2pControlConfig {
@@ -571,11 +579,6 @@ pub struct ServerInitContext {
     ///
     /// When `None`, a default zeroed source is used.
     pub event_metrics: Option<Arc<dyn EventMetrics>>,
-    /// Pre-computed core inspection snapshot from `Router::inspection_snapshot()`.
-    ///
-    /// Carries actual transport, tunnel, and peer state from canonical core
-    /// owners. When `None`, inspection groups return unavailable errors.
-    pub core_snapshot: Option<emissary_core::inspection::CoreSnapshot>,
     /// Share ratio from the active configuration.
     pub share_ratio: f64,
     /// Configured inbound bandwidth limit in bytes/second.
@@ -588,6 +591,10 @@ pub struct ServerInitContext {
     /// a new one. The composition root shares its clone of the same
     /// registry with proxy tasks and listener snapshot readouts.
     pub service_registry: Option<ServiceRegistry>,
+    /// Shared log ring from the tracing-backed application logger.
+    ///
+    /// When `None`, a fresh default ring is created (suitable for tests).
+    pub log_ring: Option<Arc<super::observability::LogRing>>,
 }
 
 impl ServerInitContext {
@@ -598,23 +605,17 @@ impl ServerInitContext {
             router_id,
             router_info_bytes,
             event_metrics: None,
-            core_snapshot: None,
             share_ratio: 0.0,
             configured_bandwidth_in: 0,
             configured_bandwidth_out: 0,
             service_registry: None,
+            log_ring: None,
         }
     }
 
     /// Set the event metrics source.
     pub fn with_event_metrics(mut self, metrics: Arc<dyn EventMetrics>) -> Self {
         self.event_metrics = Some(metrics);
-        self
-    }
-
-    /// Set the pre-computed core inspection snapshot.
-    pub fn with_core_snapshot(mut self, snapshot: emissary_core::inspection::CoreSnapshot) -> Self {
-        self.core_snapshot = Some(snapshot);
         self
     }
 
@@ -637,6 +638,15 @@ impl ServerInitContext {
     /// registry.
     pub fn with_service_registry(mut self, registry: ServiceRegistry) -> Self {
         self.service_registry = Some(registry);
+        self
+    }
+
+    /// Inject the tracing-backed application log ring.
+    ///
+    /// The ring is shared with the tracing subscriber so events recorded
+    /// through the application logger appear in I2PControl log retrieval.
+    pub fn with_log_ring(mut self, ring: Arc<super::observability::LogRing>) -> Self {
+        self.log_ring = Some(ring);
         self
     }
 }
@@ -709,7 +719,7 @@ pub async fn init_server(
     ));
 
     // --- Build production router info adapter using the shared tunnel service ---
-    let log_ring = Arc::new(super::observability::LogRing::default());
+    let log_ring = ctx.log_ring.unwrap_or_default();
     let router_info: Arc<dyn RouterInfoControl> = Arc::new(ProductionRouterInfoControl::new(
         ctx.router_id.clone(),
         env!("CARGO_PKG_VERSION").to_string(),
@@ -719,7 +729,6 @@ pub async fn init_server(
         metrics,
         log_ring,
         tunnels_shared,
-        ctx.core_snapshot,
     ));
 
     // --- Install the pre-built service registry from the composition root ---
@@ -837,6 +846,7 @@ pub async fn serve(
         target: LOG_TARGET,
         %bind,
         max_body_size = MAX_BODY_SIZE,
+        max_connection_tasks = MAX_CONNECTION_TASKS,
         tls_handshake_timeout_s = TLS_HANDSHAKE_TIMEOUT.as_secs(),
         request_deadline_s = REQUEST_DEADLINE.as_secs(),
         "I2PControl HTTPS server accepting requests",
@@ -844,17 +854,41 @@ pub async fn serve(
 
     let mut shutdown_rx = shutdown_rx;
 
+    // Pre-spawn connection semaphore bounds the number of TLS/connection
+    // tasks. Each accepted connection acquires one permit before spawning
+    // and releases it on every exit path (success, failure, timeout,
+    // disconnect, or cancellation).
+    let connection_semaphore = Arc::new(Semaphore::new(MAX_CONNECTION_TASKS));
+
     let result = loop {
         tokio::select! {
             accept_result = listener.accept() => {
                 match accept_result {
                     Ok((tcp_stream, _peer_addr)) => {
+                        // Try to acquire a connection permit. If saturated,
+                        // drop the accepted socket immediately.
+                        let permit = match connection_semaphore.clone().try_acquire_owned() {
+                            Ok(permit) => permit,
+                            Err(_) => {
+                                tracing::debug!(
+                                    target: LOG_TARGET,
+                                    "I2PControl connection limit reached; dropping accepted socket",
+                                );
+                                drop(tcp_stream);
+                                continue;
+                            }
+                        };
+
                         let acceptor = tls_acceptor.clone();
                         let app = app.clone();
 
                         // Spawn TLS handshake + HTTP in a separate task
                         // to keep the accept loop unblocked.
                         tokio::spawn(async move {
+                            // Move permit into the task so every exit path
+                            // releases it when the task completes.
+                            let _permit = permit;
+
                             // TLS handshake with timeout
                             let tls_stream = match tokio::time::timeout(
                                 TLS_HANDSHAKE_TIMEOUT,

@@ -107,7 +107,6 @@ async fn shared_tunnel_object_identity_through_production_adapters() {
         metrics,
         log_ring,
         tm.clone() as Arc<dyn TunnelManagerControl>,
-        None,
     );
 
     // Create a tunnel through the tunnel manager
@@ -147,7 +146,6 @@ async fn production_router_info_uses_shared_tunnel_service() {
         metrics,
         log_ring,
         tm.clone() as Arc<dyn TunnelManagerControl>,
-        None,
     );
 
     // i2ptunnel_stats should use the shared tunnel service

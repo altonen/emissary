@@ -119,7 +119,7 @@ async fn parse_arguments() -> Arguments {
 /// Setup router and related subsystems.
 async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<RouterContext> {
     // initialize logger with any logging directive given as a cli argument
-    let (handle, _log_ring) = init_logger!(arguments.log.clone());
+    let (handle, log_ring) = init_logger!(arguments.log.clone());
 
     // initialize storage for the router
     let storage = Storage::new::<R>(arguments.base_path.clone()).await?;
@@ -467,10 +467,10 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
                     local_router_info.clone(),
                 )
                 .with_event_metrics(metrics)
-                .with_core_snapshot(router.inspection_snapshot(10_000))
                 .with_share_ratio(share_ratio)
                 .with_configured_bandwidth(bw_in, bw_out)
-                .with_service_registry(registry_for_i2pcontrol);
+                .with_service_registry(registry_for_i2pcontrol)
+                .with_log_ring(log_ring);
 
                 let instance =
                     i2pcontrol::server::init_server(&server_config, &base_path, ctx).await?;

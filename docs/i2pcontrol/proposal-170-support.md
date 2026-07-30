@@ -1,6 +1,6 @@
 # Proposal 170 Support Status
 
-Status: M013 closed — Proposal 170 complete
+Status: M014 closing — independent closure pending M015 review
 
 This document tracks the implementation status of Proposal 170 I2PControl expansion in Emissary.
 

@@ -28,7 +28,7 @@ Authoritative direction:
 | 011 — ClientServicesInfo live state | corrective pass required | `011-client-services-live-state.md` | residual defects owned by M014 |
 | 012 — Real TLS and request resource hardening | corrective pass required | `012-real-tls-and-request-resource-hardening.md` | residual defects owned by M014 |
 | 013 — Production conformance and independent reclosure | superseded as final gate | `013-production-conformance-and-independent-reclosure.md` | superseded by M015 |
-| 014 — Spec-constrained truthfulness and local hardening | ready | `014-spec-constrained-truthfulness-and-local-hardening.md` | baseline `2f0508dc73b8d8e5d7429effcbe4dbee8797833c` |
+| 014 — Spec-constrained truthfulness and local hardening | closing | `014-spec-constrained-truthfulness-and-local-hardening.md` | frozen M014 head for M015 review |
 | 015 — Focused independent reclosure | blocked | `015-focused-independent-reclosure.md` | frozen M014 head and independent reviewer |
 
 ## Current execution order

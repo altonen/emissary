@@ -127,12 +127,12 @@ Reports the SAM bridge listener and session state.
 `enabled` reflects the actual bound TCP listener state. `Configured`
 and `Starting` report `enabled: false`.
 
-`sessions` is always an empty object. The core `SamServer` tracks
-active sessions internally but does not yet expose a public bounded
-session accessor. This is a known contract limitation, not a placeholder
-for missing inspection. The response shape is stable; the sessions
-object will populate when core exposes a public bounded snapshot
-accessor.
+`sessions` is always an empty object. Proposal 170 requires the
+`sessions` field. The core `SamServer` tracks active sessions
+internally but does not yet expose a public bounded session accessor.
+Without a safe canonical read source, the sessions object is the
+protocol-compatible response when session state cannot be observed.
+This is not a placeholder for missing inspection.
 
 ### `BOB`
 
@@ -192,9 +192,9 @@ exact Proposal 170 response shape.
   `Some(_)`.
 - Active sessions: The core `SamServer` tracks active sessions via
   `SessionContext<R, Arc<str>>` but does not expose a public bounded
-  session snapshot accessor. The sessions object is always empty
-  until that API is added. This is documented as a known contract
-  limitation.
+  session snapshot accessor. The sessions object is the
+  protocol-compatible empty object when session state cannot be
+  observed. This is not a placeholder for missing inspection.
 
 ### I2PTunnel live query
 

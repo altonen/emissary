@@ -287,7 +287,6 @@ async fn production_router_info_identity_and_version() {
         metrics,
         log_ring,
         tunnel_mgr,
-        None,
     );
     assert_eq!(ri.router_identity().unwrap(), "test-router-id-b64");
     assert_eq!(ri.router_version().unwrap(), "Emissary 0.5.0");
@@ -311,7 +310,6 @@ async fn production_router_info_network_status_unknown_initially() {
         metrics,
         log_ring,
         tunnel_mgr,
-        None,
     );
     let network = ri.network_snapshot().await.unwrap();
     assert_eq!(network.ipv4_status, NetworkStatus::Unknown);
@@ -335,7 +333,6 @@ async fn production_router_info_network_status_after_set() {
         metrics,
         log_ring,
         tunnel_mgr,
-        None,
     );
     let network = ri.network_snapshot().await.unwrap();
     assert_eq!(network.ipv4_status, NetworkStatus::Ok);
@@ -357,7 +354,6 @@ async fn production_router_info_clock_skew_unknown() {
         metrics,
         log_ring,
         tunnel_mgr,
-        None,
     );
     let skew = ri.clock_skew().await.unwrap();
     assert!(skew.skew_seconds.is_none());
@@ -381,7 +377,6 @@ async fn production_router_info_transport_bytes_from_event_handle() {
         metrics,
         log_ring,
         tunnel_mgr,
-        None,
     );
     let tb = ri.transport_bytes().await.unwrap();
     assert_eq!(tb.received, 1500);
@@ -408,7 +403,6 @@ async fn production_router_info_tunnel_build_stats() {
         metrics,
         log_ring,
         tunnel_mgr,
-        None,
     );
     let stats = ri.tunnel_build_stats().await.unwrap();
     assert_eq!(stats.successes, 10);
@@ -435,7 +429,6 @@ async fn production_router_info_log_round_trip() {
         metrics,
         Arc::clone(&log_ring),
         tunnel_mgr,
-        None,
     );
     let snap = ri.log_snapshot().await.unwrap();
     assert_eq!(snap.entries.len(), 1);
@@ -479,14 +472,13 @@ async fn production_router_info_i2ptunnel_stats() {
         metrics,
         log_ring,
         tm_arc,
-        None,
     );
     let stats = ri.i2ptunnel_stats().await.unwrap();
     assert_eq!(stats.configured_count, 1);
 }
 
 #[tokio::test]
-async fn production_router_info_udp_snapshot() {
+async fn production_router_info_udp_snapshot_returns_unavailable() {
     let metrics = make_metrics();
     metrics.set_firewall(FirewallStatus::Firewalled, FirewallStatus::Unknown);
     metrics.connected_routers.fetch_add(1, Ordering::Release);
@@ -501,15 +493,16 @@ async fn production_router_info_udp_snapshot() {
         metrics,
         log_ring,
         tunnel_mgr,
-        None,
     );
-    let udp = ri.udp_snapshot().await.unwrap();
-    assert!(udp.active);
-    assert!(udp.firewalled);
+    // UDP-specific active state requires a transport-specific canonical
+    // source. No such source exists in EventMetrics, so UDP snapshot
+    // returns Unavailable rather than inferring from an aggregate.
+    let result = ri.udp_snapshot().await;
+    assert!(result.is_err());
 }
 
 #[tokio::test]
-async fn production_router_info_udp_active_false_when_no_connected_routers() {
+async fn production_router_info_tcp_snapshot_returns_unavailable() {
     let metrics = make_metrics();
     let tunnel_mgr = make_tunnel_manager();
     let log_ring = Arc::new(LogRing::default());
@@ -522,10 +515,12 @@ async fn production_router_info_udp_active_false_when_no_connected_routers() {
         metrics,
         log_ring,
         tunnel_mgr,
-        None,
     );
-    let udp = ri.udp_snapshot().await.unwrap();
-    assert!(!udp.active);
+    // TCP-specific active state requires a transport-specific canonical
+    // source. No such source exists in EventMetrics, so TCP snapshot
+    // returns Unavailable rather than fabricating a value.
+    let result = ri.tcp_snapshot().await;
+    assert!(result.is_err());
 }
 
 // --- Static guards ---
@@ -544,7 +539,6 @@ fn production_router_info_returns_no_router_news() {
         metrics,
         log_ring,
         tunnel_mgr,
-        None,
     );
     assert_eq!(ri.router_news().unwrap(), "");
 }

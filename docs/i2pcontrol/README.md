@@ -1,6 +1,6 @@
 # I2PControl for Emissary
 
-Status: Proposal 170 complete (M013 closed)
+Status: Proposal 170 implementation landing (M014 closing, M015 independent closure pending)
 
 This document describes the I2PControl HTTPS JSON-RPC service foundation in Emissary.
 
