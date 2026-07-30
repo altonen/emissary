@@ -15,13 +15,19 @@ Authoritative direction:
 
 | Milestone | Status at this planning commit | Plan | Activation dependency |
 |---|---|---|---|
-| 001 — Contract matrix and I2PControl foundation | ready | `001-contract-matrix-and-i2pcontrol-foundation.md` | none |
-| 002 — Control-plane domain and persistence | blocked | `002-control-plane-domain-and-persistence.md` | M001 strict closure |
-| 003 — AddressBook administrative API | blocked | `003-address-book-administrative-api.md` | M002 strict closure |
-| 004 — TunnelManager contract and explicit stubs | blocked | `004-tunnel-manager-contract-and-stubs.md` | M002 strict closure |
-| 005 — RouterInfo inspection and exact selectors | blocked | `005-router-info-inspection.md` | M002 strict closure; M003/M004 production integration before closure |
-| 006 — ClientServicesInfo | blocked | `006-client-services-info.md` | M004 and M005 strict closure |
-| 007 — Conformance, hardening, and strict closure | blocked | `007-conformance-hardening-and-strict-closure.md` | M003–M006 strict closure |
+| 001 — Contract matrix and I2PControl foundation | closed | `001-contract-matrix-and-i2pcontrol-foundation.md` | none |
+| 002 — Control-plane domain and persistence | closed | `002-control-plane-domain-and-persistence.md` | M001 strict closure |
+| 003 — AddressBook administrative API | closed | `003-address-book-administrative-api.md` | M002 strict closure |
+| 004 — TunnelManager contract and explicit stubs | closed | `004-tunnel-manager-contract-and-stubs.md` | M002 strict closure |
+| 005 — RouterInfo inspection and exact selectors | superseded | `005-router-info-inspection.md` | Superseded by M009/M010 |
+| 006 — ClientServicesInfo | superseded | `006-client-services-info.md` | Superseded by M011 |
+| 007 — Conformance, hardening, and strict closure | superseded | `007-conformance-hardening-and-strict-closure.md` | Superseded by M012/M013 |
+| 008 — Production composition and durable-state integrity | closed | `008-production-composition-and-durable-state-integrity.md` | M001–M004 interfaces |
+| 009 — RouterInfo availability and truthfulness | closed | `009-router-info-availability-and-truthfulness.md` | M008 closed |
+| 010 — Bounded core router inspection | closed | `010-bounded-core-router-inspection.md` | M009 closed |
+| 011 — ClientServicesInfo live state | closed | `011-client-services-live-state.md` | M008, M009 closed |
+| 012 — Real TLS and request resource hardening | closed | `012-real-tls-and-request-resource-hardening.md` | M008/M009 interfaces stable |
+| 013 — Production conformance and independent reclosure | closed | `013-production-conformance-and-independent-reclosure.md` | M010, M011, M012 closed |
 
 ## Activation rule
 

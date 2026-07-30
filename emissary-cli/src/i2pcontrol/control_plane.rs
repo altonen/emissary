@@ -35,6 +35,7 @@ use crate::i2pcontrol::stores::fakes::TunnelStoreFake;
 /// Tunnel operations are delegated exclusively to [`TunnelManagerControl`].
 /// This trait intentionally does not include tunnel queries to prevent
 /// dual-path access and ensure all tunnel consumers share one service object.
+#[allow(dead_code)]
 pub trait ControlPlane: Send + Sync {
     /// Get the router identity (base64 RouterInfo).
     fn router_identity(&self) -> Result<String, String>;
@@ -126,8 +127,10 @@ pub trait AddressBookControl: Send + Sync {
 /// Fake control plane for testing.
 ///
 /// Returns stub values without accessing any real router state.
+#[allow(dead_code)]
 pub struct FakeControlPlane;
 
+#[allow(dead_code)]
 impl FakeControlPlane {
     pub fn new() -> Self {
         Self
@@ -157,10 +160,12 @@ impl ControlPlane for FakeControlPlane {
 /// Fake address book control plane for testing.
 ///
 /// Uses in-memory storage with the same semantics as the production adapter.
+#[allow(dead_code)]
 pub struct FakeAddressBookControl {
     inner: std::sync::Mutex<crate::i2pcontrol::stores::fakes::AddressBookStoreFake>,
 }
 
+#[allow(dead_code)]
 impl FakeAddressBookControl {
     pub fn new() -> Self {
         Self {
@@ -270,6 +275,7 @@ impl AddressBookControl for FakeAddressBookControl {
 ///   persistence of tunnel definitions.
 /// - Unsupported tunnel types return deterministic not-implemented errors.
 /// - Startup-managed definitions are read-only and reject mutations.
+#[allow(dead_code)]
 #[async_trait]
 pub trait TunnelManagerControl: Send + Sync {
     /// List all tunnel definitions.
@@ -317,11 +323,13 @@ pub trait TunnelManagerControl: Send + Sync {
 /// Fake tunnel manager control plane for testing.
 ///
 /// Uses in-memory storage with the same semantics as the production adapter.
+#[allow(dead_code)]
 pub struct FakeTunnelManagerControl {
     store: std::sync::Mutex<TunnelStoreFake>,
     registry: TunnelBackendRegistry,
 }
 
+#[allow(dead_code)]
 impl FakeTunnelManagerControl {
     /// Create a new fake with default (all-unsupported) registry.
     pub fn new() -> Self {

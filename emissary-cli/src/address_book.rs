@@ -1225,7 +1225,7 @@ mod tests {
                 S1LZ3zGwVpEjCfVD1mQhCLzzIjRHgGB6Cr3xj3FntBhv0d9pBuogUjOkLEnmFHpj5ONE7l~3aUsR6vRYTUDfwn\
                 xXnIi9KF-PPyOAACXCz~T06QXVfaqzTj8tyr40cUqKIZHquaMZrAkqqa26KM3l0fu755UVo43MfD3f9zo3erjo\
                 ~UDI~oP1bYyEU3LBQAEAAcAAA==";
-            let deserialized = base64_decode(&base64_destination).unwrap();
+            let deserialized = base64_decode(base64_destination).unwrap();
             let destination = Destination::parse(&deserialized).unwrap();
 
             handle.add_base64("echo.idk.i2p".to_string(), destination);

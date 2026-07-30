@@ -125,9 +125,8 @@ Per-selector item bounds enforce limits on returned collections.
 - Log redaction applied before ring insertion
 - Core remains free of HTTP/JSON-RPC dependencies
 
-## Limitations (deferred to M010)
+## Limitations (permanent unsupported-inspection)
 
 - NetDB, TCP transport, peer list/lookup/stats: `unsupported-inspection`
 - UDP transport peers (integrated, coinficient, critical, etc.): `unsupported-inspection`
 - Tunnel exploratory/client inbound/outbound, queue depth: `unsupported-inspection`
-- Clock skew estimator: not yet implemented

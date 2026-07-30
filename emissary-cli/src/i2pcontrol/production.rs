@@ -63,6 +63,7 @@ use emissary_core::FirewallStatus;
 /// concrete `Runtime` implementation of `EventHandle`, so the adapter can
 /// be constructed and tested without requiring the runtime-specific
 /// tokio/smol dependencies that ship with the core mock runtime.
+#[allow(dead_code)]
 pub trait EventMetrics: Send + Sync {
     /// Cumulative inbound transport bytes.
     fn transport_inbound_bytes(&self) -> u64;
@@ -138,6 +139,7 @@ impl<R: Runtime> EventMetrics for EventHandleMetrics<R> {
 ///
 /// Provides identity, version, and uptime from the running router. All methods
 /// are non-mutating and do not consume the EventSubscriber.
+#[allow(dead_code)]
 pub struct ProductionControlPlane {
     router_id_b64: String,
     version: String,
@@ -157,6 +159,7 @@ impl ProductionControlPlane {
     }
 
     /// Access the underlying metrics source.
+    #[allow(dead_code)]
     pub fn metrics(&self) -> &Arc<dyn EventMetrics> {
         &self.metrics
     }
@@ -722,7 +725,7 @@ impl RouterInfoControl for ProductionRouterInfoControl {
 
     async fn peer_router_info(&self, peer_id: &str) -> Result<Option<String>, InspectionError> {
         if let Some(ref snap) = self.core_snapshot {
-            Ok(snap.netdb.peer_router_infos.get(peer_id).map(|bytes| base64_encode(bytes)))
+            Ok(snap.netdb.peer_router_infos.get(peer_id).map(base64_encode))
         } else {
             Err(InspectionError::Unavailable {
                 group: InspectionGroup::PeerLookup,

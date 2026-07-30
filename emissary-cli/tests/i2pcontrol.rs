@@ -2,7 +2,7 @@ mod fixtures;
 
 use emissary_cli::i2pcontrol::control_plane::ControlPlane;
 use fixtures::*;
-use serde_json::{json, Value};
+use serde_json::json;
 
 /// Parse a valid request and verify structure.
 #[test]

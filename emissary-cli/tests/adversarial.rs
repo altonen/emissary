@@ -25,7 +25,7 @@
 #![cfg(feature = "i2pcontrol")]
 
 use emissary_cli::i2pcontrol::rpc;
-use serde_json::{json, Value};
+use serde_json::json;
 
 // ──────────────────────────────────────────────────────────────────────
 // § 1. Malformed JSON handling
@@ -399,7 +399,7 @@ fn password_timing_resistance() {
 
 #[test]
 fn token_service_issue_and_validate() {
-    let svc = rpc::RequestId::Number(1); // placeholder
+    let _svc = rpc::RequestId::Number(1); // placeholder
     let token_svc = emissary_cli::i2pcontrol::auth::TokenService::new();
     let token1 = token_svc.issue();
     let token2 = token_svc.issue();

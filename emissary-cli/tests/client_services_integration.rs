@@ -27,7 +27,7 @@ fn client_services_single_selector_bob_returns_false() {
     let req = parse_request(&body.to_string()).expect("parse");
     assert_eq!(req.method, "ClientServicesInfo");
     assert!(req.params.is_some());
-    assert_eq!(is_valid_client_services_selector("BOB"), true);
+    assert!(is_valid_client_services_selector("BOB"));
 }
 
 #[test]
@@ -171,7 +171,7 @@ fn client_services_sam_state_distinguishes_listener_enabled_from_active() {
     let snap = registry.snapshot();
     let entry = snap.get(ServiceCategory::Sam).unwrap();
     assert_eq!(entry.state, ObservedServiceState::Listening);
-    assert_eq!(entry.metadata.enabled, true);
+    assert!(entry.metadata.enabled);
     assert_eq!(entry.metadata.session_count, Some(2));
 }
 

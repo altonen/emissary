@@ -161,6 +161,7 @@ impl<T> Envelope<T> {
 }
 
 /// Errors from store operations.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum StoreError {
     /// The schema is not recognized.
@@ -230,6 +231,7 @@ pub type StoreResult<T> = Result<T, StoreError>;
 ///
 /// Provides restart-safe persistence with atomic publication, corruption
 /// fallback, and bounded retention.
+#[allow(dead_code)]
 pub struct GenerationStore<T> {
     /// The directory containing generation files.
     dir: PathBuf,
@@ -244,6 +246,7 @@ pub struct GenerationStore<T> {
     max_size: usize,
 }
 
+#[allow(dead_code)]
 impl<T> GenerationStore<T>
 where
     T: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync,

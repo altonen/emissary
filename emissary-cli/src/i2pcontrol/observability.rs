@@ -114,7 +114,7 @@ impl LogRing {
         // Redact password= patterns
         if let Some(idx) = result.find("password=") {
             let after = idx + 9;
-            if let Some(end) = result[after..].find(|c: char| c == ' ' || c == '&' || c == '\n') {
+            if let Some(end) = result[after..].find([' ', '&', '\n']) {
                 result.replace_range(after..after + end, "[REDACTED]");
             } else if after < result.len() {
                 result.replace_range(after.., "[REDACTED]");
@@ -124,7 +124,7 @@ impl LogRing {
         // Redact token= patterns
         if let Some(idx) = result.find("token=") {
             let after = idx + 6;
-            if let Some(end) = result[after..].find(|c: char| c == ' ' || c == '&' || c == '\n') {
+            if let Some(end) = result[after..].find([' ', '&', '\n']) {
                 result.replace_range(after..after + end, "[REDACTED]");
             } else if after < result.len() {
                 result.replace_range(after.., "[REDACTED]");
@@ -275,6 +275,7 @@ impl LogRing {
     /// The returned layer can be added to a tracing subscriber to capture
     /// formatted events into the ring. The ring itself remains accessible
     /// for snapshot/clear operations via the original [`LogRing`] reference.
+    #[allow(dead_code)]
     pub fn layer(self) -> LogRingLayer {
         LogRingLayer {
             ring: Arc::new(self),
@@ -290,6 +291,7 @@ impl LogRing {
     }
 
     /// Get a reference to the underlying ring from a layer (for snapshot/clear).
+    #[allow(dead_code)]
     pub fn from_layer(layer: &LogRingLayer) -> &LogRing {
         &layer.ring
     }
@@ -302,6 +304,7 @@ impl LogRing {
 /// Replaces dependence on the single `EventSubscriber` with a multi-consumer
 /// observable metrics source. Counters are monotonic except process restart.
 /// Snapshot reads are non-destructive.
+#[allow(dead_code)]
 pub struct MetricsSnapshot {
     inner: Arc<MetricsInner>,
 }
@@ -319,6 +322,7 @@ struct MetricsInner {
 }
 
 /// A point-in-time snapshot of cumulative metrics.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct MetricsData {
     pub total_transport_received: u64,
@@ -332,6 +336,7 @@ pub struct MetricsData {
     pub uptime_ms: u64,
 }
 
+#[allow(dead_code)]
 impl MetricsSnapshot {
     /// Create a new metrics snapshot source.
     pub fn new() -> Self {
@@ -427,6 +432,7 @@ impl Default for MetricsSnapshot {
 ///
 /// Covers a fixed interval (e.g. 15 seconds) with deterministic boundary
 /// inclusion. Read is O(buckets), not O(events). Uses monotonic clock.
+#[allow(dead_code)]
 pub struct RollingWindow {
     inner: Mutex<RollingInner>,
     bucket_duration_ms: u64,
@@ -478,6 +484,7 @@ impl RollingWindow {
     }
 
     /// Record traffic bytes for the current time period.
+    #[allow(dead_code)]
     pub fn record(&self, inbound: u64, outbound: u64) {
         let now = Instant::now();
         let mut inner = self.inner.lock().unwrap();

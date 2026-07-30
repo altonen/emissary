@@ -25,6 +25,7 @@ use std::fmt;
 use super::domain::tunnel::{TunnelDefinition, TunnelRuntimeState, TunnelType};
 
 /// Errors produced by tunnel backend operations.
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BackendError {
     /// The tunnel type is not supported by this backend.
@@ -71,6 +72,7 @@ impl std::error::Error for BackendError {}
 pub type BackendResult<T> = Result<T, BackendError>;
 
 /// Status information returned by backend inspect operations.
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackendStatus {
     /// The tunnel type.
@@ -95,6 +97,7 @@ pub struct BackendStatus {
 /// - `stop` of an inactive definition must be safe and resource-free.
 /// - `inspect` must return the current state without side effects.
 /// - All methods must honor caller deadlines without blocking.
+#[allow(dead_code)]
 #[async_trait::async_trait]
 pub trait TunnelBackend: Send + Sync {
     /// Return the tunnel type this backend handles.

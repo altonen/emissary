@@ -1,6 +1,6 @@
 # I2PControl Proposal 170 Roadmap
 
-Status: active corrective work
+Status: closed
 
 Current corrective planning baseline: `b35d9ad7295f6d7d8795a741c7942a5ff7a97f52` (`master` before corrective planning commits)
 
@@ -486,16 +486,16 @@ The subsystem closes only when M013 independently confirms the exact completion 
 
 | Milestone | Status | Implementation plan | Closure record / corrective owner | Blockers |
 |---|---|---|---|---|
-| 001 | closed (historical; revalidate at M013) | `plans/implementation/i2pcontrol-proposal-170/001-contract-matrix-and-i2pcontrol-foundation.md` | `plans/closure/i2pcontrol-proposal-170/001-closure.md`; TLS correction M012 | — |
-| 002 | closed (historical; revalidate at M013) | `plans/implementation/i2pcontrol-proposal-170/002-control-plane-domain-and-persistence.md` | `plans/closure/i2pcontrol-proposal-170/002-closure.md`; composition correction M008 | — |
-| 003 | closed (historical; revalidate at M013) | `plans/implementation/i2pcontrol-proposal-170/003-address-book-administrative-api.md` | `plans/closure/i2pcontrol-proposal-170/003-closure.md` | — |
-| 004 | closed (historical; revalidate at M013) | `plans/implementation/i2pcontrol-proposal-170/004-tunnel-manager-contract-and-stubs.md` | `plans/closure/i2pcontrol-proposal-170/004-closure.md` | — |
-| 005 | corrective pass required | `plans/implementation/i2pcontrol-proposal-170/005-router-info-inspection.md` | M008–M010 | Fabricated/default production state and missing core inspection |
-| 006 | corrective pass required | `plans/implementation/i2pcontrol-proposal-170/006-client-services-info.md` | M011 | Startup-stale tunnel inventory and empty SAM sessions |
-| 007 | corrective pass required / superseded | `plans/implementation/i2pcontrol-proposal-170/007-conformance-hardening-and-strict-closure.md` | M012–M013 | Invalid security evidence and non-independent closure |
+| 001 | closed (revalidated at M013) | `plans/implementation/i2pcontrol-proposal-170/001-contract-matrix-and-i2pcontrol-foundation.md` | `plans/closure/i2pcontrol-proposal-170/001-closure.md`; TLS correction M012 | — |
+| 002 | closed (revalidated at M013) | `plans/implementation/i2pcontrol-proposal-170/002-control-plane-domain-and-persistence.md` | `plans/closure/i2pcontrol-proposal-170/002-closure.md`; composition correction M008 | — |
+| 003 | closed (revalidated at M013) | `plans/implementation/i2pcontrol-proposal-170/003-address-book-administrative-api.md` | `plans/closure/i2pcontrol-proposal-170/003-closure.md` | — |
+| 004 | closed (revalidated at M013) | `plans/implementation/i2pcontrol-proposal-170/004-tunnel-manager-contract-and-stubs.md` | `plans/closure/i2pcontrol-proposal-170/004-closure.md` | — |
+| 005 | superseded by M009/M010 | `plans/implementation/i2pcontrol-proposal-170/005-router-info-inspection.md` | M008–M010 | Superseded |
+| 006 | superseded by M011 | `plans/implementation/i2pcontrol-proposal-170/006-client-services-info.md` | M011 | Superseded |
+| 007 | superseded by M012–M013 | `plans/implementation/i2pcontrol-proposal-170/007-conformance-hardening-and-strict-closure.md` | M012–M013 | Superseded |
 | 008 | closed | `plans/implementation/i2pcontrol-proposal-170/008-production-composition-and-durable-state-integrity.md` | `plans/closure/i2pcontrol-proposal-170/008-closure.md` | — |
 | 009 | closed | `plans/implementation/i2pcontrol-proposal-170/009-router-info-availability-and-truthfulness.md` | `plans/closure/i2pcontrol-proposal-170/009-closure.md` | — |
 | 010 | closed | `plans/implementation/i2pcontrol-proposal-170/010-bounded-core-router-inspection.md` | `plans/closure/i2pcontrol-proposal-170/010-closure.md` | — |
 | 011 | closed | `plans/implementation/i2pcontrol-proposal-170/011-client-services-live-state.md` | `plans/closure/i2pcontrol-proposal-170/011-closure.md` | — |
 | 012 | closed | `plans/implementation/i2pcontrol-proposal-170/012-real-tls-and-request-resource-hardening.md` | `plans/closure/i2pcontrol-proposal-170/012-closure.md` | — |
-| 013 | ready | `plans/implementation/i2pcontrol-proposal-170/013-production-conformance-and-independent-reclosure.md` | pending | M010, M011, M012 closed |
+| 013 | closed | `plans/implementation/i2pcontrol-proposal-170/013-production-conformance-and-independent-reclosure.md` | `plans/closure/i2pcontrol-proposal-170/013-closure.md` | — |

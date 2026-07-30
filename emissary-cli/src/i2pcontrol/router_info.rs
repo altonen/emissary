@@ -37,6 +37,7 @@ const LOG_TARGET: &str = "emissary::i2pcontrol::router_info";
 /// Each group corresponds to one coherent source query per request.
 /// The handler queries a group at most once when any selector in the
 /// group is requested.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InspectionGroup {
     Retained,
@@ -78,6 +79,7 @@ impl fmt::Display for InspectionGroup {
 ///
 /// Errors map to sanitized JSON-RPC error responses. No private keys,
 /// file paths, or internal backtraces are exposed in `Display` output.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum InspectionError {
     /// Source group not wired or not yet implemented.
@@ -125,6 +127,7 @@ impl std::error::Error for InspectionError {}
 // --- Bounded snapshot DTOs ---
 
 /// Network status codes per Proposal 170.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NetworkStatus {
     Ok,
@@ -180,6 +183,7 @@ pub struct RecentTransitTraffic {
 }
 
 /// Cumulative transit byte counters.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct TransitBytes {
     pub received: u64,
@@ -187,6 +191,7 @@ pub struct TransitBytes {
 }
 
 /// Tunnel build success/failure counters.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct TunnelBuildStats {
     pub successes: u64,
@@ -206,6 +211,7 @@ pub struct TunnelSummary {
 }
 
 /// Network reachability snapshot.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct NetworkSnapshot {
     pub ipv4_status: NetworkStatus,
@@ -239,6 +245,7 @@ pub struct ClockSkew {
 }
 
 /// NetDB summary snapshot.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 #[allow(non_snake_case)]
 pub struct NetDbSnapshot {
@@ -288,6 +295,7 @@ pub struct NetDbSnapshot {
 }
 
 /// Peer identity for list responses.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct PeerIdentity {
     pub id: String,
@@ -295,6 +303,7 @@ pub struct PeerIdentity {
 }
 
 /// Peer connection limits.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct PeerLimits {
     pub configured_inbound: usize,
@@ -312,6 +321,7 @@ pub struct BannedPeer {
 }
 
 /// Active peer transport statistics.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct ActivePeerStats {
     pub peer_id: String,
@@ -371,6 +381,7 @@ pub struct LogEntry {
 }
 
 /// I2PControl log buffer snapshot.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct LogSnapshot {
     pub entries: Vec<LogEntry>,
@@ -378,6 +389,7 @@ pub struct LogSnapshot {
 }
 
 /// UDP peer stats entry for the peerStats selector.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize)]
 pub struct UdpPeerStatEntry {
     #[serde(rename = "ID")]
@@ -429,6 +441,7 @@ use serde::Serialize;
 /// - Read operations do not block router progress.
 /// - Methods returning `Result` distinguish unavailable, failed, and
 ///   successful-but-empty states.
+#[allow(dead_code)]
 #[async_trait]
 pub trait RouterInfoControl: Send + Sync {
     /// Get the local router identity as Base64-encoded serialized RouterInfo.
@@ -517,10 +530,12 @@ pub trait RouterInfoControl: Send + Sync {
 /// Defaults every snapshot group to `Err(InspectionError::Unavailable)`.
 /// Tests must explicitly configure each requested snapshot group to prove
 /// that returned values are known facts rather than constructor defaults.
+#[allow(dead_code)]
 pub struct FakeRouterInfoControl {
     inner: std::sync::Mutex<FakeInner>,
 }
 
+#[allow(dead_code)]
 struct FakeInner {
     identity: Result<String, InspectionError>,
     version: Result<String, InspectionError>,
@@ -549,10 +564,12 @@ struct FakeInner {
     router_news: Result<String, InspectionError>,
 }
 
+#[allow(dead_code)]
 fn unavailable(group: InspectionGroup) -> InspectionError {
     InspectionError::Unavailable { group }
 }
 
+#[allow(dead_code)]
 impl FakeRouterInfoControl {
     pub fn new() -> Self {
         Self {

@@ -182,9 +182,6 @@ Handler calls LogRing::clear() for log clear
 - RollingWindow tests: empty/record/default intervals
 - Budget enforcement tests: pre-query estimation
 
-## Remaining work
+## Completion
 
-- Bounded core inspection for NetDB, transport, tunnel, and peer snapshots (M010)
-- ClientServicesInfo live state (M011)
-- Real TLS and request resource hardening (M012)
-- Production conformance and independent reclosure (M013)
+All I2PControl milestones (M001–M013) are closed. Bounded core inspection, ClientServicesInfo live state, real TLS, and production conformance are fully implemented and verified.

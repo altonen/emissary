@@ -123,6 +123,7 @@ impl TunnelType {
     }
 
     /// Returns true if this is a server-type tunnel.
+    #[allow(dead_code)]
     pub fn is_server(&self) -> bool {
         matches!(
             self,
@@ -289,6 +290,7 @@ impl TunnelName {
     }
 
     /// Consume and return the inner string.
+    #[allow(dead_code)]
     pub fn into_inner(self) -> String {
         self.0
     }
@@ -577,6 +579,7 @@ impl OptionRedacted {
         Self(None)
     }
 
+    #[allow(dead_code)]
     pub fn as_deref(&self) -> Option<&str> {
         self.0.as_deref()
     }

@@ -138,6 +138,7 @@ impl SubscriptionSet {
     }
 
     /// Create from an ordered list of subscriptions.
+    #[allow(dead_code)]
     pub fn from_vec(subscriptions: Vec<String>) -> Self {
         Self { subscriptions }
     }
@@ -148,11 +149,13 @@ impl SubscriptionSet {
     }
 
     /// Return true if the set is empty.
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.subscriptions.is_empty()
     }
 
     /// Return the number of subscriptions.
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.subscriptions.len()
     }
@@ -165,6 +168,7 @@ impl SubscriptionSet {
     }
 
     /// Remove a subscription from the set.
+    #[allow(dead_code)]
     pub fn remove(&mut self, subscription: &str) -> bool {
         let len_before = self.subscriptions.len();
         self.subscriptions.retain(|s| s != subscription);
@@ -172,6 +176,7 @@ impl SubscriptionSet {
     }
 
     /// Return true if the set contains the given subscription.
+    #[allow(dead_code)]
     pub fn contains(&self, subscription: &str) -> bool {
         self.subscriptions.contains(&subscription.to_string())
     }
@@ -202,6 +207,7 @@ impl AddressBookConfiguration {
     }
 
     /// Create from an existing map.
+    #[allow(dead_code)]
     pub fn from_map(entries: BTreeMap<String, String>) -> Self {
         Self { entries }
     }
@@ -212,11 +218,13 @@ impl AddressBookConfiguration {
     }
 
     /// Return true if the configuration is empty.
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
     /// Get a configuration value by key.
+    #[allow(dead_code)]
     pub fn get(&self, key: &str) -> Option<&str> {
         self.entries.get(key).map(|s| s.as_str())
     }
@@ -227,6 +235,7 @@ impl AddressBookConfiguration {
     }
 
     /// Remove a configuration value.
+    #[allow(dead_code)]
     pub fn remove(&mut self, key: &str) -> Option<String> {
         self.entries.remove(key)
     }
@@ -239,6 +248,7 @@ impl Default for AddressBookConfiguration {
 }
 
 /// Request mode for AddressBook operations.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub enum AddressBookRequest {
@@ -254,6 +264,7 @@ pub enum AddressBookRequest {
     Delete,
 }
 
+#[allow(dead_code)]
 impl AddressBookRequest {
     /// Return the exact external wire string for this request.
     pub fn as_str(&self) -> &'static str {

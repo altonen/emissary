@@ -16,7 +16,7 @@ Emissary source, snapshot group, bounds, availability, and M010 work-package.
 | `core-inspection` | Bounded runtime/NetDB/transport/tunnel snapshot required from M010 |
 | `protocol-defined-empty` | Protocol semantics explicitly define absence as empty |
 | `nullable-unavailable` | Protocol permits null where value is unknown |
-| `unsupported-inspection` | Selector validated but no truthful source exists; fails explicitly until M010 |
+| `unsupported-inspection` | Selector validated but no truthful source exists; fails explicitly |
 
 ## Selector source map
 

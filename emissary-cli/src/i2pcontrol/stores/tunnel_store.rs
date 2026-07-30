@@ -26,6 +26,7 @@ use crate::i2pcontrol::domain::revision::StateRevision;
 use crate::i2pcontrol::domain::tunnel::TunnelDefinition;
 
 /// Persistent tunnel definitions envelope payload.
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TunnelStorePayload {
     /// Tunnel definitions keyed by tunnel name.
@@ -45,10 +46,12 @@ impl TunnelStorePayload {
 ///
 /// Stores all Proposal 170 tunnel definitions using versioned generation
 /// persistence. Thread-safe via async mutation serialization.
+#[allow(dead_code)]
 pub struct TunnelStore {
     inner: GenerationStore<TunnelStorePayload>,
 }
 
+#[allow(dead_code)]
 impl TunnelStore {
     /// Create a new tunnel store.
     pub fn new(dir: PathBuf, max_size: usize) -> Self {

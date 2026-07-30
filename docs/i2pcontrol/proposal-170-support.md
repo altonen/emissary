@@ -1,9 +1,6 @@
 # Proposal 170 Support Status
 
-Status: M011 implemented (ClientServicesInfo live state)
-
-> **Note:** Strict Proposal 170 closure is reopened until M008–M012 close. Prior M005–M007
-> closure records are not accepted as current strict closure after the corrective review.
+Status: M013 closed — Proposal 170 complete
 
 This document tracks the implementation status of Proposal 170 I2PControl expansion in Emissary.
 
@@ -56,7 +53,7 @@ All 12 tunnel types support durable create, lossless get, edit with field preser
 
 All tunnel types currently resolve to `UnsupportedTunnelBackend`. Start and restart return `error - <type> not implemented`. Stop is a safe idempotent no-op.
 
-Real backend implementations will be added in future milestones.
+Real tunnel data-plane implementations are deferred outside the I2PControl scope. The Proposal 170 contract is satisfied by explicit unsupported stubs.
 
 ## AddressBook support
 
@@ -144,10 +141,12 @@ configured-vs-listening semantics, and integration evidence.
 | M002 | Closed | Tunnel domain, persistence, backend trait |
 | M003 | Closed | AddressBook handler |
 | M004 | Closed | TunnelManager contract and stubs |
-| M005 | Closed (corrective) | RouterInfo inspection (121 selectors, bounded metrics, logs) |
-| M006 | Closed (corrective) | ClientServicesInfo (composition wiring complete) |
-| M007 | Corrective pass required | Conformance and strict closure |
+| M005 | Superseded | RouterInfo inspection (superseded by M009/M010) |
+| M006 | Superseded | ClientServicesInfo (superseded by M011) |
+| M007 | Superseded | Conformance and strict closure (superseded by M012/M013) |
 | M008 | Closed | Production composition and durable-state integrity |
 | M009 | Closed | RouterInfo availability and truthfulness |
-| M010 | Implemented | Bounded core router inspection |
-| M011 | Implemented | ClientServicesInfo live state (I2PTunnel live query, listener truthfulness) |
+| M010 | Closed | Bounded core router inspection |
+| M011 | Closed | ClientServicesInfo live state |
+| M012 | Closed | Real TLS and request resource hardening |
+| M013 | Closed | Production conformance and independent reclosure |

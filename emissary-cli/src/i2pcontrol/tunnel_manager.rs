@@ -162,7 +162,7 @@ async fn handle_list(state: &I2pControlState, id: RequestId) -> serde_json::Valu
     match state.tunnel_list().await {
         Ok(definitions) => {
             let result: Vec<serde_json::Value> =
-                definitions.iter().map(|d| tunnel_definition_to_get_result(d)).collect();
+                definitions.iter().map(tunnel_definition_to_get_result).collect();
             success_response(id, serde_json::json!(result))
         }
         Err(e) => {
@@ -407,7 +407,7 @@ async fn handle_edit(
 
     // Type is immutable in Edit (use existing)
     let tunnel_type = tunnel_type_str
-        .and_then(|s| TunnelType::from_str_exact(s))
+        .and_then(TunnelType::from_str_exact)
         .unwrap_or(existing.tunnel_type);
 
     // Build the final definition name
@@ -469,7 +469,7 @@ async fn handle_get(
             }
         };
         let result: Vec<serde_json::Value> =
-            definitions.iter().map(|d| tunnel_definition_to_get_result(d)).collect();
+            definitions.iter().map(tunnel_definition_to_get_result).collect();
         return success_response(id, serde_json::json!(result));
     }
 

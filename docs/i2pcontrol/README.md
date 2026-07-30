@@ -1,6 +1,6 @@
 # I2PControl for Emissary
 
-Status: M003 AddressBook administrative API implemented
+Status: Proposal 170 complete (M013 closed)
 
 This document describes the I2PControl HTTPS JSON-RPC service foundation in Emissary.
 
@@ -121,13 +121,14 @@ M002 provides the administrative infrastructure consumed by later milestones:
 
 See [administrative-state.md](administrative-state.md), [tunnel-backends.md](tunnel-backends.md), and [security.md](security.md) for details.
 
-Proposal 170 feature methods remain under staged implementation and must not yet be described as complete. The following are NOT yet implemented:
+Proposal 170 is fully implemented. All methods are operational:
 
-- `RouterInfo` selectors (address-book selectors implemented in M003; remaining selectors in M005)
-- `TunnelManager` operations
-- `ClientServicesInfo` selectors
-
-Future milestones will implement these methods against the stable foundation established here.
+- `RouterInfo` selectors (M009/M010: truthful sources, bounded inspection)
+- `TunnelManager` operations (M004: CRUD + lifecycle for all 12 types)
+- `ClientServicesInfo` selectors (M011: live tunnel/listener/session state)
+- `AddressBook` operations (M003: four persistent stores)
+- Real TLS serving (M012: TlsAcceptor retained and consumed)
+- Production composition (M008: no fakes, fail-closed, shared state)
 
 ## No frontend controls
 

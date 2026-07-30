@@ -17,6 +17,12 @@
 * Proxies:
   * HTTP
   * SOCKSv5
+* I2PControl (Proposal 170):
+  * JSON-RPC 2.0 API over TLS
+  * RouterInfo inspection
+  * AddressBook administration
+  * TunnelManager configuration
+  * ClientServicesInfo
 
 ### Directory layout
 

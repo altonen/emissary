@@ -19,6 +19,7 @@
 use std::fmt;
 
 /// I2PControl-specific errors.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum I2pControlError {
     /// Configuration error (missing credentials, invalid bind, etc.)

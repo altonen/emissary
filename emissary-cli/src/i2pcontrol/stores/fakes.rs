@@ -34,12 +34,14 @@ use crate::i2pcontrol::domain::tunnel::TunnelDefinition;
 ///
 /// Provides the same CRUD semantics as `TunnelStore` without filesystem I/O.
 /// Revision increments with each mutation.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct TunnelStoreFake {
     tunnels: BTreeMap<String, TunnelDefinition>,
     revision: StateRevision,
 }
 
+#[allow(dead_code)]
 impl TunnelStoreFake {
     /// Create a new empty fake store.
     pub fn new() -> Self {
@@ -109,6 +111,7 @@ impl Default for TunnelStoreFake {
 /// Provides the same CRUD semantics as `AddressBookStore` without filesystem I/O.
 /// Stores all four administrative books as independent maps plus subscriptions
 /// and configuration.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct AddressBookStoreFake {
     private: BTreeMap<String, AddressBookEntry>,
@@ -120,6 +123,7 @@ pub struct AddressBookStoreFake {
     revision: StateRevision,
 }
 
+#[allow(dead_code)]
 impl AddressBookStoreFake {
     /// Create a new empty fake store.
     pub fn new() -> Self {
@@ -271,12 +275,14 @@ impl Default for AddressBookStoreFake {
 /// In-memory subscription store.
 ///
 /// Provides the same semantics as `SubscriptionStore` without filesystem I/O.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct SubscriptionStoreFake {
     subscriptions: SubscriptionSet,
     revision: StateRevision,
 }
 
+#[allow(dead_code)]
 impl SubscriptionStoreFake {
     /// Create a new empty fake store.
     pub fn new() -> Self {

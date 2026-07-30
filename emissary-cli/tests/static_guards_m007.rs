@@ -35,8 +35,6 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use emissary_cli::i2pcontrol::rpc;
-
 // ──────────────────────────────────────────────────────────────────────
 // § 1. Source-level structural guards
 // ──────────────────────────────────────────────────────────────────────

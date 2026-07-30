@@ -540,7 +540,7 @@ mod tests {
                 port: 0,
                 host: "127.0.0.1".to_string(),
                 i2cp: None,
-                outproxy: Some(format!("{}:{}", address.ip().to_string(), address.port())),
+                outproxy: Some(format!("{}:{}", address.ip(), address.port())),
             },
             sam_port,
         )

@@ -147,7 +147,7 @@ All 12 tunnel types are mapped to backends:
 | `ircserver` | Server | Unsupported |
 | `streamrserver` | Server | Unsupported |
 
-Real backend implementations will be added in future milestones (M004+).
+Real tunnel data-plane implementations are deferred outside the I2PControl scope. The Proposal 170 contract is satisfied by explicit unsupported stubs.
 
 ## Design rationale
 

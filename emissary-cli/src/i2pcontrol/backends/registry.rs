@@ -78,16 +78,19 @@ impl TunnelBackendRegistry {
     }
 
     /// Return the number of registered backends.
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.backends.len()
     }
 
     /// Return true if the registry is empty.
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.backends.is_empty()
     }
 
     /// Return true if the given tunnel type is registered.
+    #[allow(dead_code)]
     pub fn contains(&self, tunnel_type: TunnelType) -> bool {
         self.backends.contains_key(&tunnel_type)
     }
@@ -137,12 +140,14 @@ pub fn create_default_registry() -> Result<TunnelBackendRegistry, RegistryError>
 const _: () = {
     // This block runs at compile time. If ALL_TUNNEL_TYPES has fewer than
     // the expected number of elements, the array literal will fail.
+    #[allow(dead_code)]
     const EXPECTED_COUNT: usize = 12;
     const _CHECK: [(); EXPECTED_COUNT] = [(); ALL_TUNNEL_TYPES.len()];
 };
 
 /// Compile-time guard: every TunnelAction variant is listed in ALL_TUNNEL_ACTIONS.
 const _: () = {
+    #[allow(dead_code)]
     const EXPECTED_COUNT: usize = 8;
     const _CHECK: [(); EXPECTED_COUNT] = [(); ALL_TUNNEL_ACTIONS.len()];
 };

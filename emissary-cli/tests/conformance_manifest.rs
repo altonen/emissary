@@ -32,7 +32,7 @@
 
 #![cfg(feature = "i2pcontrol")]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use emissary_cli::i2pcontrol::backends::registry::create_default_registry;
 use emissary_cli::i2pcontrol::rpc;
@@ -48,9 +48,13 @@ use emissary_cli::i2pcontrol::rpc::tunnel_types;
 // ──────────────────────────────────────────────────────────────────────
 
 struct MethodRow {
+    #[allow(dead_code)]
     name: &'static str,
+    #[allow(dead_code)]
     auth_required: bool,
+    #[allow(dead_code)]
     owner_milestone: &'static str,
+    #[allow(dead_code)]
     fixture_id: &'static str,
 }
 
@@ -141,6 +145,7 @@ fn method_manifest_count() {
 struct TunnelTypeRow {
     name: &'static str,
     has_backend: bool,
+    #[allow(dead_code)]
     owner_milestone: &'static str,
 }
 
@@ -268,6 +273,7 @@ fn default_registry_covers_all_manifest_types() {
 
 struct TunnelActionRow {
     name: &'static str,
+    #[allow(dead_code)]
     owner_milestone: &'static str,
 }
 
@@ -331,6 +337,7 @@ fn tunnel_action_manifest_unique() {
 
 struct AddressBookRow {
     name: &'static str,
+    #[allow(dead_code)]
     owner_milestone: &'static str,
 }
 
@@ -377,7 +384,9 @@ fn address_book_manifest_count() {
 // ──────────────────────────────────────────────────────────────────────
 
 struct AddressBookRequestRow {
+    #[allow(dead_code)]
     name: &'static str,
+    #[allow(dead_code)]
     owner_milestone: &'static str,
 }
 
@@ -419,6 +428,7 @@ fn address_book_request_manifest_count() {
 
 struct ClientServicesSelectorRow {
     name: &'static str,
+    #[allow(dead_code)]
     owner_milestone: &'static str,
 }
 
@@ -538,8 +548,11 @@ fn router_info_core_selectors_count() {
 // ──────────────────────────────────────────────────────────────────────
 
 struct ErrorCodeRow {
+    #[allow(dead_code)]
     name: &'static str,
+    #[allow(dead_code)]
     code: i32,
+    #[allow(dead_code)]
     owner_milestone: &'static str,
 }
 
@@ -877,7 +890,6 @@ fn bob_is_always_unavailable() {
 
 #[test]
 fn all_backends_report_unsupported_state() {
-    use emissary_cli::i2pcontrol::backends::TunnelBackend;
     use emissary_cli::i2pcontrol::domain::tunnel::TunnelDefinition;
     use emissary_cli::i2pcontrol::domain::tunnel::TunnelName;
     use emissary_cli::i2pcontrol::domain::tunnel::TunnelOwnership;
@@ -931,7 +943,6 @@ fn all_backends_report_unsupported_state() {
 
 #[test]
 fn unsupported_start_returns_not_implemented() {
-    use emissary_cli::i2pcontrol::backends::TunnelBackend;
     use emissary_cli::i2pcontrol::domain::tunnel::TunnelDefinition;
     use emissary_cli::i2pcontrol::domain::tunnel::TunnelName;
     use emissary_cli::i2pcontrol::domain::tunnel::TunnelOwnership;

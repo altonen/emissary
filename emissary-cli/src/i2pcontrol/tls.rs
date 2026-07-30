@@ -71,7 +71,7 @@ pub fn build_tls_config(
         load_or_generate_managed_tls(base_path)?
     };
 
-    let config = ServerConfig::builder_with_provider(Arc::new(ring::default_provider().into()))
+    let config = ServerConfig::builder_with_provider(Arc::new(ring::default_provider()))
         .with_safe_default_protocol_versions()
         .map_err(|e| I2pControlError::Tls(format!("TLS config error: {e}")))?
         .with_no_client_auth()
@@ -184,11 +184,9 @@ fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>, I2pControlErr
     if data.starts_with(b"-----") {
         let mut reader = BufReader::new(data.as_slice());
         let mut certs = Vec::new();
-        for item in rustls_pemfile::read_all(&mut reader) {
-            if let Ok(item) = item {
-                if let Item::X509Certificate(cert) = item {
-                    certs.push(cert);
-                }
+        for item in rustls_pemfile::read_all(&mut reader).flatten() {
+            if let Item::X509Certificate(cert) = item {
+                certs.push(cert);
             }
         }
         if !certs.is_empty() {
@@ -197,8 +195,7 @@ fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>, I2pControlErr
     }
 
     // Default: treat as DER
-    let cert = CertificateDer::try_from(data)
-        .map_err(|e| I2pControlError::Tls(format!("Failed to parse certificate: {e}")))?;
+    let cert = CertificateDer::from(data);
     Ok(vec![cert])
 }
 
@@ -210,14 +207,12 @@ fn load_key(path: &Path) -> Result<PrivateKeyDer<'static>, I2pControlError> {
     // Try PEM first (has header)
     if data.starts_with(b"-----") {
         let mut reader = BufReader::new(data.as_slice());
-        for item in rustls_pemfile::read_all(&mut reader) {
-            if let Ok(item) = item {
-                match item {
-                    Item::Pkcs1Key(k) => return Ok(PrivateKeyDer::Pkcs1(k)),
-                    Item::Sec1Key(k) => return Ok(PrivateKeyDer::Sec1(k)),
-                    Item::Pkcs8Key(k) => return Ok(PrivateKeyDer::Pkcs8(k)),
-                    _ => {}
-                }
+        for item in rustls_pemfile::read_all(&mut reader).flatten() {
+            match item {
+                Item::Pkcs1Key(k) => return Ok(PrivateKeyDer::Pkcs1(k)),
+                Item::Sec1Key(k) => return Ok(PrivateKeyDer::Sec1(k)),
+                Item::Pkcs8Key(k) => return Ok(PrivateKeyDer::Pkcs8(k)),
+                _ => {}
             }
         }
     }

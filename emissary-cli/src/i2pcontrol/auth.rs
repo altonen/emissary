@@ -39,6 +39,12 @@ struct TokenStore {
     tokens: HashMap<String, ()>,
 }
 
+impl Default for TokenService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TokenService {
     /// Create a new empty token service.
     pub fn new() -> Self {
@@ -72,6 +78,7 @@ impl TokenService {
     }
 
     /// Invalidate a specific token.
+    #[allow(dead_code)]
     pub fn invalidate(&self, token: &str) {
         let mut store = self.inner.write();
         store.tokens.remove(token);
@@ -84,6 +91,7 @@ impl TokenService {
     }
 
     /// Current number of active tokens.
+    #[allow(dead_code)]
     pub fn count(&self) -> usize {
         let store = self.inner.read();
         store.tokens.len()

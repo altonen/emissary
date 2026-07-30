@@ -96,10 +96,12 @@ impl AddressBookStorePayload {
 ///
 /// Stores all four Proposal 170 administrative address books, subscriptions,
 /// and configuration using versioned generation persistence.
+#[allow(dead_code)]
 pub struct AddressBookStore {
     inner: GenerationStore<AddressBookStorePayload>,
 }
 
+#[allow(dead_code)]
 impl AddressBookStore {
     /// Create a new address book store.
     pub fn new(dir: PathBuf, max_size: usize) -> Self {

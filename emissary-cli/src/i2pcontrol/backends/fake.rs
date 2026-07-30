@@ -25,6 +25,7 @@ use super::{BackendError, BackendResult, BackendStatus, TunnelBackend};
 use crate::i2pcontrol::domain::tunnel::{TunnelDefinition, TunnelRuntimeState, TunnelType};
 
 /// Scripted behavior for a fake backend operation.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum FakeAction {
     /// Operation succeeds.
@@ -34,6 +35,7 @@ pub enum FakeAction {
 }
 
 /// Configuration for a fake backend's scripted behavior.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct FakeBackendScript {
     pub start_action: FakeAction,
@@ -57,11 +59,13 @@ impl Default for FakeBackendScript {
 ///
 /// Supports scripted success/failure/state for handler tests without
 /// network activity. Thread-safe via `Arc<RwLock<>>`.
+#[allow(dead_code)]
 pub struct FakeTunnelBackend {
     tunnel_type: TunnelType,
     script: Arc<RwLock<FakeBackendScript>>,
 }
 
+#[allow(dead_code)]
 impl FakeTunnelBackend {
     /// Create a new fake backend with the default script (all success).
     pub fn new(tunnel_type: TunnelType) -> Self {
@@ -123,10 +127,12 @@ impl TunnelBackend for FakeTunnelBackend {
 }
 
 /// An in-memory backend registry for tests.
+#[allow(dead_code)]
 pub struct FakeBackendRegistry {
     backends: HashMap<TunnelType, Arc<FakeTunnelBackend>>,
 }
 
+#[allow(dead_code)]
 impl FakeBackendRegistry {
     /// Create a new empty registry.
     pub fn new() -> Self {

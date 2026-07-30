@@ -30,6 +30,7 @@ pub enum RequestId {
 }
 
 /// JSON-RPC 2.0 request.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct JsonRpcRequest {
     /// Must be exactly `"2.0"`.
@@ -119,6 +120,7 @@ impl JsonRpcErrorResponse {
     }
 
     /// Create an error response with data.
+    #[allow(dead_code)]
     pub fn with_data(
         id: RequestId,
         code: i32,
@@ -228,6 +230,7 @@ impl RequestId {
 }
 
 /// I2PControl method names.
+#[allow(dead_code)]
 pub mod methods {
     /// Authenticate method.
     pub const AUTHENTICATE: &str = "Authenticate";
@@ -255,6 +258,7 @@ pub mod methods {
 }
 
 /// Proposal 170 tunnel types.
+#[allow(dead_code)]
 pub mod tunnel_types {
     pub const CLIENT: &str = "client";
     pub const HTTP_CLIENT: &str = "httpclient";
@@ -287,6 +291,7 @@ pub mod tunnel_types {
 }
 
 /// TunnelManager actions.
+#[allow(dead_code)]
 pub mod tunnel_actions {
     pub const LIST: &str = "List";
     pub const CREATE: &str = "Create";
@@ -299,6 +304,7 @@ pub mod tunnel_actions {
 }
 
 /// AddressBook books.
+#[allow(dead_code)]
 pub mod address_books {
     pub const PRIVATE: &str = "private";
     pub const LOCAL: &str = "local";
@@ -309,6 +315,7 @@ pub mod address_books {
 }
 
 /// AddressBook request modes.
+#[allow(dead_code)]
 pub mod address_book_requests {
     pub const LIST: &str = "List";
     pub const LOOKUP: &str = "Lookup";
@@ -346,6 +353,7 @@ pub struct AuthenticateResult {
 
 /// Proposal 170 RouterInfo selector keys.
 /// https://i2p.net/en/proposals/170-i2pcontrol-expansion/
+#[allow(dead_code)]
 pub mod router_info_keys {
     // --- UDP transport selectors ---
     pub const UDP_ACTIVE: &str = "i2p.router.udp.active";
@@ -764,16 +772,19 @@ pub mod router_info_keys {
 }
 
 /// Test if a string is a valid tunnel type.
+#[allow(dead_code)]
 pub fn is_valid_tunnel_type(s: &str) -> bool {
     tunnel_types::ALL.contains(&s)
 }
 
 /// Test if a string is a valid address book name.
+#[allow(dead_code)]
 pub fn is_valid_address_book(s: &str) -> bool {
     address_books::ALL.contains(&s)
 }
 
 /// Test if a string is a valid Proposal 170 RouterInfo selector key.
+#[allow(dead_code)]
 pub fn is_valid_router_info_selector(s: &str) -> bool {
     router_info_keys::ALL.contains(&s)
 }

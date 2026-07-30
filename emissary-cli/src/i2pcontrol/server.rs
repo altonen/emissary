@@ -60,9 +60,6 @@ const MAX_BODY_SIZE: usize = 1024 * 1024;
 /// Maximum concurrent in-flight requests.
 const MAX_CONCURRENT_REQUESTS: usize = 64;
 
-/// Maximum simultaneous accepted/active TLS connections.
-const MAX_CONNECTIONS: usize = 128;
-
 /// Timeout for TLS handshake completion (seconds).
 const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -133,6 +130,7 @@ pub struct I2pControlState {
     /// Rolling traffic window (fed by transport byte accounting).
     rolling_window: Arc<super::observability::RollingWindow>,
     /// Shared log ring for I2PControl snapshot/clear.
+    #[allow(dead_code)]
     log_ring: Arc<super::observability::LogRing>,
     /// Passive client-service registry for ClientServicesInfo.
     service_registry: ServiceRegistry,
@@ -203,6 +201,7 @@ impl I2pControlState {
     ///
     /// This constructor is identical to `new_test` but available outside
     /// `cfg(test)` so integration tests can exercise the handler.
+    #[allow(dead_code)]
     pub fn new_for_test(password: String) -> Self {
         use super::control_plane::{
             FakeAddressBookControl, FakeControlPlane, FakeTunnelManagerControl,
@@ -232,6 +231,7 @@ impl I2pControlState {
 
     /// Get a clone of the shared log ring (used by the production router
     /// info adapter for I2PControl log snapshot/clear).
+    #[allow(dead_code)]
     pub fn log_ring_arc(&self) -> Arc<super::observability::LogRing> {
         Arc::clone(&self.log_ring)
     }
@@ -301,11 +301,13 @@ impl I2pControlState {
     }
 
     /// Replace the address book control plane (for testing).
+    #[allow(dead_code)]
     pub fn set_address_book_control(&mut self, control: Box<dyn AddressBookControl>) {
         self.address_book_control = control.into();
     }
 
     /// Replace the tunnel manager control plane (for testing).
+    #[allow(dead_code)]
     pub fn set_tunnel_manager(&mut self, control: Box<dyn TunnelManagerControl>) {
         self.tunnel_manager = control.into();
     }
@@ -460,6 +462,7 @@ impl I2pControlState {
     }
 
     /// Get the current subscription set.
+    #[allow(dead_code)]
     pub async fn address_book_subscriptions(
         &self,
     ) -> Result<crate::i2pcontrol::domain::address_book::SubscriptionSet, String> {
@@ -475,6 +478,7 @@ impl I2pControlState {
     }
 
     /// Get the address book configuration.
+    #[allow(dead_code)]
     pub async fn address_book_configuration(
         &self,
     ) -> Result<crate::i2pcontrol::domain::address_book::AddressBookConfiguration, String> {
@@ -536,6 +540,7 @@ impl ServerInstance {
     ///
     /// Bypasses `init_server` to allow tests to supply pre-built state,
     /// ephemeral listeners, and generated TLS material.
+    #[allow(dead_code)]
     pub fn new_for_test(
         listener: TcpListener,
         tls_acceptor: TlsAcceptor,
@@ -814,7 +819,7 @@ impl EventMetrics for NoopEventMetrics {
 /// cancellation, or shutdown.
 pub async fn serve(
     instance: ServerInstance,
-    mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
+    shutdown_rx: tokio::sync::broadcast::Receiver<()>,
 ) -> Result<(), I2pControlError> {
     let ServerInstance {
         listener,
@@ -877,7 +882,8 @@ pub async fn serve(
 
                             // Build hyper service from the cloned Router
                             let io = TokioIo::new(tls_stream);
-                            use tower::ServiceExt;
+
+
                             let svc = app
                                 .map_request(|req: http::Request<hyper::body::Incoming>| {
                                     req.map(axum::body::Body::new)
@@ -1094,7 +1100,7 @@ async fn handle_authenticate(
             )) {
                 Ok(p) => p,
                 Err(_) => {
-                    return serde_json::to_value(&JsonRpcErrorResponse::new(
+                    return serde_json::to_value(JsonRpcErrorResponse::new(
                         id,
                         rpc::error_codes::INVALID_PARAMS,
                         "Invalid Authenticate parameters",
@@ -1104,7 +1110,7 @@ async fn handle_authenticate(
             }
         }
         None => {
-            return serde_json::to_value(&JsonRpcErrorResponse::new(
+            return serde_json::to_value(JsonRpcErrorResponse::new(
                 id,
                 rpc::error_codes::INVALID_PARAMS,
                 "Missing parameters",
@@ -1117,7 +1123,7 @@ async fn handle_authenticate(
     let api_version = match params.api {
         Some(v) if auth::validate_api_version(v) => v,
         _ => {
-            return serde_json::to_value(&JsonRpcErrorResponse::new(
+            return serde_json::to_value(JsonRpcErrorResponse::new(
                 id,
                 rpc::error_codes::INVALID_PARAMS,
                 "Invalid or missing API version (must be 1 or 2)",
@@ -1130,7 +1136,7 @@ async fn handle_authenticate(
     match params.username.as_deref() {
         Some("i2pcontrol") => {}
         _ => {
-            return serde_json::to_value(&JsonRpcErrorResponse::new(
+            return serde_json::to_value(JsonRpcErrorResponse::new(
                 id,
                 rpc::error_codes::APP_ERROR,
                 "Invalid username or password",
@@ -1143,7 +1149,7 @@ async fn handle_authenticate(
     let password = match params.password.as_deref() {
         Some(p) => p,
         None => {
-            return serde_json::to_value(&JsonRpcErrorResponse::new(
+            return serde_json::to_value(JsonRpcErrorResponse::new(
                 id,
                 rpc::error_codes::APP_ERROR,
                 "Invalid username or password",
@@ -1153,7 +1159,7 @@ async fn handle_authenticate(
     };
 
     if !auth::compare_passwords(password, &state.password) {
-        return serde_json::to_value(&JsonRpcErrorResponse::new(
+        return serde_json::to_value(JsonRpcErrorResponse::new(
             id,
             rpc::error_codes::APP_ERROR,
             "Invalid username or password",
@@ -1169,9 +1175,9 @@ async fn handle_authenticate(
         "Authenticate successful",
     );
 
-    serde_json::to_value(&JsonRpcSuccess::new(
+    serde_json::to_value(JsonRpcSuccess::new(
         id,
-        serde_json::to_value(&AuthenticateResult {
+        serde_json::to_value(AuthenticateResult {
             Token: token,
             API: api_version.to_string(),
         })

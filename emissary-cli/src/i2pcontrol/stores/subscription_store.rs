@@ -25,12 +25,14 @@ use crate::i2pcontrol::domain::address_book::SubscriptionSet;
 use crate::i2pcontrol::domain::revision::StateRevision;
 
 /// Persistent subscription store payload.
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SubscriptionStorePayload {
     /// The subscription set.
     pub subscriptions: SubscriptionSet,
 }
 
+#[allow(dead_code)]
 impl SubscriptionStorePayload {
     /// Create an empty payload.
     pub fn empty() -> Self {
@@ -45,10 +47,12 @@ impl SubscriptionStorePayload {
 /// Stores address book subscription URLs using versioned generation
 /// persistence. Separate from the address book store for independent
 /// mutation semantics.
+#[allow(dead_code)]
 pub struct SubscriptionStore {
     inner: GenerationStore<SubscriptionStorePayload>,
 }
 
+#[allow(dead_code)]
 impl SubscriptionStore {
     /// Create a new subscription store.
     pub fn new(dir: PathBuf, max_size: usize) -> Self {

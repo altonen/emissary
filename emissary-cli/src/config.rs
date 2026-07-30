@@ -1120,8 +1120,8 @@ mod tests {
         assert_eq!(config.signing_key.len(), 32);
         assert_eq!(config.ntcp2_config.as_ref().unwrap().ipv4_host, None);
         assert_eq!(config.ntcp2_config.as_ref().unwrap().ipv6_host, None);
-        assert_eq!(config.ntcp2_config.as_ref().unwrap().ipv4, true);
-        assert_eq!(config.ntcp2_config.as_ref().unwrap().ipv6, true);
+        assert!(config.ntcp2_config.as_ref().unwrap().ipv4);
+        assert!(config.ntcp2_config.as_ref().unwrap().ipv6);
 
         // ensure ntcp2 port is within correct range and not any of the reserved ports
         {
