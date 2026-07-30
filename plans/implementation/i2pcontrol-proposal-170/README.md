@@ -1,6 +1,6 @@
 # Proposal 170 Implementation Handoffs
 
-This directory contains the bounded implementation plans for the I2PControl Proposal 170 subsystem.
+This directory contains bounded implementation and closure handoffs for the I2PControl Proposal 170 subsystem.
 
 Authoritative direction:
 
@@ -13,59 +13,79 @@ Authoritative direction:
 
 ## Milestone plans
 
-| Milestone | Status at this planning commit | Plan | Activation dependency |
+| Milestone | Current status | Plan | Activation dependency |
 |---|---|---|---|
-| 001 — Contract matrix and I2PControl foundation | closed | `001-contract-matrix-and-i2pcontrol-foundation.md` | none |
-| 002 — Control-plane domain and persistence | closed | `002-control-plane-domain-and-persistence.md` | M001 strict closure |
-| 003 — AddressBook administrative API | closed | `003-address-book-administrative-api.md` | M002 strict closure |
-| 004 — TunnelManager contract and explicit stubs | closed | `004-tunnel-manager-contract-and-stubs.md` | M002 strict closure |
-| 005 — RouterInfo inspection and exact selectors | superseded | `005-router-info-inspection.md` | Superseded by M009/M010 |
-| 006 — ClientServicesInfo | superseded | `006-client-services-info.md` | Superseded by M011 |
-| 007 — Conformance, hardening, and strict closure | superseded | `007-conformance-hardening-and-strict-closure.md` | Superseded by M012/M013 |
-| 008 — Production composition and durable-state integrity | closed | `008-production-composition-and-durable-state-integrity.md` | M001–M004 interfaces |
-| 009 — RouterInfo availability and truthfulness | closed | `009-router-info-availability-and-truthfulness.md` | M008 closed |
-| 010 — Bounded core router inspection | closed | `010-bounded-core-router-inspection.md` | M009 closed |
-| 011 — ClientServicesInfo live state | closed | `011-client-services-live-state.md` | M008, M009 closed |
-| 012 — Real TLS and request resource hardening | closed | `012-real-tls-and-request-resource-hardening.md` | M008/M009 interfaces stable |
-| 013 — Production conformance and independent reclosure | closed | `013-production-conformance-and-independent-reclosure.md` | M010, M011, M012 closed |
+| 001 — Contract matrix and I2PControl foundation | historical closed | `001-contract-matrix-and-i2pcontrol-foundation.md` | none |
+| 002 — Control-plane domain and persistence | historical closed | `002-control-plane-domain-and-persistence.md` | M001 |
+| 003 — AddressBook administrative API | historical closed | `003-address-book-administrative-api.md` | M002 |
+| 004 — TunnelManager contract and explicit stubs | historical closed | `004-tunnel-manager-contract-and-stubs.md` | M002 |
+| 005 — RouterInfo inspection and exact selectors | superseded | `005-router-info-inspection.md` | superseded by M009/M010/M014 |
+| 006 — ClientServicesInfo | superseded | `006-client-services-info.md` | superseded by M011/M014 |
+| 007 — Conformance, hardening, and strict closure | superseded | `007-conformance-hardening-and-strict-closure.md` | superseded by M012/M013/M015 |
+| 008 — Production composition and durable-state integrity | historical closed | `008-production-composition-and-durable-state-integrity.md` | retained |
+| 009 — RouterInfo availability and truthfulness | historical closed | `009-router-info-availability-and-truthfulness.md` | retained with M014 residual corrections |
+| 010 — Bounded core router inspection | corrective pass required | `010-bounded-core-router-inspection.md` | residual defects owned by M014 |
+| 011 — ClientServicesInfo live state | corrective pass required | `011-client-services-live-state.md` | residual defects owned by M014 |
+| 012 — Real TLS and request resource hardening | corrective pass required | `012-real-tls-and-request-resource-hardening.md` | residual defects owned by M014 |
+| 013 — Production conformance and independent reclosure | superseded as final gate | `013-production-conformance-and-independent-reclosure.md` | superseded by M015 |
+| 014 — Spec-constrained truthfulness and local hardening | ready | `014-spec-constrained-truthfulness-and-local-hardening.md` | baseline `2f0508dc73b8d8e5d7429effcbe4dbee8797833c` |
+| 015 — Focused independent reclosure | blocked | `015-focused-independent-reclosure.md` | frozen M014 head and independent reviewer |
 
-## Activation rule
+## Current execution order
 
-A prewritten plan is not automatically ready merely because it exists.
+```text
+M014 implementation
+    |
+    v
+M015 independent closure
+```
 
-Before activating a blocked plan:
-
-1. Confirm every hard dependency has an accepted closure record.
-2. Replace the planning baseline with the reviewed dependency head.
-3. Inspect current production code and all dependency closure findings.
-4. Reconcile file-level mechanics, interfaces, tests, and commands without weakening canonical invariants.
-5. Record material deviations in the plan or an ADR.
-6. Mark only the next dependency-ready plan `ready` in `plans/registry.md`.
-7. Preserve later plans as blocked until their dependencies close.
-
-M003, M004, and the interface-safe portions of M005 may proceed in parallel only after M002 closes and the registry explicitly activates them.
+Do not split M014 into additional subsystem milestones unless M015 identifies a defect that cannot fit the existing narrow boundary.
 
 ## Scope rule
 
-Every plan remains confined to Proposal 170 API implementation:
+M014/M015 remain confined to exact Proposal 170 correctness:
 
 - no protocol expansion;
 - no frontend work;
-- no router behavioral changes;
+- no router behavioral change;
 - no runtime resolver adoption;
 - no migration of existing startup task ownership;
-- no implementation of missing tunnel data planes.
+- no missing tunnel data-plane implementation;
+- no BOB implementation;
+- no broad re-hardening of already validated code;
+- no CI, release, publishing, platform-matrix, coverage, or generated-evidence work.
 
-Missing tunnel types receive complete API configuration behavior and explicit unsupported runtime backends. A later real tunnel project replaces a backend registration; it does not redesign Proposal 170 handlers or persistence.
-
-## Closure rule
-
-Implementation landing changes a plan to `closing`, not `closed`.
-
-A separate closure record under:
+Primary production changes belong in:
 
 ```text
-plans/closure/i2pcontrol-proposal-170/NNN-status.md
+emissary-cli/src/i2pcontrol/**
 ```
 
-must review the plan's acceptance criteria, actual code, commands, tests, compatibility, security, persistence, failure semantics, and unresolved findings. Only an accepted closure record may unblock the next hard-dependent milestone.
+Only minimal handle wiring may touch `emissary-cli/src/main.rs` or `emissary-cli/src/logger.rs`.
+
+A core edit is permitted only for one small bounded read-only observation seam required by the exact Proposal contract. If broader core redesign is required, preserve explicit unavailable behavior and stop.
+
+## Verification rule
+
+Use targeted local verification for the touched package boundary:
+
+```bash
+cargo fmt --all -- --check
+cargo check -p emissary-cli --no-default-features --features i2pcontrol
+cargo test -p emissary-cli --no-default-features --features i2pcontrol
+cargo clippy -p emissary-cli --no-default-features --features i2pcontrol --all-targets -- -D warnings
+```
+
+Run core commands only when core is touched.
+
+Do not add these commands to GitHub Actions as part of this workstream. Remote CI evidence is optional; required local regressions are not.
+
+## Activation rule
+
+1. M014 is the only ready implementation plan.
+2. When M014 code and required regressions land, freeze the implementation head.
+3. Move M014 to `closing` and M015 to `ready` in `plans/registry.md`.
+4. A reviewer distinct from the final M014 implementation agent executes M015.
+5. Any high/medium finding rejects closure and returns work to a narrowly amended M014 boundary.
+6. Only an accepted `plans/closure/i2pcontrol-proposal-170/015-closure.md` may return the subsystem to `closed`.
