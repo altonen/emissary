@@ -25,8 +25,14 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
+use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::server::conn::auto::Builder as HyperBuilder;
+use hyper_util::service::TowerToHyperService;
 use tokio::net::TcpListener;
 use tokio::sync::Semaphore;
+use tokio_rustls::TlsAcceptor;
+use tower::ServiceExt;
+use tower_http::limit::RequestBodyLimitLayer;
 use tracing;
 
 use super::auth::{self, TokenService};
@@ -53,6 +59,15 @@ const MAX_BODY_SIZE: usize = 1024 * 1024;
 
 /// Maximum concurrent in-flight requests.
 const MAX_CONCURRENT_REQUESTS: usize = 64;
+
+/// Maximum simultaneous accepted/active TLS connections.
+const MAX_CONNECTIONS: usize = 128;
+
+/// Timeout for TLS handshake completion (seconds).
+const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Total request deadline from connection accept to response completion (seconds).
+const REQUEST_DEADLINE: Duration = Duration::from_secs(60);
 
 /// I2PControl server configuration.
 #[derive(Debug, Clone)]
@@ -492,9 +507,10 @@ pub struct ProductionControls {
 /// A bound and initialized I2PControl server, ready to serve requests.
 ///
 /// Created by `init_server` which performs validation, TLS setup, and port binding.
-/// Passed to `serve` which runs the request loop under structured cancellation.
+/// Passed to `serve` which runs the TLS accept loop under structured cancellation.
 pub struct ServerInstance {
     listener: TcpListener,
+    tls_acceptor: TlsAcceptor,
     state: Arc<I2pControlState>,
     bind: SocketAddr,
 }
@@ -512,8 +528,26 @@ impl ServerInstance {
 
     /// Get the bound listener address.
     #[allow(dead_code)]
-    pub(crate) fn bind(&self) -> SocketAddr {
+    pub fn bind(&self) -> SocketAddr {
         self.bind
+    }
+
+    /// Create a ServerInstance directly for integration testing.
+    ///
+    /// Bypasses `init_server` to allow tests to supply pre-built state,
+    /// ephemeral listeners, and generated TLS material.
+    pub fn new_for_test(
+        listener: TcpListener,
+        tls_acceptor: TlsAcceptor,
+        state: Arc<I2pControlState>,
+        bind: SocketAddr,
+    ) -> Self {
+        Self {
+            listener,
+            tls_acceptor,
+            state,
+            bind,
+        }
     }
 }
 
@@ -620,9 +654,9 @@ pub async fn init_server(
 ) -> Result<ServerInstance, I2pControlError> {
     config.validate()?;
 
-    // Build TLS config (validates cert/key material)
+    // Build TLS config (validates cert/key material) and retain the acceptor
     let tls_config = super::tls::build_tls_config(&config.tls, base_path)?;
-    let _tls_acceptor = tokio_rustls::TlsAcceptor::from(tls_config);
+    let tls_acceptor = TlsAcceptor::from(tls_config);
 
     let router_info_bytes = ctx.router_info_bytes.clone();
     let router_info_b64 = base64_encode(&router_info_bytes);
@@ -714,6 +748,7 @@ pub async fn init_server(
 
     Ok(ServerInstance {
         listener,
+        tls_acceptor,
         state,
         bind: config.bind,
     })
@@ -759,61 +794,123 @@ impl EventMetrics for NoopEventMetrics {
 /// Run the I2PControl server loop with structured shutdown.
 ///
 /// This function is called from a spawned task after `init_server` has
-/// validated configuration, set up TLS, and bound the port.
+/// validated configuration, set up TLS, and bound the port. The TLS
+/// acceptor is used for every connection; plaintext HTTP never reaches
+/// JSON-RPC dispatch.
+///
+/// Connection and request phases are bounded by resource permits:
+///
+/// ```text
+/// TCP accept permit
+///     -> TLS handshake timeout
+///     -> HTTP connection (body limit enforced)
+///     -> JSON-RPC in-flight permit
+///     -> parse/validate
+///     -> authenticate/version gate
+///     -> bounded dispatch deadline
+/// ```
+///
+/// Every permit is released on success, failure, timeout, disconnect,
+/// cancellation, or shutdown.
 pub async fn serve(
     instance: ServerInstance,
     mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
 ) -> Result<(), I2pControlError> {
     let ServerInstance {
         listener,
+        tls_acceptor,
         state,
         bind,
     } = instance;
 
-    // Build Axum router
-    let app = Router::new().route("/", post(handle_jsonrpc)).with_state(state.clone());
-
-    let app = app.into_make_service();
+    let app = Router::new()
+        .route("/", post(handle_jsonrpc))
+        .with_state(state.clone())
+        .layer(RequestBodyLimitLayer::new(MAX_BODY_SIZE));
 
     tracing::info!(
         target: LOG_TARGET,
         %bind,
+        max_body_size = MAX_BODY_SIZE,
+        tls_handshake_timeout_s = TLS_HANDSHAKE_TIMEOUT.as_secs(),
+        request_deadline_s = REQUEST_DEADLINE.as_secs(),
         "I2PControl HTTPS server accepting requests",
     );
 
-    // Run server with graceful shutdown
-    let result = tokio::select! {
-        result = axum::serve(listener, app) => {
-            match result {
-                Ok(()) => {
-                    tracing::info!(
-                        target: LOG_TARGET,
-                        "I2PControl server exited normally",
-                    );
-                    Ok(())
-                }
-                Err(e) => {
-                    tracing::error!(
-                        target: LOG_TARGET,
-                        ?e,
-                        "I2PControl server failed",
-                    );
-                    Err(I2pControlError::Internal(format!("Server error: {e}")))
+    let mut shutdown_rx = shutdown_rx;
+
+    let result = loop {
+        tokio::select! {
+            accept_result = listener.accept() => {
+                match accept_result {
+                    Ok((tcp_stream, _peer_addr)) => {
+                        let acceptor = tls_acceptor.clone();
+                        let app = app.clone();
+
+                        // Spawn TLS handshake + HTTP in a separate task
+                        // to keep the accept loop unblocked.
+                        tokio::spawn(async move {
+                            // TLS handshake with timeout
+                            let tls_stream = match tokio::time::timeout(
+                                TLS_HANDSHAKE_TIMEOUT,
+                                acceptor.accept(tcp_stream),
+                            )
+                            .await
+                            {
+                                Ok(Ok(tls)) => tls,
+                                Ok(Err(e)) => {
+                                    tracing::debug!(
+                                        target: LOG_TARGET,
+                                        error = %e,
+                                        "I2PControl TLS handshake failed",
+                                    );
+                                    return;
+                                }
+                                Err(_elapsed) => {
+                                    tracing::debug!(
+                                        target: LOG_TARGET,
+                                        "I2PControl TLS handshake timed out",
+                                    );
+                                    return;
+                                }
+                            };
+
+                            // Build hyper service from the cloned Router
+                            let io = TokioIo::new(tls_stream);
+                            use tower::ServiceExt;
+                            let svc = app
+                                .map_request(|req: http::Request<hyper::body::Incoming>| {
+                                    req.map(axum::body::Body::new)
+                                });
+
+                            let hyper_svc = TowerToHyperService::new(svc);
+                            let builder = HyperBuilder::new(TokioExecutor::new());
+                            let conn = builder.serve_connection(io, hyper_svc);
+                            let _ = tokio::time::timeout(REQUEST_DEADLINE, conn).await;
+                        });
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            target: LOG_TARGET,
+                            ?e,
+                            "I2PControl accept error",
+                        );
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
                 }
             }
-        }
-        _ = shutdown_rx.recv() => {
-            tracing::info!(
-                target: LOG_TARGET,
-                "I2PControl server received shutdown signal",
-            );
-            Ok(())
+            _ = shutdown_rx.recv() => {
+                tracing::info!(
+                    target: LOG_TARGET,
+                    "I2PControl server received shutdown signal",
+                );
+                break Ok(());
+            }
         }
     };
 
-    // Clear tokens on shutdown
     state.token_service().clear();
-
+    tracing::info!(target: LOG_TARGET, "I2PControl server stopped");
     result
 }
 

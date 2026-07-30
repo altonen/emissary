@@ -137,13 +137,23 @@ fn string_id_preserved() {
 #[test]
 fn null_id_parsed() {
     let req = rpc::parse_request(r#"{"jsonrpc":"2.0","method":"Authenticate","id":null}"#).unwrap();
-    assert!(req.id.is_none() || req.id == Some(rpc::RequestId::Null));
+    // Null id is treated as a notification (no response)
+    assert!(
+        req.id.is_none() || req.id == Some(rpc::RequestId::Null),
+        "null id should be parsed as None or Null, got {:?}",
+        req.id
+    );
 }
 
 #[test]
 fn missing_id_parsed() {
     let req = rpc::parse_request(r#"{"jsonrpc":"2.0","method":"Authenticate"}"#).unwrap();
-    assert!(req.id.is_none() || req.id == Some(rpc::RequestId::Null));
+    // Missing id is treated as a notification (no response)
+    assert!(
+        req.id.is_none() || req.id == Some(rpc::RequestId::Null),
+        "missing id should be parsed as None or Null, got {:?}",
+        req.id
+    );
 }
 
 #[test]
@@ -184,8 +194,23 @@ fn deeply_nested_json_parses() {
     }
     nested.push_str(r#"},"id":1}"#);
     let result = rpc::parse_request(&nested);
-    // Should either parse or return a reasonable error, not panic
-    assert!(result.is_ok() || result.is_err());
+    // Deeply nested JSON should parse successfully (serde_json supports arbitrary depth)
+    // or return a specific parse error — never panic
+    match result {
+        Ok(req) => {
+            assert_eq!(req.method, "Authenticate");
+        }
+        Err(err) => {
+            // If rejected, must be a parse or invalid-request error
+            assert!(
+                err.error.code == rpc::error_codes::PARSE_ERROR
+                    || err.error.code == rpc::error_codes::INVALID_REQUEST
+                    || err.error.code == rpc::error_codes::INVALID_PARAMS,
+                "deep nesting should produce parse/invalid error, got code {}",
+                err.error.code
+            );
+        }
+    }
 }
 
 #[test]
@@ -202,7 +227,25 @@ fn large_string_in_params() {
         "id": 1
     });
     let result = rpc::parse_request(&req.to_string());
-    assert!(result.is_ok() || result.is_err());
+    // Large strings within JSON should parse successfully
+    // (body-size limits are enforced at the HTTP transport layer, not the parser)
+    match result {
+        Ok(parsed) => {
+            assert_eq!(parsed.method, "Authenticate");
+            let params = parsed.params.unwrap();
+            assert_eq!(params.len(), 3);
+        }
+        Err(err) => {
+            // If rejected, must be a specific error
+            assert!(
+                err.error.code == rpc::error_codes::PARSE_ERROR
+                    || err.error.code == rpc::error_codes::INVALID_REQUEST
+                    || err.error.code == rpc::error_codes::INVALID_PARAMS,
+                "large string should produce parse/invalid error, got code {}",
+                err.error.code
+            );
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -214,8 +257,22 @@ fn duplicate_json_keys_handled() {
     // serde_json by default keeps the last value for duplicate keys
     let body = r#"{"jsonrpc":"2.0","method":"Authenticate","method":"Other","id":1}"#;
     let result = rpc::parse_request(body);
-    // Should parse without panic; behavior depends on serde_json policy
-    assert!(result.is_ok() || result.is_err());
+    // Duplicate keys must produce a deterministic result (last-value wins)
+    // or a specific error — never panic
+    match result {
+        Ok(req) => {
+            // serde_json keeps the last value for duplicate keys
+            assert_eq!(req.method, "Other", "duplicate key should use last value");
+        }
+        Err(err) => {
+            assert!(
+                err.error.code == rpc::error_codes::PARSE_ERROR
+                    || err.error.code == rpc::error_codes::INVALID_REQUEST,
+                "duplicate keys should produce parse/invalid error, got code {}",
+                err.error.code
+            );
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -710,5 +767,10 @@ fn token_service_concurrent_access() {
 #[test]
 fn notification_has_no_id() {
     let req = rpc::parse_request(r#"{"jsonrpc":"2.0","method":"Authenticate"}"#).unwrap();
-    assert!(req.id.is_none() || req.id == Some(rpc::RequestId::Null));
+    // Notifications have no id (None) or null id — no response is sent
+    assert!(
+        req.id.is_none() || req.id == Some(rpc::RequestId::Null),
+        "notification should have no id or null id, got {:?}",
+        req.id
+    );
 }
