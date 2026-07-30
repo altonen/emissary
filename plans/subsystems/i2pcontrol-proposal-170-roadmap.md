@@ -496,6 +496,6 @@ The subsystem closes only when M013 independently confirms the exact completion 
 | 008 | closed | `plans/implementation/i2pcontrol-proposal-170/008-production-composition-and-durable-state-integrity.md` | `plans/closure/i2pcontrol-proposal-170/008-closure.md` | — |
 | 009 | closed | `plans/implementation/i2pcontrol-proposal-170/009-router-info-availability-and-truthfulness.md` | `plans/closure/i2pcontrol-proposal-170/009-closure.md` | — |
 | 010 | closed | `plans/implementation/i2pcontrol-proposal-170/010-bounded-core-router-inspection.md` | `plans/closure/i2pcontrol-proposal-170/010-closure.md` | — |
-| 011 | ready | `plans/implementation/i2pcontrol-proposal-170/011-client-services-live-state.md` | pending | M010 closed |
-| 012 | ready | `plans/implementation/i2pcontrol-proposal-170/012-real-tls-and-request-resource-hardening.md` | pending | M008/M009/M010 interfaces stable |
-| 013 | blocked | `plans/implementation/i2pcontrol-proposal-170/013-production-conformance-and-independent-reclosure.md` | pending | M010, M011, M012 strict closure and M001–M004 revalidation |
+| 011 | closed | `plans/implementation/i2pcontrol-proposal-170/011-client-services-live-state.md` | `plans/closure/i2pcontrol-proposal-170/011-closure.md` | — |
+| 012 | closed | `plans/implementation/i2pcontrol-proposal-170/012-real-tls-and-request-resource-hardening.md` | `plans/closure/i2pcontrol-proposal-170/012-closure.md` | — |
+| 013 | ready | `plans/implementation/i2pcontrol-proposal-170/013-production-conformance-and-independent-reclosure.md` | pending | M010, M011, M012 closed |
