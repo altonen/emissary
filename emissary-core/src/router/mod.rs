@@ -500,7 +500,10 @@ impl<R: Runtime> Router<R> {
     /// available through current inspection surfaces and are omitted.
     /// Selectors backed by those sources remain explicit unsupported
     /// inspection errors in the CLI adapter.
-    pub fn inspection_snapshot(&self, connected_peer_limit: usize) -> crate::inspection::CoreSnapshot {
+    pub fn inspection_snapshot(
+        &self,
+        connected_peer_limit: usize,
+    ) -> crate::inspection::CoreSnapshot {
         use crate::inspection::{CoreSnapshot, NetDbSnapshot, TransportSnapshot, TunnelSnapshot};
 
         let router_id_b64 = self.router_id.to_base64().to_owned();

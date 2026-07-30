@@ -196,12 +196,12 @@ fixture/test ID. It is the single source of truth for contract completeness.
 | Contract item | Request key/type | Required/optional/presence | Response key/type | Nullability | Validation/error behavior | Planned data source | Owner milestone | Fixture/test ID | Notes |
 |---|---|---|---|---|---|---|---|---|---|
 | ClientServicesInfo method | `method` = `"ClientServicesInfo"` | required | — | — | — | — | M006 | `fixture_client_services_info` | — |
-| I2PTunnel selector | `I2PTunnel` | selector | array or absent | — | Only returned if requested | Service registry | M006 | `fixture_csi_i2ptunnel` | — |
-| HTTPProxy selector | `HTTPProxy` | selector | array or absent | — | Only returned if requested | Service registry | M006 | `fixture_csi_httpproxy` | — |
-| SOCKS selector | `SOCKS` | selector | array or absent | — | Only returned if requested | Service registry | M006 | `fixture_csi_socks` | — |
-| SAM selector | `SAM` | selector | array or absent | — | Only returned if requested | Service registry | M006 | `fixture_csi_sam` | — |
-| BOB selector | `BOB` | selector | array or absent | — | Only returned if requested | Service registry | M006 | `fixture_csi_bob` | — |
-| I2CP selector | `I2CP` | selector | array or absent | — | Only returned if requested | Service registry | M006 | `fixture_csi_i2cp` | — |
+| I2PTunnel selector | `I2PTunnel` | selector | object (`{client: {}, server: {}}`) | non-null when returned | Only returned if requested | Live `TunnelManagerControl::list()` | M011 | `fixture_csi_i2ptunnel` | Live query at request time (M011) |
+| HTTPProxy selector | `HTTPProxy` | selector | object (`{enabled, address, port}`) | non-null when returned | Only returned if requested; `enabled: true` only after bind | Service registry listener observation | M011 | `fixture_csi_httpproxy` | `enabled: true` only for `Listening` state (M011) |
+| SOCKS selector | `SOCKS` | selector | object (`{enabled, address, port}`) | non-null when returned | Only returned if requested; `enabled: true` only after bind | Service registry listener observation | M011 | `fixture_csi_socks` | `enabled: true` only for `Listening` state (M011) |
+| SAM selector | `SAM` | selector | object (`{enabled, sessions}`) | non-null when returned | Only returned if requested | Service registry SAM listener observation | M011 | `fixture_csi_sam` | Sessions: known limitation (core lacks bounded snapshot) |
+| BOB selector | `BOB` | selector | boolean (`false`) | non-null when returned | Only returned if requested | Exact Proposal 170 value | M006 | `fixture_csi_bob` | Not implemented in Emissary |
+| I2CP selector | `I2CP` | selector | object (`{enabled}`) | non-null when returned | Only returned if requested | Service registry I2CP listener observation | M011 | `fixture_csi_i2cp` | `enabled: true` only while bound (M011) |
 
 ## 3. JSON-RPC Envelope Rules
 

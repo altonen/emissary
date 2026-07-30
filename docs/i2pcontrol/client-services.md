@@ -66,6 +66,12 @@ a map of tunnel name to entry object (currently `{address}`, optionally
 }
 ```
 
+**Live query (M011):** I2PTunnel inventory is queried from the shared
+`TunnelManagerControl` at request time, not from a startup-only
+registry snapshot. Successful Create/Edit/Rename/Delete mutations are
+visible to the next ClientServicesInfo query without restart. Store
+failures propagate as JSON-RPC errors rather than empty inventory.
+
 Unsupported definitions appear in the map but always with `Configured`
 state — they never report active/listening/running.
 
@@ -83,9 +89,10 @@ Reports the HTTP proxy lifecycle.
 }
 ```
 
-When the proxy is configured but not yet listening, `address` and
-`port` may be absent. When `Failed` or `Stopped`, the response is
-`{enabled: false}`.
+`enabled: true` only after a successful bind (`Listening` state).
+`Configured` and `Starting` states report `enabled: false` because no
+listener has actually bound yet. When `Failed` or `Stopped`, the
+response is `{enabled: false}`.
 
 ### `SOCKS`
 
@@ -101,6 +108,9 @@ Reports the SOCKS proxy lifecycle, same shape as `HTTPProxy`.
 }
 ```
 
+Same `enabled` semantics as HTTPProxy: only `Listening` reports
+`enabled: true`.
+
 ### `SAM`
 
 Reports the SAM bridge listener and session state.
@@ -114,9 +124,15 @@ Reports the SAM bridge listener and session state.
 }
 ```
 
-`enabled` reflects the actual bound TCP listener state. `sessions` is
-present and an object (currently always empty — bounded session
-snapshot integration is tracked in the closure record).
+`enabled` reflects the actual bound TCP listener state. `Configured`
+and `Starting` report `enabled: false`.
+
+`sessions` is always an empty object. The core `SamServer` tracks
+active sessions internally but does not yet expose a public bounded
+session accessor. This is a known contract limitation, not a placeholder
+for missing inspection. The response shape is stable; the sessions
+object will populate when core exposes a public bounded snapshot
+accessor.
 
 ### `BOB`
 
@@ -141,8 +157,9 @@ Reports whether the core I2CP listener is bound.
 ```
 
 `enabled: true` means the core router bound a local I2CP listener
-during startup. `enabled: false` means I2CP was not configured or the
-bind failed.
+during startup and it remains active. `Configured` and `Starting`
+report `enabled: false`. `enabled: false` also means I2CP was not
+configured or the bind failed.
 
 ## Lifecycle states
 
@@ -156,11 +173,12 @@ exact Proposal 170 response shape.
 
 - `Configured` means the service exists in configuration and is being
   initialized, but is not yet listening on a bound address.
+- `Starting` means the task has been spawned but `bind()` has not
+  succeeded yet.
 - `Listening` means the service has successfully bound a local
   address and is actively serving requests.
-- For HTTP/SOCKS/I2CP/SAM, `Listening` requires a successful
-  `bind()` (or equivalent) and is recorded from the actual
-  `local_addr()` returned by the core listener.
+- Only `Listening` maps to `enabled: true` in the public response.
+  `Configured` and `Starting` always map to `enabled: false`.
 - For I2PTunnel, the response does not distinguish configured from
   listening — it returns the inventory regardless. Unsupported
   tunnel definitions never appear in a running state.
@@ -172,11 +190,23 @@ exact Proposal 170 response shape.
 - Listener enabled: a bound TCP/UDP address on the configured port.
   This corresponds to `SamServer::tcp_local_address()` returning
   `Some(_)`.
-- Active sessions: bounded count of SAM sessions currently in the
-  core `SessionContext`. This is recorded as 0 because the core does
-  not yet expose a bounded session snapshot. The response shape is
-  stable; the count will populate when core exposes a public
-  bounded snapshot accessor.
+- Active sessions: The core `SamServer` tracks active sessions via
+  `SessionContext<R, Arc<str>>` but does not expose a public bounded
+  session snapshot accessor. The sessions object is always empty
+  until that API is added. This is documented as a known contract
+  limitation.
+
+### I2PTunnel live query
+
+I2PTunnel inventory is no longer populated at startup and stored in
+the registry. Instead, the handler queries `TunnelManagerControl::list()`
+at request time. This ensures:
+
+- Successful Create/Edit/Rename/Delete mutations are visible immediately
+- Store failures propagate as JSON-RPC errors, not empty inventory
+- No stale startup-only inventory can persist across mutations
+- Unsupported definitions appear in the inventory but never as
+  active/running/listening
 
 ### I2PTunnel stub inactivity
 
@@ -194,8 +224,10 @@ implementation. It is created in the application composition root
 - HTTP proxy spawn sites,
 - SOCKS proxy spawn sites,
 - I2CP listener snapshot from `Router::protocol_address_info()`,
-- SAM listener snapshot from `Router::protocol_address_info()`,
-- I2PTunnel inventory from `ProductionTunnelManagerControl::list()`.
+- SAM listener snapshot from `Router::protocol_address_info()`.
+
+The handler queries `TunnelManagerControl::list()` at request time for
+I2PTunnel inventory rather than reading from the registry.
 
 Producers in the composition root use `i2pcontrol::observers::*`
 helpers to emit transition events through generation-fenced
@@ -241,7 +273,7 @@ The method never:
 - Consumes frontend or UI events.
 - Parses log messages.
 - Performs direct M004 persistence-file reads (the inventory is
-  read via `TunnelManagerControl::list()`).
+  read via `TunnelManagerControl::list()` at request time).
 - Returns SAM session private keys, destination material, or
   authentication data.
 
@@ -249,19 +281,29 @@ The method never:
 
 Unit tests live alongside the implementation:
 
-- `service_registry.rs` — 18 tests for registry semantics.
-- `client_services.rs` — 44 tests for handler and selector dispatch.
-- `observers.rs` — 14 tests for passive observer helpers.
+- `service_registry.rs` — registry semantics.
+- `client_services.rs` — handler, selector dispatch, live tunnel
+  query, and proxy enabled-state correctness.
+- `observers.rs` — passive observer helpers.
 
 Integration tests:
 
-- `tests/client_services_integration.rs` — 15 tests covering
-  selector parsing, response shape, lifecycle observations, and
-  concurrent registry updates.
+- `tests/client_services_integration.rs` — selector parsing,
+  response shape, lifecycle observations, and concurrent registry
+  updates.
+
+Static guards:
+
+- `tests/static_guards.rs` — M011 guards verifying no startup-only
+  I2PTunnel population, no unconditional SAM sessions placeholder,
+  Configured/Starting not reported as enabled, and handler uses
+  live tunnel manager.
 
 ## References
 
-- Plan: `plans/implementation/i2pcontrol-proposal-170/006-client-services-info.md`
-- Closure: `plans/closure/i2pcontrol-proposal-170/006-closure.md`
+- Plan: `plans/implementation/i2pcontrol-proposal-170/011-client-services-live-state.md`
+- M006 plan: `plans/implementation/i2pcontrol-proposal-170/006-client-services-info.md`
+- M006 closure: `plans/closure/i2pcontrol-proposal-170/006-closure.md`
+- M011 closure: `plans/closure/i2pcontrol-proposal-170/011-closure.md`
 - M001 conformance matrix: `docs/i2pcontrol/proposal-170-conformance.md`
 - Proposal 170 support status: `docs/i2pcontrol/proposal-170-support.md`

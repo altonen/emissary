@@ -277,6 +277,14 @@ impl I2pControlState {
         &*self.address_book_control
     }
 
+    /// Get a reference to the tunnel manager control.
+    ///
+    /// Used by ClientServicesInfo to query live I2PTunnel inventory
+    /// at request time rather than relying on a startup-only snapshot.
+    pub fn tunnel_manager(&self) -> &dyn TunnelManagerControl {
+        &*self.tunnel_manager
+    }
+
     /// Replace the address book control plane (for testing).
     pub fn set_address_book_control(&mut self, control: Box<dyn AddressBookControl>) {
         self.address_book_control = control.into();

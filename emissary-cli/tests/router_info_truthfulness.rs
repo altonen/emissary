@@ -27,9 +27,9 @@
 use std::sync::Arc;
 
 use emissary_cli::i2pcontrol::router_info::{
-    ActivePeerStats, BannedPeer, ClockSkew, FakeRouterInfoControl, InspectionError,
-    I2PTunnelStats, LogEntry, NetworkSnapshot, NetworkStatus, PeerIdentity, PeerLimits,
-    RouterInfoControl, TunnelBuildStats, TunnelSummary, UdpSnapshot,
+    ActivePeerStats, BannedPeer, ClockSkew, FakeRouterInfoControl, I2PTunnelStats, InspectionError,
+    LogEntry, NetworkSnapshot, NetworkStatus, PeerIdentity, PeerLimits, RouterInfoControl,
+    TunnelBuildStats, TunnelSummary, UdpSnapshot,
 };
 use emissary_cli::i2pcontrol::rpc;
 
@@ -39,12 +39,7 @@ fn test_request(selectors: serde_json::Value) -> emissary_cli::i2pcontrol::rpc::
     emissary_cli::i2pcontrol::rpc::JsonRpcRequest {
         jsonrpc: "2.0".to_string(),
         method: "RouterInfo".to_string(),
-        params: Some(
-            serde_json::json!({"Selector": selectors})
-                .as_object()
-                .cloned()
-                .unwrap(),
-        ),
+        params: Some(serde_json::json!({"Selector": selectors}).as_object().cloned().unwrap()),
         id: Some(rpc::RequestId::Number(1)),
     }
 }
@@ -63,7 +58,8 @@ async fn tunnel_summary_unavailable_returns_error() {
     let ri = FakeRouterInfoControl::new();
     let state = test_state(ri);
     let req = test_request(serde_json::json!({"i2p.router.tunnels.participating": true}));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     assert!(resp.get("error").is_some());
     assert!(resp.get("result").is_none());
     assert_eq!(resp["error"]["code"], -32603);
@@ -86,7 +82,8 @@ async fn tunnel_summary_available_zero_is_success() {
         "i2p.router.tunnels.participating": true,
         "i2p.router.tunnels.configured": true,
     }));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     let result = resp["result"].as_object().unwrap();
     assert_eq!(result["i2p.router.tunnels.participating"], 0);
     assert_eq!(result["i2p.router.tunnels.configured"], 0);
@@ -102,7 +99,8 @@ async fn udp_unsupported_selector_returns_error() {
     let state = test_state(ri);
     // integratedPeers is unsupported — entire request fails
     let req = test_request(serde_json::json!({"i2p.router.udp.integratedPeers": true}));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     assert!(resp.get("error").is_some());
     assert!(resp.get("result").is_none());
 }
@@ -120,7 +118,8 @@ async fn udp_supported_selectors_succeed() {
         "i2p.router.udp.active": true,
         "i2p.router.udp.firewalled": true,
     }));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     let result = resp["result"].as_object().unwrap();
     assert_eq!(result["i2p.router.udp.active"], true);
     assert_eq!(result["i2p.router.udp.firewalled"], true);
@@ -131,7 +130,8 @@ async fn tcp_unavailable_returns_error() {
     let ri = FakeRouterInfoControl::new();
     let state = test_state(ri);
     let req = test_request(serde_json::json!({"i2p.router.tcp.active": true}));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     assert!(resp.get("error").is_some());
     assert!(resp.get("result").is_none());
 }
@@ -141,7 +141,8 @@ async fn netdb_unavailable_returns_error() {
     let ri = FakeRouterInfoControl::new();
     let state = test_state(ri);
     let req = test_request(serde_json::json!({"i2p.router.netdb.active": true}));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     assert!(resp.get("error").is_some());
     assert!(resp.get("result").is_none());
 }
@@ -156,7 +157,8 @@ async fn netdb_unsupported_selector_returns_error() {
     let state = test_state(ri);
     // alreadyExperiencedPeers is unsupported
     let req = test_request(serde_json::json!({"i2p.router.netdb.alreadyExperiencedPeers": true}));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     assert!(resp.get("error").is_some());
     assert!(resp.get("result").is_none());
 }
@@ -166,7 +168,8 @@ async fn known_peers_unavailable_returns_error() {
     let ri = FakeRouterInfoControl::new();
     let state = test_state(ri);
     let req = test_request(serde_json::json!({"i2p.router.peers.knownCount": true}));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     assert!(resp.get("error").is_some());
     assert!(resp.get("result").is_none());
 }
@@ -180,7 +183,8 @@ async fn known_peers_available_empty_is_success() {
         "i2p.router.peers.knownCount": true,
         "i2p.router.peers.known": true,
     }));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     let result = resp["result"].as_object().unwrap();
     assert_eq!(result["i2p.router.peers.knownCount"], 0);
     assert_eq!(result["i2p.router.peers.known"], serde_json::json!([]));
@@ -191,7 +195,8 @@ async fn active_peers_unavailable_returns_error() {
     let ri = FakeRouterInfoControl::new();
     let state = test_state(ri);
     let req = test_request(serde_json::json!({"i2p.router.peers.activeCount": true}));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     assert!(resp.get("error").is_some());
     assert!(resp.get("result").is_none());
 }
@@ -201,7 +206,8 @@ async fn banned_peers_unavailable_returns_error() {
     let ri = FakeRouterInfoControl::new();
     let state = test_state(ri);
     let req = test_request(serde_json::json!({"i2p.router.peers.bannedCount": true}));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     assert!(resp.get("error").is_some());
     assert!(resp.get("result").is_none());
 }
@@ -211,7 +217,8 @@ async fn peer_limits_unavailable_returns_error() {
     let ri = FakeRouterInfoControl::new();
     let state = test_state(ri);
     let req = test_request(serde_json::json!({"i2p.router.peers.limits": true}));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     assert!(resp.get("error").is_some());
     assert!(resp.get("result").is_none());
 }
@@ -221,7 +228,8 @@ async fn active_peer_stats_unavailable_returns_error() {
     let ri = FakeRouterInfoControl::new();
     let state = test_state(ri);
     let req = test_request(serde_json::json!({"i2p.router.peers.activeStats": true}));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     assert!(resp.get("error").is_some());
     assert!(resp.get("result").is_none());
 }
@@ -231,7 +239,8 @@ async fn i2ptunnel_stats_unavailable_returns_error() {
     let ri = FakeRouterInfoControl::new();
     let state = test_state(ri);
     let req = test_request(serde_json::json!({"i2p.router.net.i2ptunnels": true}));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     assert!(resp.get("error").is_some());
     assert!(resp.get("result").is_none());
 }
@@ -244,7 +253,8 @@ async fn i2ptunnel_stats_available_zero_is_success() {
     });
     let state = test_state(ri);
     let req = test_request(serde_json::json!({"i2p.router.net.i2ptunnels": true}));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     let result = resp["result"].as_object().unwrap();
     assert_eq!(result["i2p.router.net.i2ptunnels"], 0);
 }
@@ -258,7 +268,8 @@ async fn tunnel_manager_failure_does_not_become_zero() {
     let ri = FakeRouterInfoControl::new();
     let state = test_state(ri);
     let req = test_request(serde_json::json!({"i2p.router.tunnels.configured": true}));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     // Must fail, not return 0
     assert!(resp.get("error").is_some());
     assert!(resp.get("result").is_none());
@@ -273,7 +284,8 @@ async fn peer_source_failure_distinct_from_peer_not_found() {
     let req = test_request(serde_json::json!({
         "i2p.router.peers.routerInfo": "nonexistent-peer-id"
     }));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     // Source is available (Ok), peer is absent (None) — success with null
     let result = resp["result"].as_object().unwrap();
     assert!(result.get("i2p.router.peers.routerInfo").is_some());
@@ -283,17 +295,18 @@ async fn peer_source_failure_distinct_from_peer_not_found() {
 #[tokio::test]
 async fn peer_router_info_available_with_peer() {
     let ri = FakeRouterInfoControl::new();
-    ri.insert_peer_ri("test-peer-123".to_string(), "base64-router-info".to_string());
+    ri.insert_peer_ri(
+        "test-peer-123".to_string(),
+        "base64-router-info".to_string(),
+    );
     let state = test_state(ri);
     let req = test_request(serde_json::json!({
         "i2p.router.peers.routerInfo": "test-peer-123"
     }));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     let result = resp["result"].as_object().unwrap();
-    assert_eq!(
-        result["i2p.router.peers.routerInfo"],
-        "base64-router-info"
-    );
+    assert_eq!(result["i2p.router.peers.routerInfo"], "base64-router-info");
 }
 
 #[tokio::test]
@@ -303,7 +316,8 @@ async fn unavailable_unrequested_group_does_not_affect_success() {
     // netdb is unavailable but not requested
     let state = test_state(ri);
     let req = test_request(serde_json::json!({"i2p.router.version": true}));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     let result = resp["result"].as_object().unwrap();
     assert_eq!(result["i2p.router.version"], "Test");
 }
@@ -320,7 +334,8 @@ async fn no_partial_result_when_netdb_fails() {
         "i2p.router.version": true,
         "i2p.router.netdb.active": true,
     }));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     // netdb failure aborts the entire request — no partial result with version
     assert!(resp.get("error").is_some());
     assert!(resp.get("result").is_none());
@@ -336,7 +351,8 @@ async fn no_partial_result_when_peer_group_fails() {
         "i2p.router.version": true,
         "i2p.router.peers.knownCount": true,
     }));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     assert!(resp.get("error").is_some());
     assert!(resp.get("result").is_none());
 }
@@ -356,7 +372,8 @@ async fn no_partial_result_when_tunnel_unsupported_requested() {
         "i2p.router.version": true,
         "i2p.router.tunnels.exploratoryIn": true,
     }));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     assert!(resp.get("error").is_some());
     assert!(resp.get("result").is_none());
 }
@@ -370,7 +387,8 @@ async fn success_contains_only_requested_keys() {
     ri.set_uptime_ms(5000);
     let state = test_state(ri);
     let req = test_request(serde_json::json!({"i2p.router.version": true}));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     let result = resp["result"].as_object().unwrap();
     assert_eq!(result.len(), 1);
     assert!(result.contains_key("i2p.router.version"));
@@ -383,7 +401,8 @@ async fn failure_contains_error_not_result() {
     let ri = FakeRouterInfoControl::new();
     let state = test_state(ri);
     let req = test_request(serde_json::json!({"i2p.router.netdb.active": true}));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     assert!(resp.get("error").is_some());
     assert!(resp.get("error").unwrap().is_object());
     assert!(resp.get("result").is_none());
@@ -395,7 +414,8 @@ async fn no_implementation_specific_status_field() {
     ri.set_version("Test".to_string());
     let state = test_state(ri);
     let req = test_request(serde_json::json!({"i2p.router.version": true}));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     let obj = resp.as_object().unwrap();
     // Only jsonrpc, id, result should be present on success
     assert!(obj.contains_key("jsonrpc"));
@@ -409,12 +429,11 @@ async fn no_implementation_specific_status_field() {
 #[tokio::test]
 async fn clock_skew_none_serializes_as_null() {
     let ri = FakeRouterInfoControl::new();
-    ri.set_clock_skew(ClockSkew {
-        skew_seconds: None,
-    });
+    ri.set_clock_skew(ClockSkew { skew_seconds: None });
     let state = test_state(ri);
     let req = test_request(serde_json::json!({"i2p.router.clock.skew": true}));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     let result = resp["result"].as_object().unwrap();
     assert!(result["i2p.router.clock.skew"].is_null());
 }
@@ -427,7 +446,8 @@ async fn clock_skew_zero_serializes_as_integer() {
     });
     let state = test_state(ri);
     let req = test_request(serde_json::json!({"i2p.router.clock.skew": true}));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     let result = resp["result"].as_object().unwrap();
     assert_eq!(result["i2p.router.clock.skew"], 0);
 }
@@ -440,7 +460,8 @@ async fn clock_skew_positive_serializes_as_integer() {
     });
     let state = test_state(ri);
     let req = test_request(serde_json::json!({"i2p.router.clock.skew": true}));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     let result = resp["result"].as_object().unwrap();
     assert_eq!(result["i2p.router.clock.skew"], 42);
 }
@@ -450,7 +471,8 @@ async fn error_messages_are_sanitized() {
     let ri = FakeRouterInfoControl::new();
     let state = test_state(ri);
     let req = test_request(serde_json::json!({"i2p.router.netdb.active": true}));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     let msg = resp["error"]["message"].as_str().unwrap();
     // Error messages must not contain file paths, backtraces, or secrets
     assert!(!msg.contains("/"));
@@ -509,9 +531,7 @@ async fn udp_group_queried_once_for_multiple_selectors() {
         ) -> Result<emissary_cli::i2pcontrol::router_info::TransitBytes, InspectionError> {
             self.inner.transit_bytes().await
         }
-        async fn tunnel_build_stats(
-            &self,
-        ) -> Result<TunnelBuildStats, InspectionError> {
+        async fn tunnel_build_stats(&self) -> Result<TunnelBuildStats, InspectionError> {
             self.inner.tunnel_build_stats().await
         }
         async fn tunnel_summary(&self) -> Result<TunnelSummary, InspectionError> {
@@ -519,8 +539,7 @@ async fn udp_group_queried_once_for_multiple_selectors() {
         }
         async fn netdb_snapshot(
             &self,
-        ) -> Result<emissary_cli::i2pcontrol::router_info::NetDbSnapshot, InspectionError>
-        {
+        ) -> Result<emissary_cli::i2pcontrol::router_info::NetDbSnapshot, InspectionError> {
             self.inner.netdb_snapshot().await
         }
         async fn udp_snapshot(&self) -> Result<UdpSnapshot, InspectionError> {
@@ -529,8 +548,7 @@ async fn udp_group_queried_once_for_multiple_selectors() {
         }
         async fn tcp_snapshot(
             &self,
-        ) -> Result<emissary_cli::i2pcontrol::router_info::TcpSnapshot, InspectionError>
-        {
+        ) -> Result<emissary_cli::i2pcontrol::router_info::TcpSnapshot, InspectionError> {
             self.inner.tcp_snapshot().await
         }
         async fn known_peers(&self) -> Result<Vec<PeerIdentity>, InspectionError> {
@@ -539,10 +557,7 @@ async fn udp_group_queried_once_for_multiple_selectors() {
         async fn active_peers(&self) -> Result<Vec<PeerIdentity>, InspectionError> {
             self.inner.active_peers().await
         }
-        async fn peer_router_info(
-            &self,
-            peer_id: &str,
-        ) -> Result<Option<String>, InspectionError> {
+        async fn peer_router_info(&self, peer_id: &str) -> Result<Option<String>, InspectionError> {
             self.inner.peer_router_info(peer_id).await
         }
         async fn banned_peers(&self) -> Result<Vec<BannedPeer>, InspectionError> {
@@ -617,7 +632,8 @@ async fn unsupported_tunnel_selector_returns_error() {
     let state = test_state(ri);
     // exploratoryIn is unsupported
     let req = test_request(serde_json::json!({"i2p.router.tunnels.exploratoryIn": true}));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     assert!(resp.get("error").is_some());
     assert!(resp.get("result").is_none());
 }
@@ -631,7 +647,8 @@ async fn unsupported_udp_peer_stats_returns_error() {
     });
     let state = test_state(ri);
     let req = test_request(serde_json::json!({"i2p.router.udp.peerStats": true}));
-    let resp = emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
+    let resp =
+        emissary_cli::i2pcontrol::router_info_handler::handle_router_info(&state, &req).await;
     assert!(resp.get("error").is_some());
     assert!(resp.get("result").is_none());
 }

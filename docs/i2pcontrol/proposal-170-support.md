@@ -1,6 +1,6 @@
 # Proposal 170 Support Status
 
-Status: M010 implemented (bounded core router inspection)
+Status: M011 implemented (ClientServicesInfo live state)
 
 > **Note:** Strict Proposal 170 closure is reopened until M008–M012 close. Prior M005–M007
 > closure records are not accepted as current strict closure after the corrective review.
@@ -105,21 +105,22 @@ Real backend implementations will be added in future milestones.
 
 ## ClientServicesInfo selectors
 
-Implemented in M006. The `ClientServicesInfo` method accepts a `Selector` map
+Implemented in M006, corrected in M011 for live state truthfulness.
+The `ClientServicesInfo` method accepts a `Selector` map
 with boolean values for the six exact Proposal 170 keys:
 
-| Selector | Response shape | Source |
-|---|---|---|
-| `I2PTunnel` | `{client: {…}, server: {…}}` | `ProductionTunnelManagerControl::list()` |
-| `HTTPProxy` | `{enabled, address, port}` | HTTP proxy `Listening`/`Stopped` |
-| `SOCKS` | `{enabled, address, port}` | SOCKS proxy `Listening`/`Stopped` |
-| `SAM` | `{enabled, sessions}` | core `SamServer::tcp_local_address()` |
-| `BOB` | `false` (boolean) | exact Proposal 170 value (not implemented) |
-| `I2CP` | `{enabled}` | core `ProtocolAddressInfo::i2cp` |
+| Selector | Response shape | Source | M011 status |
+|---|---|---|---|
+| `I2PTunnel` | `{client: {…}, server: {…}}` | `TunnelManagerControl::list()` (live query) | Live query at request time |
+| `HTTPProxy` | `{enabled, address, port}` | HTTP proxy `Listening`/`Stopped` | `enabled: true` only after bind |
+| `SOCKS` | `{enabled, address, port}` | SOCKS proxy `Listening`/`Stopped` | `enabled: true` only after bind |
+| `SAM` | `{enabled, sessions}` | core `SamServer::tcp_local_address()` | Sessions: known limitation (core) |
+| `BOB` | `false` (boolean) | exact Proposal 170 value (not implemented) | Unchanged |
+| `I2CP` | `{enabled}` | core `ProtocolAddressInfo::i2cp` | `enabled: true` only while bound |
 
 See [`docs/i2pcontrol/client-services.md`](client-services.md) for the
-full method documentation, including configured-vs-listening semantics
-and integration evidence.
+full method documentation, including live query semantics,
+configured-vs-listening semantics, and integration evidence.
 
 ## Security
 
@@ -149,3 +150,4 @@ and integration evidence.
 | M008 | Closed | Production composition and durable-state integrity |
 | M009 | Closed | RouterInfo availability and truthfulness |
 | M010 | Implemented | Bounded core router inspection |
+| M011 | Implemented | ClientServicesInfo live state (I2PTunnel live query, listener truthfulness) |

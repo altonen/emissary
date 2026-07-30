@@ -26,20 +26,19 @@ Canonical direction:
 
 | Subsystem | Status | Roadmap | Current milestone | Dependencies or blockers |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | active corrective work | `plans/subsystems/i2pcontrol-proposal-170-roadmap.md` | M010 ready | Prior M005–M007 strict closure invalidated by production truthfulness, shared-state, live-service, TLS, resource-evidence, and review-independence defects |
+| I2PControl Proposal 170 | active corrective work | `plans/subsystems/i2pcontrol-proposal-170-roadmap.md` | M012 ready | Prior M005–M007 strict closure invalidated by production truthfulness, shared-state, live-service, TLS, resource-evidence, and review-independence defects |
 
 ## Dependency-ready implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | 011 — ClientServicesInfo live state | ready | `plans/implementation/i2pcontrol-proposal-170/011-client-services-live-state.md` | M010 closed |
 | I2PControl Proposal 170 | 012 — real TLS and request resource hardening | ready | `plans/implementation/i2pcontrol-proposal-170/012-real-tls-and-request-resource-hardening.md` | M008/M009/M010 interfaces stable |
 
 ## Active closure work
 
 | Subsystem | Milestone | Status | Implementation plan | Evidence commit | Closure record |
 |---|---|---|---|---|---|
-| (none) | — | — | — | — | — |
+| I2PControl Proposal 170 | 011 — ClientServicesInfo live state | closing | `plans/implementation/i2pcontrol-proposal-170/011-client-services-live-state.md` | `8b186b0` | `plans/closure/i2pcontrol-proposal-170/011-closure.md` |
 
 ## Blocked implementation plans
 
@@ -47,7 +46,6 @@ These plans are written for full-workstream handoff but MUST NOT execute until t
 
 | Subsystem | Milestone | Status | Implementation plan | Blocker |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | 011 — ClientServicesInfo live state | ready | `plans/implementation/i2pcontrol-proposal-170/011-client-services-live-state.md` | M010 closed; may activate |
 | I2PControl Proposal 170 | 012 — real TLS and request resource hardening | ready | `plans/implementation/i2pcontrol-proposal-170/012-real-tls-and-request-resource-hardening.md` | M008/M009/M010 interfaces stable; may activate |
 | I2PControl Proposal 170 | 013 — production conformance and independent reclosure | blocked | `plans/implementation/i2pcontrol-proposal-170/013-production-conformance-and-independent-reclosure.md` | M011 and M012 strict closure; M001–M004 revalidation; reviewer independence |
 
@@ -67,13 +65,13 @@ The following work remains intentionally outside the active Proposal 170 correct
 
 | Finding | Severity at reopening | Owning milestone |
 |---|---|---|
-| Production store failures fall back to fake controls | high | M008 |
-| RouterInfo and handlers do not share one loaded tunnel control | high | M008 |
-| Query failures are suppressed into empty/absent/zero state | high | M008/M009 |
-| RouterInfo hard-coded/default production snapshots | high | M009/M010 |
-| Missing bounded NetDB/peer/transport/tunnel inspection | medium/high by selector | M010 |
-| ClientServices I2PTunnel inventory stale until restart | medium | M011 |
-| SAM sessions always empty and proxy starting state can appear enabled | medium | M011 |
+| Production store failures fall back to fake controls | high | M008 (resolved) |
+| RouterInfo and handlers do not share one loaded tunnel control | high | M008 (resolved) |
+| Query failures are suppressed into empty/absent/zero state | high | M008/M009 (resolved) |
+| RouterInfo hard-coded/default production snapshots | high | M009/M010 (resolved) |
+| Missing bounded NetDB/peer/transport/tunnel inspection | medium/high by selector | M010 (resolved) |
+| ClientServices I2PTunnel inventory stale until restart | medium | M011 (resolved) |
+| SAM sessions always empty and proxy starting state can appear enabled | medium | M011 (SAM: known core limitation; proxy state: resolved) |
 | TLS acceptor discarded; raw listener served as plaintext | high | M012 |
 | Body/resource limits enforced after buffering or not proven | high | M012 |
 | Tautological adversarial tests counted as evidence | high evidence defect | M012/M013 |
@@ -85,6 +83,7 @@ These rows preserve traceability. M005–M007 historical closure records are not
 
 | Subsystem | Milestone | Historical closure record | Historical reviewed commit | Current follow-up |
 |---|---|---|---|---|
+| I2PControl Proposal 170 | 011 — ClientServicesInfo live state | `plans/closure/i2pcontrol-proposal-170/011-closure.md` | `8b186b0` | Strictly closed; M013 partial dependency satisfied |
 | I2PControl Proposal 170 | 010 — bounded core router inspection | `plans/closure/i2pcontrol-proposal-170/010-closure.md` | HEAD | Strictly closed; M011/M012 unblocked |
 | I2PControl Proposal 170 | 009 — RouterInfo availability and truthfulness | `plans/closure/i2pcontrol-proposal-170/009-closure.md` | `c9b4f4d` | Strictly closed; M010 activated |
 | I2PControl Proposal 170 | 008 — production composition and durable-state integrity | `plans/closure/i2pcontrol-proposal-170/008-closure.md` | `b35d9ad` baseline | Strictly closed; M009 activated |

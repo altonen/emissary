@@ -622,3 +622,94 @@ fn no_hardcoded_udp_active_true_in_production() {
         }
     }
 }
+
+// --- M011 static guards ---
+
+/// Guard: no startup-only I2PTunnel population in main.rs.
+///
+/// Catches the defect where I2PTunnel inventory is populated once at
+/// startup and never updated after TunnelManager mutations. The handler
+/// now queries TunnelManagerControl at request time.
+#[test]
+fn no_startup_only_i2ptunnel_population() {
+    let src = read_source("src/main.rs");
+    let non_test = src.split("#[cfg(test)]").next().unwrap_or(&src);
+    assert!(
+        !non_test.contains("observe_i2ptunnel_inventory"),
+        "main.rs must not contain startup-only I2PTunnel inventory population; the handler queries TunnelManagerControl at request time"
+    );
+}
+
+/// Guard: no unconditional SAM sessions placeholder in production handler.
+///
+/// Catches the defect where resolve_sam always returns "sessions": {}
+/// without checking the observer source. The SAM session snapshot
+/// requires a bounded accessor at the canonical SamServer.
+#[test]
+fn no_unconditional_sam_sessions_placeholder() {
+    let src = read_source("src/i2pcontrol/client_services.rs");
+    let non_test = src.split("#[cfg(test)]").next().unwrap_or(&src);
+    // The SAM resolver should not have an unconditional "sessions": {}
+    // that ignores the session_count. Check that session_count is checked.
+    if let Some(sam_start) = non_test.find("fn resolve_sam") {
+        if let Some(sam_end) = non_test[sam_start..].find("\nfn ") {
+            let sam_body = &non_test[sam_start..sam_start + sam_end];
+            // The function should check session_count against MAX_SAM_SESSIONS
+            assert!(
+                sam_body.contains("MAX_SAM_SESSIONS"),
+                "resolve_sam must check session count against MAX_SAM_SESSIONS bound"
+            );
+        }
+    }
+}
+
+/// Guard: HTTP/SOCKS Configured/Starting states must not report enabled.
+///
+/// Catches the defect where Configured or Starting proxy states report
+/// enabled: true before a listener has actually bound.
+#[test]
+fn configured_starting_proxy_not_reported_as_enabled() {
+    let src = read_source("src/i2pcontrol/client_services.rs");
+    let non_test = src.split("#[cfg(test)]").next().unwrap_or(&src);
+    // Both resolve_httpproxy and resolve_socks should map Configured/Starting
+    // to "enabled": false, not "enabled": entry.metadata.enabled.
+    for fn_name in ["resolve_httpproxy", "resolve_socks"] {
+        if let Some(fn_start) = non_test.find(&format!("fn {fn_name}")) {
+            if let Some(fn_end) = non_test[fn_start..].find("\nfn ") {
+                let fn_body = &non_test[fn_start..fn_start + fn_end];
+                // In the Configured/Starting branch, enabled should be literal false
+                if fn_body.contains("Configured") && fn_body.contains("Starting") {
+                    assert!(
+                        !fn_body.contains("entry.metadata.enabled"),
+                        "{fn_name} must not use entry.metadata.enabled for Configured/Starting; enabled must be false until Listening"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Guard: handler queries TunnelManagerControl for I2PTunnel, not registry.
+///
+/// Catches the defect where assemble_response reads I2PTunnel from the
+/// service registry snapshot instead of querying the live tunnel manager.
+#[test]
+fn handler_uses_live_tunnel_manager_for_i2ptunnel() {
+    let src = read_source("src/i2pcontrol/client_services.rs");
+    let non_test = src.split("#[cfg(test)]").next().unwrap_or(&src);
+    // assemble_response should accept a tunnel_manager parameter
+    assert!(
+        non_test.contains("tunnel_manager: &dyn TunnelManagerControl"),
+        "assemble_response must accept a tunnel_manager parameter for live I2PTunnel queries"
+    );
+    // resolve_i2ptunnel_live should query tunnel_manager.list()
+    assert!(
+        non_test.contains("resolve_i2ptunnel_live"),
+        "Handler must use resolve_i2ptunnel_live for live tunnel queries"
+    );
+    // The old resolve_i2ptunnel (registry-based) should not exist
+    assert!(
+        !non_test.contains("fn resolve_i2ptunnel("),
+        "Old registry-based resolve_i2ptunnel must be removed"
+    );
+}

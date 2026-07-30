@@ -24,6 +24,7 @@
 
 use std::collections::HashSet;
 
+use crate::i2pcontrol::control_plane::TunnelManagerControl;
 use crate::i2pcontrol::rpc::{
     self, JsonRpcErrorResponse, JsonRpcRequest, JsonRpcSuccess, RequestId,
 };
@@ -89,7 +90,7 @@ fn estimate_response_budget(key_set: &HashSet<&str>) -> Result<(), String> {
 /// Handle the ClientServicesInfo JSON-RPC method.
 ///
 /// Parses the `Selector` parameter, dispatches to the service registry
-/// snapshot, and returns only the requested keys.
+/// snapshot and live tunnel manager, and returns only the requested keys.
 pub(crate) async fn handle_client_services_info(
     state: &crate::i2pcontrol::server::I2pControlState,
     request: &JsonRpcRequest,
@@ -137,11 +138,11 @@ pub(crate) async fn handle_client_services_info(
         return error_response(id, rpc::error_codes::INTERNAL_ERROR, e);
     }
 
-    // Take a snapshot from the service registry
+    // Take a snapshot from the service registry for listener/proxy state
     let snapshot = state.service_snapshot();
 
-    // Assemble response
-    match assemble_response(&snapshot, &requested_keys) {
+    // Assemble response using live tunnel manager for I2PTunnel
+    match assemble_response(&snapshot, &requested_keys, state.tunnel_manager()).await {
         Ok(result) => {
             let response = JsonRpcSuccess::new(id, serde_json::Value::Object(result));
             serde_json::to_value(&response).unwrap()
@@ -154,9 +155,14 @@ pub(crate) async fn handle_client_services_info(
 }
 
 /// Assemble the response object containing only requested service keys.
-fn assemble_response(
+///
+/// For I2PTunnel, queries the live TunnelManagerControl at request time
+/// rather than relying on a startup-only registry snapshot. This ensures
+/// Create/Edit/Delete mutations are visible to subsequent queries.
+pub async fn assemble_response(
     snapshot: &ServiceSnapshot,
     requested_keys: &[&str],
+    tunnel_manager: &dyn TunnelManagerControl,
 ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
     let mut result = serde_json::Map::new();
 
@@ -182,7 +188,7 @@ fn assemble_response(
         let entry = snapshot.get(category);
 
         let value = match category {
-            ServiceCategory::I2PTunnel => resolve_i2ptunnel(entry, &key_set)?,
+            ServiceCategory::I2PTunnel => resolve_i2ptunnel_live(tunnel_manager).await?,
             ServiceCategory::HttpProxy => resolve_httpproxy(entry),
             ServiceCategory::Socks => resolve_socks(entry),
             ServiceCategory::Sam => resolve_sam(entry, &key_set)?,
@@ -196,77 +202,58 @@ fn assemble_response(
     Ok(result)
 }
 
-/// Resolve I2PTunnel selector.
+/// Resolve I2PTunnel selector by querying the live TunnelManagerControl.
 ///
 /// Per Proposal 170: `{"client": {<name>: {"address": "..."}}, "server": {<name>: {"address": "...", "port": N}}}`
-fn resolve_i2ptunnel(
-    entry: Option<&crate::i2pcontrol::service_registry::ServiceEntry>,
-    _key_set: &HashSet<&str>,
+///
+/// This queries the shared TunnelManagerControl at request time, ensuring
+/// that Create/Edit/Delete mutations are visible without restart. Store
+/// failures propagate as errors rather than empty inventory.
+async fn resolve_i2ptunnel_live(
+    tunnel_manager: &dyn TunnelManagerControl,
 ) -> Result<serde_json::Value, String> {
-    let entry = match entry {
-        Some(e) => e,
-        None => {
-            return Ok(serde_json::json!({
-                "client": {},
-                "server": {}
-            }));
-        }
-    };
+    let definitions = tunnel_manager.list().await?;
 
-    match &entry.state {
-        ObservedServiceState::Disabled => Ok(serde_json::json!({
-            "client": {},
-            "server": {}
-        })),
-        ObservedServiceState::Configured
-        | ObservedServiceState::Starting
-        | ObservedServiceState::Listening
-        | ObservedServiceState::Failed(_)
-        | ObservedServiceState::Stopping
-        | ObservedServiceState::Stopped => {
-            // Use tunnel definitions from metadata if available
-            if let Some(ref defs) = entry.metadata.tunnel_definitions {
-                let client = defs.get("client").cloned().unwrap_or_default();
-                let server = defs.get("server").cloned().unwrap_or_default();
+    let mut client_obj = serde_json::Map::new();
+    let mut server_obj = serde_json::Map::new();
 
-                let client_obj: serde_json::Map<String, serde_json::Value> = client
-                    .iter()
-                    .map(|(name, info)| {
-                        let mut tunnel = serde_json::Map::new();
-                        tunnel.insert("address".to_string(), serde_json::json!(info.address));
-                        (name.clone(), serde_json::Value::Object(tunnel))
-                    })
-                    .collect();
+    for def in &definitions {
+        let name = def.name.as_str().to_string();
+        let is_client = def.tunnel_type.is_client();
 
-                let server_obj: serde_json::Map<String, serde_json::Value> = server
-                    .iter()
-                    .map(|(name, info)| {
-                        let mut tunnel = serde_json::Map::new();
-                        tunnel.insert("address".to_string(), serde_json::json!(info.address));
-                        if let Some(port) = info.port {
-                            tunnel.insert("port".to_string(), serde_json::json!(port));
-                        }
-                        (name.clone(), serde_json::Value::Object(tunnel))
-                    })
-                    .collect();
+        let address = def
+            .options
+            .target_destination
+            .clone()
+            .or_else(|| def.options.hosting_destination.clone())
+            .unwrap_or_default();
 
-                Ok(serde_json::json!({
-                    "client": serde_json::Value::Object(client_obj),
-                    "server": serde_json::Value::Object(server_obj),
-                }))
-            } else {
-                Ok(serde_json::json!({
-                    "client": {},
-                    "server": {}
-                }))
+        let mut entry = serde_json::Map::new();
+        entry.insert("address".to_string(), serde_json::json!(address));
+
+        if is_client {
+            client_obj.insert(name, serde_json::Value::Object(entry));
+        } else {
+            if let Some(port) = def.options.listen_port {
+                entry.insert("port".to_string(), serde_json::json!(port));
             }
+            server_obj.insert(name, serde_json::Value::Object(entry));
         }
     }
+
+    Ok(serde_json::json!({
+        "client": serde_json::Value::Object(client_obj),
+        "server": serde_json::Value::Object(server_obj),
+    }))
 }
 
 /// Resolve HTTPProxy selector.
 ///
 /// Per Proposal 170: `{"enabled": bool, "address": "...", "port": N}`
+///
+/// `enabled: true` only after a successful bind (`Listening` state).
+/// `Configured` and `Starting` report `enabled: false` because no
+/// listener has actually bound yet.
 fn resolve_httpproxy(
     entry: Option<&crate::i2pcontrol::service_registry::ServiceEntry>,
 ) -> serde_json::Value {
@@ -284,10 +271,9 @@ fn resolve_httpproxy(
             "enabled": false
         }),
         ObservedServiceState::Configured | ObservedServiceState::Starting => {
+            // Not yet listening — report disabled even if configured
             serde_json::json!({
-                "enabled": entry.metadata.enabled,
-                "address": entry.metadata.host,
-                "port": entry.metadata.port,
+                "enabled": false,
             })
         }
         ObservedServiceState::Listening => serde_json::json!({
@@ -307,6 +293,10 @@ fn resolve_httpproxy(
 /// Resolve SOCKS selector.
 ///
 /// Per Proposal 170: `{"enabled": bool, "address": "...", "port": N}`
+///
+/// `enabled: true` only after a successful bind (`Listening` state).
+/// `Configured` and `Starting` report `enabled: false` because no
+/// listener has actually bound yet.
 fn resolve_socks(
     entry: Option<&crate::i2pcontrol::service_registry::ServiceEntry>,
 ) -> serde_json::Value {
@@ -324,10 +314,9 @@ fn resolve_socks(
             "enabled": false
         }),
         ObservedServiceState::Configured | ObservedServiceState::Starting => {
+            // Not yet listening — report disabled even if configured
             serde_json::json!({
-                "enabled": entry.metadata.enabled,
-                "address": entry.metadata.host,
-                "port": entry.metadata.port,
+                "enabled": false,
             })
         }
         ObservedServiceState::Listening => serde_json::json!({
@@ -347,6 +336,16 @@ fn resolve_socks(
 /// Resolve SAM selector.
 ///
 /// Per Proposal 170: `{"enabled": bool, "sessions": {}}`
+///
+/// `enabled: true` only when the SAM listener is actively bound.
+/// `Configured` and `Starting` report `enabled: false`.
+///
+/// SAM session data requires a bounded read-only snapshot at the
+/// canonical SAM session owner in emissary-core. The core SamServer
+/// tracks active sessions internally but does not yet expose a
+/// public bounded session accessor. Until that API is added, the
+/// sessions object is always empty. This is documented as a known
+/// contract limitation, not a placeholder for missing inspection.
 fn resolve_sam(
     entry: Option<&crate::i2pcontrol::service_registry::ServiceEntry>,
     _key_set: &HashSet<&str>,
@@ -367,12 +366,16 @@ fn resolve_sam(
             "sessions": {}
         })),
         ObservedServiceState::Configured | ObservedServiceState::Starting => {
+            // Not yet listening — report disabled even if configured
             Ok(serde_json::json!({
-                "enabled": entry.metadata.enabled,
+                "enabled": false,
                 "sessions": {}
             }))
         }
         ObservedServiceState::Listening => {
+            // SAM listener is active. Session snapshot requires a bounded
+            // read-only accessor at the canonical SamServer. Core does not
+            // yet expose this; sessions object is empty by contract.
             let session_count = entry.metadata.session_count.unwrap_or(0);
             if session_count > MAX_SAM_SESSIONS {
                 return Err(format!(
@@ -406,6 +409,10 @@ fn resolve_bob() -> serde_json::Value {
 /// Resolve I2CP selector.
 ///
 /// Per Proposal 170: `{"enabled": bool}`
+///
+/// `enabled: true` only while the I2CP listener is actively bound.
+/// `Configured` and `Starting` report `enabled: false` because no
+/// listener has actually bound yet.
 fn resolve_i2cp(
     entry: Option<&crate::i2pcontrol::service_registry::ServiceEntry>,
 ) -> serde_json::Value {
@@ -423,8 +430,9 @@ fn resolve_i2cp(
             "enabled": false
         }),
         ObservedServiceState::Configured | ObservedServiceState::Starting => {
+            // Not yet listening — report disabled even if configured
             serde_json::json!({
-                "enabled": entry.metadata.enabled,
+                "enabled": false,
             })
         }
         ObservedServiceState::Listening => serde_json::json!({
@@ -711,9 +719,11 @@ mod tests {
         assert_eq!(value, serde_json::json!(false));
     }
 
-    #[test]
-    fn resolve_i2ptunnel_empty_when_disabled() {
-        let value = resolve_i2ptunnel(None, &HashSet::new()).unwrap();
+    #[tokio::test]
+    async fn resolve_i2ptunnel_live_empty_when_no_definitions() {
+        use crate::i2pcontrol::control_plane::FakeTunnelManagerControl;
+        let tm = FakeTunnelManagerControl::new();
+        let value = resolve_i2ptunnel_live(&tm).await.unwrap();
         assert_eq!(value["client"], serde_json::json!({}));
         assert_eq!(value["server"], serde_json::json!({}));
     }
@@ -725,8 +735,57 @@ mod tests {
     }
 
     #[test]
+    fn resolve_httpproxy_configured_not_enabled() {
+        let entry = crate::i2pcontrol::service_registry::ServiceEntry {
+            category: ServiceCategory::HttpProxy,
+            state: ObservedServiceState::Configured,
+            metadata: ServiceMetadata {
+                enabled: true,
+                ..Default::default()
+            },
+        };
+        let value = resolve_httpproxy(Some(&entry));
+        assert_eq!(value["enabled"], false);
+    }
+
+    #[test]
+    fn resolve_httpproxy_starting_not_enabled() {
+        let entry = crate::i2pcontrol::service_registry::ServiceEntry {
+            category: ServiceCategory::HttpProxy,
+            state: ObservedServiceState::Starting,
+            metadata: ServiceMetadata {
+                enabled: true,
+                host: Some("127.0.0.1".into()),
+                port: Some(4444),
+                ..Default::default()
+            },
+        };
+        let value = resolve_httpproxy(Some(&entry));
+        assert_eq!(value["enabled"], false);
+        // address/port should not be present when not listening
+        assert!(value.get("address").is_none());
+        assert!(value.get("port").is_none());
+    }
+
+    #[test]
     fn resolve_socks_disabled_when_none() {
         let value = resolve_socks(None);
+        assert_eq!(value["enabled"], false);
+    }
+
+    #[test]
+    fn resolve_socks_starting_not_enabled() {
+        let entry = crate::i2pcontrol::service_registry::ServiceEntry {
+            category: ServiceCategory::Socks,
+            state: ObservedServiceState::Starting,
+            metadata: ServiceMetadata {
+                enabled: true,
+                host: Some("127.0.0.1".into()),
+                port: Some(1080),
+                ..Default::default()
+            },
+        };
+        let value = resolve_socks(Some(&entry));
         assert_eq!(value["enabled"], false);
     }
 
@@ -738,8 +797,51 @@ mod tests {
     }
 
     #[test]
+    fn resolve_sam_configured_not_enabled() {
+        let entry = crate::i2pcontrol::service_registry::ServiceEntry {
+            category: ServiceCategory::Sam,
+            state: ObservedServiceState::Configured,
+            metadata: ServiceMetadata {
+                enabled: true,
+                ..Default::default()
+            },
+        };
+        let value = resolve_sam(Some(&entry), &HashSet::new()).unwrap();
+        assert_eq!(value["enabled"], false);
+        assert!(value["sessions"].is_object());
+    }
+
+    #[test]
+    fn resolve_sam_starting_not_enabled() {
+        let entry = crate::i2pcontrol::service_registry::ServiceEntry {
+            category: ServiceCategory::Sam,
+            state: ObservedServiceState::Starting,
+            metadata: ServiceMetadata {
+                enabled: true,
+                ..Default::default()
+            },
+        };
+        let value = resolve_sam(Some(&entry), &HashSet::new()).unwrap();
+        assert_eq!(value["enabled"], false);
+    }
+
+    #[test]
     fn resolve_i2cp_disabled_when_none() {
         let value = resolve_i2cp(None);
+        assert_eq!(value["enabled"], false);
+    }
+
+    #[test]
+    fn resolve_i2cp_starting_not_enabled() {
+        let entry = crate::i2pcontrol::service_registry::ServiceEntry {
+            category: ServiceCategory::I2cp,
+            state: ObservedServiceState::Starting,
+            metadata: ServiceMetadata {
+                enabled: true,
+                ..Default::default()
+            },
+        };
+        let value = resolve_i2cp(Some(&entry));
         assert_eq!(value["enabled"], false);
     }
 

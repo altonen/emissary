@@ -28,9 +28,6 @@ use crate::{
     tunnel::{client::ClientTunnelManager, server::ServerTunnelManager},
 };
 
-#[cfg(feature = "i2pcontrol")]
-use crate::i2pcontrol::control_plane::TunnelManagerControl;
-
 use anyhow::anyhow;
 use clap::Parser;
 use emissary_core::{
@@ -477,43 +474,6 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
 
                 let instance =
                     i2pcontrol::server::init_server(&server_config, &base_path, ctx).await?;
-
-                // Populate the I2PTunnel entry from the production tunnel
-                // manager now that it has been loaded by init_server. The
-                // handler reads from the shared registry, so this single
-                // observation becomes visible immediately.
-                let state_clone = instance.state_clone();
-                let registry_for_tunnel_population = state_clone.service_registry_clone();
-                let tunnel_defs = state_clone.tunnel_list().await.unwrap_or_default();
-                let inv = tunnel_defs
-                    .into_iter()
-                    .map(|def| {
-                        let kind = if def.tunnel_type.is_client() {
-                            "client"
-                        } else {
-                            "server"
-                        };
-                        let name = def.name.as_str().to_string();
-                        let address = def
-                            .options
-                            .target_destination
-                            .clone()
-                            .or_else(|| def.options.hosting_destination.clone())
-                            .unwrap_or_default();
-                        let port = if def.tunnel_type.is_server() {
-                            def.options.listen_port
-                        } else {
-                            def.options.target_port
-                        };
-                        i2pcontrol::observers::I2PTunnelInventoryEntry::new(
-                            kind, name, address, port,
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                i2pcontrol::observers::observe_i2ptunnel_inventory(
-                    &registry_for_tunnel_population,
-                    inv,
-                );
 
                 let shutdown_tx = i2pcontrol_shutdown_tx.clone();
                 tokio::spawn(async move {

@@ -610,19 +610,25 @@ impl RouterInfoControl for ProductionRouterInfoControl {
                 group: InspectionGroup::TunnelSummary,
             }
         })?;
-        let (active_participating, exploratory_inbound, exploratory_outbound, client_inbound, client_outbound, queue_depth) =
-            if let Some(ref snap) = self.core_snapshot {
-                (
-                    snap.tunnels.active_participating,
-                    snap.tunnels.exploratory_inbound,
-                    snap.tunnels.exploratory_outbound,
-                    snap.tunnels.client_inbound,
-                    snap.tunnels.client_outbound,
-                    snap.tunnels.queue_depth,
-                )
-            } else {
-                (self.metrics.transit_tunnel_count(), 0, 0, 0, 0, 0)
-            };
+        let (
+            active_participating,
+            exploratory_inbound,
+            exploratory_outbound,
+            client_inbound,
+            client_outbound,
+            queue_depth,
+        ) = if let Some(ref snap) = self.core_snapshot {
+            (
+                snap.tunnels.active_participating,
+                snap.tunnels.exploratory_inbound,
+                snap.tunnels.exploratory_outbound,
+                snap.tunnels.client_inbound,
+                snap.tunnels.client_outbound,
+                snap.tunnels.queue_depth,
+            )
+        } else {
+            (self.metrics.transit_tunnel_count(), 0, 0, 0, 0, 0)
+        };
         Ok(TunnelSummary {
             active_participating,
             configured,
@@ -716,9 +722,7 @@ impl RouterInfoControl for ProductionRouterInfoControl {
 
     async fn peer_router_info(&self, peer_id: &str) -> Result<Option<String>, InspectionError> {
         if let Some(ref snap) = self.core_snapshot {
-            Ok(snap.netdb.peer_router_infos.get(peer_id).map(|bytes| {
-                base64_encode(bytes)
-            }))
+            Ok(snap.netdb.peer_router_infos.get(peer_id).map(|bytes| base64_encode(bytes)))
         } else {
             Err(InspectionError::Unavailable {
                 group: InspectionGroup::PeerLookup,
