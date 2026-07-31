@@ -336,18 +336,16 @@ fn resolve_socks(
 
 /// Resolve SAM selector.
 ///
-/// Per Proposal 170: `{"enabled": bool, "sessions": {}}`
+/// Per Proposal 170: `{"enabled": bool, "sessions": {}}`.
 ///
 /// `enabled: true` only when the SAM listener is actively bound.
 /// `Configured` and `Starting` report `enabled: false`.
 ///
-/// Protocol-compliant path: Proposal 170 requires the `sessions` field.
-/// The core `SamServer` tracks active sessions internally but does not
-/// yet expose a public bounded session accessor. Without a safe
-/// canonical read source, the sessions object is an empty object —
-/// the exact contract shape for "enabled but no observable sessions".
-/// This is not a placeholder for missing inspection; it is the
-/// protocol-compatible response when session state cannot be observed.
+/// The core `SamServer` tracks active sessions internally but does not yet
+/// expose a public bounded session accessor. The empty object below is the
+/// retained compatibility behavior while M016's contract/ownership blocker
+/// remains unresolved; it must not be interpreted as proof that no active
+/// sessions exist.
 fn resolve_sam(
     entry: Option<&crate::i2pcontrol::service_registry::ServiceEntry>,
     _key_set: &HashSet<&str>,
@@ -376,8 +374,8 @@ fn resolve_sam(
         }
         ObservedServiceState::Listening => {
             // SAM listener is active. Session snapshot requires a bounded
-            // read-only accessor at the canonical SamServer. Core does not
-            // yet expose this; sessions object is empty by contract.
+            // read-only accessor at the canonical SamServer, which is not
+            // currently available through an allowed ownership seam.
             let session_count = entry.metadata.session_count.unwrap_or(0);
             if session_count > MAX_SAM_SESSIONS {
                 return Err(format!(

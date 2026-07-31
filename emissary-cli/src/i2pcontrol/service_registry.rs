@@ -235,18 +235,26 @@ pub struct StaleGenerationError {
 /// Internal shared state for the service registry.
 #[allow(dead_code)]
 struct ServiceRegistryInner {
-    /// Current entries for each service category.
-    entries: RwLock<HashMap<ServiceCategory, ServiceEntry>>,
-    /// Per-category monotonic generation counters. Each category's counter
-    /// is incremented only when a new handle is allocated for that category,
-    /// so allocating a SOCKS handle does not invalidate an HTTP handle.
-    generations: RwLock<HashMap<ServiceCategory, u64>>,
+    /// Current entries and per-category generations in one atomic state.
+    ///
+    /// Keeping these maps under the same lock is important: generation
+    /// validation and entry replacement must be one transaction, otherwise a
+    /// newer handle can be allocated between the two operations and an old
+    /// producer can overwrite its state.
+    state: RwLock<ServiceRegistryState>,
+}
+
+struct ServiceRegistryState {
+    entries: HashMap<ServiceCategory, ServiceEntry>,
+    generations: HashMap<ServiceCategory, u64>,
 }
 
 impl std::fmt::Debug for ServiceRegistryInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let gens = self.generations.read().expect("service registry lock poisoned");
-        f.debug_struct("ServiceRegistryInner").field("generations", &*gens).finish()
+        let state = self.state.read().expect("service registry lock poisoned");
+        f.debug_struct("ServiceRegistryInner")
+            .field("generations", &state.generations)
+            .finish()
     }
 }
 
@@ -266,15 +274,17 @@ impl ServiceRegistryInner {
             generations.insert(cat, 1);
         }
         Self {
-            entries: RwLock::new(entries),
-            generations: RwLock::new(generations),
+            state: RwLock::new(ServiceRegistryState {
+                entries,
+                generations,
+            }),
         }
     }
 
     /// Allocate a new generation for a producer of the given category.
     fn next_generation(&self, category: ServiceCategory) -> u64 {
-        let mut gens = self.generations.write().expect("service registry lock poisoned");
-        let gen = gens.entry(category).or_insert(1);
+        let mut state = self.state.write().expect("service registry lock poisoned");
+        let gen = state.generations.entry(category).or_insert(1);
         *gen += 1;
         *gen
     }
@@ -287,11 +297,8 @@ impl ServiceRegistryInner {
         state: ObservedServiceState,
         metadata: ServiceMetadata,
     ) -> Result<(), StaleGenerationError> {
-        // Check if this handle's generation is still current for its category.
-        let current = {
-            let gens = self.generations.read().expect("service registry lock poisoned");
-            *gens.get(&category).unwrap_or(&1)
-        };
+        let mut registry_state = self.state.write().expect("service registry lock poisoned");
+        let current = *registry_state.generations.get(&category).unwrap_or(&1);
         if handle_generation < current {
             return Err(StaleGenerationError {
                 handle_generation,
@@ -299,8 +306,7 @@ impl ServiceRegistryInner {
             });
         }
 
-        let mut entries = self.entries.write().expect("service registry lock poisoned");
-        entries.insert(
+        registry_state.entries.insert(
             category,
             ServiceEntry {
                 category,
@@ -313,18 +319,11 @@ impl ServiceRegistryInner {
 
     /// Take an immutable snapshot.
     fn snapshot(&self) -> ServiceSnapshot {
-        let entries = self.entries.read().expect("service registry lock poisoned");
-        let generation = self
-            .generations
-            .read()
-            .expect("service registry lock poisoned")
-            .values()
-            .copied()
-            .max()
-            .unwrap_or(1);
+        let state = self.state.read().expect("service registry lock poisoned");
+        let generation = state.generations.values().copied().max().unwrap_or(1);
         let vec: Vec<ServiceEntry> = ServiceCategory::ALL
             .iter()
-            .filter_map(|&cat| entries.get(&cat).cloned())
+            .filter_map(|&cat| state.entries.get(&cat).cloned())
             .collect();
         ServiceSnapshot {
             entries: Arc::new(vec),
@@ -335,9 +334,9 @@ impl ServiceRegistryInner {
     /// Reset all entries to Disabled (for testing or shutdown).
     #[allow(dead_code)]
     fn reset(&self) {
-        let mut entries = self.entries.write().expect("service registry lock poisoned");
+        let mut state = self.state.write().expect("service registry lock poisoned");
         for &cat in ServiceCategory::ALL {
-            entries.insert(
+            state.entries.insert(
                 cat,
                 ServiceEntry {
                     category: cat,
@@ -397,8 +396,8 @@ impl ServiceRegistry {
     /// Get the current generation counter value for a category.
     #[allow(dead_code)]
     pub fn current_generation(&self, category: ServiceCategory) -> u64 {
-        let gens = self.inner.generations.read().expect("service registry lock poisoned");
-        *gens.get(&category).unwrap_or(&1)
+        let state = self.inner.state.read().expect("service registry lock poisoned");
+        *state.generations.get(&category).unwrap_or(&1)
     }
 }
 
@@ -468,6 +467,32 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.handle_generation < err.current_generation);
+    }
+
+    #[test]
+    fn stale_generation_cannot_overwrite_new_state() {
+        let reg = ServiceRegistry::new();
+        let old_handle = reg.allocate_handle(ServiceCategory::HttpProxy);
+        let new_handle = reg.allocate_handle(ServiceCategory::HttpProxy);
+
+        new_handle
+            .update(
+                ObservedServiceState::Listening,
+                ServiceMetadata {
+                    host: Some("127.0.0.1".into()),
+                    port: Some(8080),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(old_handle
+            .update(ObservedServiceState::Stopped, ServiceMetadata::default(),)
+            .is_err());
+
+        let snapshot = reg.snapshot();
+        let entry = snapshot.get(ServiceCategory::HttpProxy).unwrap();
+        assert_eq!(entry.state, ObservedServiceState::Listening);
+        assert_eq!(entry.metadata.port, Some(8080));
     }
 
     #[test]

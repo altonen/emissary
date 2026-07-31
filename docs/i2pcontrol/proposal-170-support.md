@@ -112,7 +112,7 @@ with boolean values for the six exact Proposal 170 keys:
 | `I2PTunnel` | `{client: {…}, server: {…}}` | `TunnelManagerControl::list()` (live query) | Live query at request time |
 | `HTTPProxy` | `{enabled, address, port}` | HTTP proxy `Listening`/`Stopped` | `enabled: true` only after bind |
 | `SOCKS` | `{enabled, address, port}` | SOCKS proxy `Listening`/`Stopped` | `enabled: true` only after bind |
-| `SAM` | `{enabled, sessions}` | core `SamServer::tcp_local_address()` | Sessions: known limitation (core) |
+| `SAM` | `{enabled, sessions}` | core listener plus `SamServer` session owner | Listener is implemented; active-session map is blocked pending an allowed bounded owner seam |
 | `BOB` | `false` (boolean) | exact Proposal 170 value (not implemented) | Unchanged |
 | `I2CP` | `{enabled}` | core `ProtocolAddressInfo::i2cp` | `enabled: true` only while bound |
 

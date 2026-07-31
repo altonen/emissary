@@ -862,6 +862,17 @@ async fn tls_test_server() -> (
     TlsConnector,
     tokio::sync::broadcast::Sender<()>,
 ) {
+    tls_test_server_with_connection_limit(128).await
+}
+
+/// Create a test server with a deterministic pre-spawn connection bound.
+async fn tls_test_server_with_connection_limit(
+    connection_limit: usize,
+) -> (
+    ServerInstance,
+    TlsConnector,
+    tokio::sync::broadcast::Sender<()>,
+) {
     use emissary_cli::i2pcontrol::production::ProductionControlPlane;
     use tokio_rustls::{rustls::ServerConfig, TlsAcceptor};
 
@@ -907,7 +918,13 @@ async fn tls_test_server() -> (
     ));
 
     let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
-    let instance = ServerInstance::new_for_test(listener, tls_acceptor, state, bind);
+    let instance = ServerInstance::new_for_test_with_connection_limit(
+        listener,
+        tls_acceptor,
+        state,
+        bind,
+        connection_limit,
+    );
     (instance, tls_test_client(&certs), shutdown_tx)
 }
 
@@ -1011,56 +1028,43 @@ async fn tls_connect_with_token(
     String::from_utf8(body_buf).map_err(|e| format!("utf8: {e}"))
 }
 
-/// M014 WP5: TLS connection tasks are count-bounded before spawn.
+/// M016 WP6: TLS connection tasks are count-bounded before spawn.
 ///
-/// The `serve()` function acquires a semaphore permit before spawning each
-/// TLS connection task. Completed requests release permits, allowing new
-/// connections. This test verifies that the server handles concurrent TLS
-/// connections correctly and that capacity is restored after requests
-/// complete.
+/// The test uses a limit of two, holds both permits in incomplete TLS
+/// handshakes, verifies the third connection is rejected before TLS/HTTP,
+/// then verifies that disconnecting a held connection restores capacity.
 #[tokio::test]
 async fn tls_connection_bound_enforced() {
-    let (instance, connector, shutdown_tx) = tls_test_server().await;
+    let (instance, connector, shutdown_tx) = tls_test_server_with_connection_limit(2).await;
     let addr = instance.bind();
 
     let shutdown = shutdown_tx.clone();
     tokio::spawn(async move {
         let _ = emissary_cli::i2pcontrol::server::serve(instance, shutdown.subscribe()).await;
     });
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    // Two incomplete TLS handshakes occupy both pre-spawn connection permits.
+    let held_one = TcpStream::connect(addr).await.unwrap();
+    let held_two = TcpStream::connect(addr).await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-    // Open a batch of concurrent TLS connections, each completing one request.
-    let mut handles = Vec::new();
-    for _ in 0..10 {
-        let c = connector.clone();
-        handles.push(tokio::spawn(async move {
-            tls_connect_and_request(
-                &c,
-                addr,
-                "Authenticate",
-                serde_json::json!({"API": 2, "Username": "i2pcontrol", "Password": "testpass"}),
-            )
-            .await
-        }));
-    }
-
-    let results: Vec<_> = futures::future::join_all(handles)
-        .await
-        .into_iter()
-        .collect::<Result<_, _>>()
-        .unwrap();
-
-    let successes = results
-        .iter()
-        .filter_map(|r| r.as_ref().ok())
-        .filter(|r| r.contains("2.0"))
-        .count();
+    // The third socket is accepted at TCP level but must be dropped before
+    // TLS, so the handshake cannot reach JSON-RPC.
+    let third = TcpStream::connect(addr).await.unwrap();
+    let domain = tokio_rustls::rustls::pki_types::ServerName::try_from("localhost").unwrap();
+    let rejected = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        connector.connect(domain, third),
+    )
+    .await
+    .expect("over-limit TLS handshake must be rejected promptly");
     assert!(
-        successes >= 10,
-        "at least 10 concurrent requests should succeed, got {successes}"
+        rejected.is_err(),
+        "over-limit connection must not reach TLS"
     );
 
-    // Verify capacity is restored: a new connection succeeds after prior ones complete.
+    // Releasing one held connection must return one permit to the accept loop.
+    drop(held_one);
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     let resp = tls_connect_and_request(
         &connector,
         addr,
@@ -1073,6 +1077,8 @@ async fn tls_connection_bound_enforced() {
         resp.contains("2.0"),
         "connection after capacity restoration should succeed"
     );
+
+    drop(held_two);
 
     let _ = shutdown_tx.send(());
 }

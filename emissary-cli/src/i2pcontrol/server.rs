@@ -502,6 +502,7 @@ pub struct ServerInstance {
     tls_acceptor: TlsAcceptor,
     state: Arc<I2pControlState>,
     bind: SocketAddr,
+    connection_semaphore: Arc<Semaphore>,
 }
 
 impl ServerInstance {
@@ -537,6 +538,30 @@ impl ServerInstance {
             tls_acceptor,
             state,
             bind,
+            connection_semaphore: Arc::new(Semaphore::new(MAX_CONNECTION_TASKS)),
+        }
+    }
+
+    /// Create a test server with an explicit pre-spawn connection bound.
+    ///
+    /// This keeps the production limit fixed while allowing integration tests
+    /// to deterministically exercise saturation and permit restoration.
+    #[doc(hidden)]
+    #[allow(dead_code)]
+    pub fn new_for_test_with_connection_limit(
+        listener: TcpListener,
+        tls_acceptor: TlsAcceptor,
+        state: Arc<I2pControlState>,
+        bind: SocketAddr,
+        connection_limit: usize,
+    ) -> Self {
+        assert!(connection_limit > 0, "connection limit must be positive");
+        Self {
+            listener,
+            tls_acceptor,
+            state,
+            bind,
+            connection_semaphore: Arc::new(Semaphore::new(connection_limit)),
         }
     }
 }
@@ -742,6 +767,7 @@ pub async fn init_server(
         tls_acceptor,
         state,
         bind: config.bind,
+        connection_semaphore: Arc::new(Semaphore::new(MAX_CONNECTION_TASKS)),
     })
 }
 
@@ -812,6 +838,7 @@ pub async fn serve(
         tls_acceptor,
         state,
         bind,
+        connection_semaphore,
     } = instance;
 
     let app = Router::new()
@@ -835,8 +862,6 @@ pub async fn serve(
     // tasks. Each accepted connection acquires one permit before spawning
     // and releases it on every exit path (success, failure, timeout,
     // disconnect, or cancellation).
-    let connection_semaphore = Arc::new(Semaphore::new(MAX_CONNECTION_TASKS));
-
     let result = loop {
         tokio::select! {
             accept_result = listener.accept() => {
