@@ -1,6 +1,6 @@
 # I2PControl Proposal 170 Milestone 019 — Pinned-Revision Independent Reclosure
 
-Status: blocked
+Status: ready
 
 Planning baseline: `2816857633a927b629c051e07e7efa5baa8d6e07`
 

@@ -104,7 +104,7 @@ Plan:
 
 - `plans/implementation/i2pcontrol-proposal-170/018-exact-wire-contract-reconciliation.md`
 
-Status: ready
+Status: closing
 
 ### Objective
 
@@ -175,11 +175,11 @@ Plan:
 
 - `plans/implementation/i2pcontrol-proposal-170/019-pinned-revision-independent-reclosure.md`
 
-Status: blocked
+Status: ready
 
 ### Activation
 
-M019 activates only after M018 lands on a frozen head with a complete implementation disposition.
+M019 is activated after M018 landed on frozen head `ea35de9` with its complete implementation disposition.
 
 ### Review duties
 

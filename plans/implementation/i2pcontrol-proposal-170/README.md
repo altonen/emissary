@@ -17,8 +17,8 @@ Authoritative direction:
 | 015 — Focused independent reclosure | invalid historical closure | `015-focused-independent-reclosure.md` | superseded |
 | 016 — Bounded SAM session observation corrective pass | implementation retained | `016-sam-fencing-and-connection-proof-corrective-pass.md` | bounded SAM component accepted |
 | 017 — Final-head independent reclosure | corrective pass required | `017-final-head-independent-reclosure.md` | closure invalidated by exact Proposal 170 contract findings |
-| 018 — Exact wire-contract reconciliation | ready | `018-exact-wire-contract-reconciliation.md` | sole implementation handoff |
-| 019 — Pinned-revision independent reclosure | blocked | `019-pinned-revision-independent-reclosure.md` | frozen complete M018 head and distinct auditable reviewer |
+| 018 — Exact wire-contract reconciliation | closing | `018-exact-wire-contract-reconciliation.md` | implementation frozen at `ea35de9`; disposition recorded |
+| 019 — Pinned-revision independent reclosure | ready | `019-pinned-revision-independent-reclosure.md` | distinct reviewer must recheck pinned source, final head, and SAM evidence |
 
 Earlier milestones remain historical or superseded as recorded in the subsystem roadmap.
 
@@ -31,7 +31,8 @@ M018 exact wire-contract reconciliation
 M019 pinned-revision independent reclosure
 ```
 
-Execute only M018. Do not begin M019 until the M018 implementation/test head is frozen and the registry marks M018 `closing`.
+M018 implementation is frozen and M019 is ready for its independent review. Do
+not combine M019's final acceptance with the M018 implementation disposition.
 
 ## Why M017 is invalidated
 

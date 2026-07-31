@@ -1,6 +1,6 @@
 # I2PControl Proposal 170 Milestone 018 — Exact Wire-Contract Reconciliation
 
-Status: ready
+Status: closing
 
 Planning baseline: `2816857633a927b629c051e07e7efa5baa8d6e07`
 

@@ -109,7 +109,7 @@ Current status:
 - M014: implementation retained; broader final acceptance reopened by M018/M019.
 - M016: bounded SAM implementation retained.
 - M017: closure invalidated; historical evidence only.
-- M018: ready.
-- M019: blocked on a frozen complete M018 head and auditable independent review.
+- M018: closing; frozen implementation head `ea35de9` and disposition recorded.
+- M019: ready for pinned-revision independent review; reviewer must be distinct and auditable.
 
 No current document may describe the Proposal 170 workstream as closed until M019 is accepted with zero unresolved high/medium findings.
