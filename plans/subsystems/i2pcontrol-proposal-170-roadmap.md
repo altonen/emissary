@@ -1,8 +1,8 @@
 # I2PControl Proposal 170 Roadmap
 
-Status: closed
+Status: active narrow corrective work
 
-Current corrective planning baseline: `2f0508dc73b8d8e5d7429effcbe4dbee8797833c`
+Current corrective planning baseline: `43088a42881a76b3936c76f6e7eb8a51262504c4`
 
 Canonical references:
 
@@ -14,191 +14,188 @@ Canonical references:
 - `docs/i2pcontrol/proposal-170-conformance.md`
 - I2P Proposal 170 and the existing I2PControl JSON-RPC contract
 
-## 1. Purpose
+## 1. Purpose and boundary
 
 This subsystem owns the exact Proposal 170 I2PControl API contract for Emissary:
 
-- authenticated JSON-RPC over the independent I2PControl TLS listener;
+- authenticated JSON-RPC over the independent TLS listener;
 - RouterInfo selectors;
-- four administrative AddressBook stores and operations;
+- AddressBook administrative operations;
 - TunnelManager configuration and explicit unsupported backends;
 - ClientServicesInfo;
 - only the bounded read-only observation and local resource controls required by those methods.
 
-The workstream does not own router algorithms, transport behavior, NetDB behavior, tunnel construction, peer selection, frontend behavior, runtime address resolution, missing tunnel data planes, release automation, or general CI/security policy.
+It does not own router algorithms, transport behavior, NetDB behavior, tunnel construction, peer selection, frontend behavior, runtime address resolution, missing tunnel data planes, release automation, or general CI/security policy.
 
 ## 2. Canonical invariants
 
-- Proposal 170 wire names, methods, selectors, actions, tunnel types, JSON types, and error envelopes remain exact.
-- Existing I2PControl authentication and version behavior remains compatible.
+- Proposal 170 wire names, methods, selectors, actions, tunnel types, JSON types, and existing error envelopes remain exact.
+- A value described as current comes from current canonical state.
+- Missing or failing state is not disguised as zero, false, empty, absent, stale, or default success unless the adopted contract explicitly defines that result.
+- Existing Emissary sources are reused; shadow metrics, logs, caches, stores, and lifecycle registries are not introduced.
+- Core observation, if unavoidable, is one bounded read-only secret-free seam that does not change runtime behavior.
 - Unsupported tunnel runtimes remain explicit inactive backends.
-- Missing or failing state is not disguised as zero, false, empty, absent, stale, or default success.
-- A value described as current must come from current canonical state.
-- Existing real Emissary sources are reused; shadow metrics, logs, caches, and stores are not introduced.
-- Where Emissary has no safe canonical equivalent, use Proposal-compatible null/error behavior rather than create new router semantics.
-- Core inspection, if unavoidable, is read-only, bounded, neutral, secret-free, and behavior-preserving.
-- The service remains frontend-independent.
 - TLS is required before JSON-RPC.
-- Remote connection and request work is locally bounded inside the I2PControl server.
+- I2PControl connection and request work remains locally bounded.
 - Existing hardened code outside the I2PControl boundary is not broadly reopened.
-- No CI, release, publishing, matrix, coverage, or generated-evidence machinery is added by this workstream.
+- No CI, release, publishing, platform-matrix, coverage, nightly, or generated-evidence machinery is added.
+- Repository-wide formatting is not part of Proposal 170 corrective work.
 
 ## 3. Non-goals
-
-The following remain outside Proposal 170 corrective work:
 
 - implementing missing client/server tunnel data planes;
 - adding BOB;
 - migrating startup-managed tunnels into Proposal lifecycle ownership;
 - adopting Proposal administrative address books for runtime resolution;
 - frontend management surfaces;
-- Java-I2P-specific peer classifications or counters without an Emissary equivalent;
-- new protocol extensions, aliases, pagination, richer statuses, or partial-result envelopes;
-- router, transport, NetDB, tunnel-pool, peer-selection, or congestion redesign;
-- a general metrics, logging, inspection, task-supervision, security, CI, or release framework;
-- broad revalidation of code outside the M014 diff.
+- new Proposal extensions, aliases, pagination, statuses, or partial-result envelopes;
+- router, transport, NetDB, tunnel-pool, peer-selection, congestion, cryptographic, or general security redesign;
+- a generic SAM observer, service registry, task supervisor, connection manager, metrics system, logging system, or verification framework;
+- broad revalidation of unrelated code.
 
-## 4. Historical sequence
+## 4. Historical disposition
 
-M001–M004 established the contract, administrative domain, AddressBook, and TunnelManager/stub boundaries.
+M001–M004 established the contract and administrative foundations.
 
 M005–M007 were superseded after production truthfulness and closure defects were found.
 
-M008–M013 implemented the first corrective sequence. M008 production composition and the principal M012 TLS-serving correction materially improved the implementation. A later review found that strict M013 closure was still overstated because current-state, source wiring, service fencing, SAM, and pre-spawn connection bounds were incomplete.
+M008–M013 implemented the first corrective sequence. M008’s production composition and the principal TLS-serving correction materially improved the implementation, but M013 closure was later invalidated.
 
-Historical closure records remain under:
+M014 then corrected stale RouterInfo state, live metrics/log wiring, cross-category generation ownership, and the pre-spawn connection implementation. M015 declared strict closure at frozen head `e59fa239eb03ea608d3b8123a36fc2fa72fcf675`.
 
-```text
-plans/closure/i2pcontrol-proposal-170/
-```
+A subsequent review found three remaining issues and a final-head closure defect:
 
-They remain useful evidence but do not override the current M014/M015 corrective status.
+1. active SAM session state was treated as successful empty output without pinned adopted-contract authority;
+2. same-category generation validation and entry replacement were separated by independently released locks;
+3. the connection-limit test opened 10 requests against a limit of 128 and did not prove saturation;
+4. M015 reviewed an older head and did not reconcile later broad formatting and test-gating commits.
 
-## 5. Findings reopening M013
+M015 remains historical evidence but is not the current closure authority.
 
-M014 owns only these findings:
+## 5. Current corrective findings
 
-| Finding | Current severity | Corrective rule |
-|---|---|---|
-| RouterInfo uses an immutable startup `CoreSnapshot` for values described as current | medium | current bounded source or explicit unavailable |
-| UDP and TCP active are inferred from one aggregate connected-router count | medium | transport-specific source or explicit unavailable |
-| bandwidth/recent traffic selectors read disconnected I2PControl-local state | medium | existing live source or explicit unavailable |
-| RouterInfo receives a fresh log ring rather than the tracing-backed application ring | medium | inject existing ring |
-| service generations are global rather than per category | medium | per-category fencing inside I2PControl |
-| active SAM can return unconditional empty sessions due to missing observation | medium, contract-dependent | exact spec-compliant bounded source or unavailable/blocker |
-| accepted TLS connection tasks are not count-bounded before spawn | medium | one local pre-spawn semaphore |
-| M013 registry/docs claim strict closure despite these findings | closure defect | M015 independent reclosure |
+| Finding | Severity | Owner | Required correction |
+|---|---|---|---|
+| SAM unavailable state can appear as successful empty active-session map | medium, contract-dependent | M016 | pin official Proposal and adopted i2pd behavior; exact bounded map, permitted existing error, or blocker |
+| same-category service handle can race with replacement between generation check and entry write | medium | M016 | one atomic fixed-registry state transaction |
+| connection saturation test remains below production limit | medium evidence defect | M016 | small test-only limit and real over-limit rejection/restoration regression |
+| M015 names an older reviewed head and independence/scope evidence is insufficient | closure defect | M017 | auditable independent final-head review |
+| broad formatting commit after M015 was outside the frozen review | scope reconciliation | M017 | whitespace/semantic classification without absorbing unrelated code into Proposal 170 |
 
 No unrelated finding is activated by this table.
 
-## 6. Corrective dependency graph
+## 6. Corrective sequence
 
 ```text
-M014 Spec-constrained truthfulness and local hardening
+M016 SAM, fencing, and connection-proof corrective pass
     |
     v
-M015 Focused independent reclosure
+M017 Final-head independent reclosure
 ```
 
-M014 landed and M015 independently accepted the frozen reviewed head.
+Only M016 is ready. M017 remains blocked until M016 lands on a frozen implementation head and the registry records an auditable independent reviewer.
 
-This is the complete corrective sequence unless M015 identifies a defect that cannot fit an amended M014 boundary. Do not split the work by subsystem merely to create more milestones.
+This is the complete corrective sequence. If M017 finds a defect that fits M016, return it to M016 rather than creating another milestone.
 
-## 7. Milestone 014 — Spec-constrained truthfulness and local hardening
-
-Class: narrow correctness corrective pass
+## 7. Milestone 016 — SAM, fencing, and connection-proof corrective pass
 
 Plan:
 
-- `plans/implementation/i2pcontrol-proposal-170/014-spec-constrained-truthfulness-and-local-hardening.md`
+- `plans/implementation/i2pcontrol-proposal-170/016-sam-fencing-and-connection-proof-corrective-pass.md`
 
 Objective:
 
-- replace stale/current-state success with live source or compatible unavailable behavior;
-- wire existing production metrics and tracing ring into I2PControl;
-- make service generation fencing independent per category;
-- resolve SAM sessions strictly to Proposal 170 without creating a SAM framework;
-- add one local count bound before spawning TLS connection work;
-- correct support documentation;
-- leave unrelated hardened code and project infrastructure untouched.
+- establish exact adopted SAM session semantics from official Proposal 170 and pinned i2pd source;
+- implement only the exact safe bounded SAM path or stop with a contract blocker;
+- make same-category registry fencing atomic using one small state lock;
+- prove the existing pre-spawn connection bound with deterministic over-limit behavior;
+- update only directly affected docs and planning state.
 
-Primary production boundary:
+Primary production files:
 
-- `emissary-cli/src/i2pcontrol/**`
+- `emissary-cli/src/i2pcontrol/client_services.rs`
+- `emissary-cli/src/i2pcontrol/service_registry.rs`
+- `emissary-cli/src/i2pcontrol/server.rs`
 
-Permitted exceptions:
+Permitted exception:
 
-- minimal handle wiring in `emissary-cli/src/main.rs` and `emissary-cli/src/logger.rs`;
-- one minimal bounded read-only core seam only when the exact contract cannot be met through existing handles or compatible unavailable behavior.
+- one minimal bounded read-only accessor on the canonical SAM owner only if the pinned adopted contract requires exact active-session entries.
 
 Exit conditions:
 
-- all M014 acceptance criteria pass;
-- targeted local package checks/tests pass;
-- no new CI/release/verification infrastructure;
-- no unrelated security rework;
+- all M016 acceptance criteria pass;
+- exact SAM disposition is recorded;
+- registry check/write is atomic;
+- test exceeds its configured connection limit and observes rejection/restoration;
+- targeted local checks pass;
+- no unrelated formatting, security, CI, release, or architectural change;
 - frozen implementation head recorded;
-- registry moves M014 to `closing` and M015 to `ready`.
+- M016 moves to `closing` and M017 becomes `ready`.
 
-## 8. Milestone 015 — Focused independent reclosure
-
-Class: narrow independent closure review
+## 8. Milestone 017 — Final-head independent reclosure
 
 Plan:
 
-- `plans/implementation/i2pcontrol-proposal-170/015-focused-independent-reclosure.md`
+- `plans/implementation/i2pcontrol-proposal-170/017-final-head-independent-reclosure.md`
 
 Objective:
 
-Independently review the frozen M014 diff and affected Proposal 170 behavior without reopening the rest of the repository.
+Independently review the actual final head, the M016 diff, and the limited post-M015 scope/evidence issues without reopening the rest of the repository.
 
-Review boundary:
+Required review:
 
-- M014 changed files;
-- affected RouterInfo, ClientServicesInfo, metrics/log composition, TLS connection bounds, and exact contract behavior;
-- focused regressions and targeted local commands;
-- absence of scope, CI, release, or unrelated hardening expansion.
+- pinned SAM contract and implementation;
+- atomic same-category fencing;
+- real connection saturation and restoration;
+- M014 live metric/log and unavailable-path spot checks;
+- feature-gated required tests under `--features i2pcontrol`;
+- mechanical reconciliation of the post-M015 broad formatting commit;
+- auditable reviewer independence;
+- final-head registry/documentation claims.
 
 Exit conditions:
 
-- reviewer distinct from final M014 implementation agent;
+- reviewer distinct from the M016 implementation executor and identified by a distinct agent/run or equivalent auditable record;
+- final reviewed head explicitly named;
 - zero unresolved high/medium finding;
-- exact contract remains unchanged except correction from false success to truthful current/unavailable behavior;
-- no required evidence is replaced by static or tautological checks;
-- closure record accepted before roadmap/registry return to `closed`.
+- no required evidence replaced by a static or tautological check;
+- no CI/release/broad security scope;
+- accepted `plans/closure/i2pcontrol-proposal-170/017-closure.md` before roadmap/registry return to `closed`.
 
 ## 9. File-scope policy
 
-### Primary allowed production files
+### Primary M016 production boundary
 
-- `emissary-cli/src/i2pcontrol/**`
+- `emissary-cli/src/i2pcontrol/client_services.rs`
+- `emissary-cli/src/i2pcontrol/service_registry.rs`
+- `emissary-cli/src/i2pcontrol/server.rs`
+- smallest existing I2PControl trait/DTO file required by the exact SAM map
 
-### Composition-only exceptions
+### Tests and docs
 
-- `emissary-cli/src/main.rs`
-- `emissary-cli/src/logger.rs`
+- existing client-services and adversarial suites;
+- directly affected I2PControl docs;
+- Proposal 170 plans, registry, and closure record.
 
 ### Core exception
 
-Only a small bounded read-only inspection seam directly required by Proposal 170 may touch `emissary-core`. It must not change router behavior, task ownership, persistence, protocols, selection logic, or security policy.
+Only one small bounded read-only canonical SAM session snapshot may touch core. It must not change SAM protocol behavior, listener ownership, session lifecycle, persistence, task ownership, or security policy.
 
-If implementation requires broad core edits, preserve explicit unavailable behavior and stop.
+If exact SAM support requires more, stop with a blocker.
 
-### Prohibited files and systems
+### Prohibited systems
 
-- `.github/workflows/**`
-- release and publishing automation
-- frontend management code
-- unrelated router/transport/NetDB/tunnel behavior
-- general project security policy
-- general task supervision
-- project-wide verification frameworks
+- `.github/workflows/**`;
+- CI/nightly/platform/coverage/evidence machinery;
+- release or publishing automation;
+- frontend code;
+- unrelated core/router/transport/NetDB/tunnel/security code;
+- project-wide formatting;
+- general supervision or observation frameworks.
 
 ## 10. Verification policy
 
-Verification is local, targeted, and proportional.
-
-Required commands for M014/M015:
+Verification is local, targeted, and proportional:
 
 ```bash
 cargo fmt --all -- --check
@@ -207,60 +204,50 @@ cargo test -p emissary-cli --no-default-features --features i2pcontrol
 cargo clippy -p emissary-cli --no-default-features --features i2pcontrol --all-targets -- -D warnings
 ```
 
-Run equivalent core commands only if core is touched.
+Run equivalent core commands only if the permitted SAM accessor is added.
 
 Do not add these commands to GitHub Actions as part of this workstream.
 
 Not required:
 
 - full unrelated workspace verification;
-- UI builds blocked by desktop libraries;
-- multi-platform CI;
-- release dry runs;
+- UI builds;
+- multi-platform or nightly CI;
+- fuzz campaigns;
 - network farms;
-- coverage gates;
+- coverage thresholds;
+- release dry runs;
 - generated evidence bundles;
-- repeated closure loops.
-
-Tests should be a small set of falsifiable regressions added to existing suites where practical.
+- repeated verification on an unchanged frozen head.
 
 ## 11. Completion definition
 
-The workstream may return to `closed` only after M015 confirms:
+The workstream returns to `closed` only after M017 confirms:
 
-- exact Proposal 170 contract adherence;
-- current supported values are actually current;
-- unavailable sources are explicit rather than fabricated;
-- existing canonical metrics and log sources are wired;
-- service observation is coherent per category;
-- SAM follows the exact contract without unsafe or false state;
-- TLS connection work is count-bounded before spawn;
-- unsupported tunnel runtimes remain separate explicit stubs;
-- no router behavior, frontend, resolver, CI, release, or broad security scope entered;
+- exact Proposal 170 and adopted ClientServicesInfo behavior;
+- truthful bounded SAM session output or an authoritatively permitted existing error;
+- no unavailable SAM source disguised as empty success;
+- atomic same-category service ownership fencing;
+- actual over-limit connection rejection and capacity restoration;
+- live metrics/log wiring and explicit unavailable RouterInfo paths remain intact;
+- required tests execute under the I2PControl feature;
+- final reviewed head is current;
+- reviewer independence is auditable;
+- no router behavior, frontend, resolver, CI, release, formatting, or broad security scope entered;
 - zero unresolved high/medium findings.
 
-The accurate completion statement remains:
-
-> Emissary implements the complete Proposal 170 I2PControl API contract. Unsupported tunnel data planes are wired through explicit stubs and remain separate implementation work.
-
-Documentation must qualify selectors that use Proposal-compatible unavailable behavior because Emissary has no safe canonical equivalent.
+The completion statement must continue to distinguish the implemented Proposal 170 administrative API from explicit unsupported tunnel data-plane backends.
 
 ## 12. Milestone status
 
 | Milestone | Status | Plan | Current disposition |
 |---|---|---|---|
-| 001 | historical closed | `plans/implementation/i2pcontrol-proposal-170/001-contract-matrix-and-i2pcontrol-foundation.md` | retained |
-| 002 | historical closed | `plans/implementation/i2pcontrol-proposal-170/002-control-plane-domain-and-persistence.md` | retained |
-| 003 | historical closed | `plans/implementation/i2pcontrol-proposal-170/003-address-book-administrative-api.md` | retained |
-| 004 | historical closed | `plans/implementation/i2pcontrol-proposal-170/004-tunnel-manager-contract-and-stubs.md` | retained |
-| 005 | superseded | `plans/implementation/i2pcontrol-proposal-170/005-router-info-inspection.md` | superseded by M009/M010/M014 |
-| 006 | superseded | `plans/implementation/i2pcontrol-proposal-170/006-client-services-info.md` | superseded by M011/M014 |
-| 007 | superseded | `plans/implementation/i2pcontrol-proposal-170/007-conformance-hardening-and-strict-closure.md` | superseded by M012/M013/M015 |
-| 008 | historical closed | `plans/implementation/i2pcontrol-proposal-170/008-production-composition-and-durable-state-integrity.md` | retained; no reopening absent direct regression |
-| 009 | historical closed | `plans/implementation/i2pcontrol-proposal-170/009-router-info-availability-and-truthfulness.md` | retained; M014 corrects residual sources |
-| 010 | corrective pass required | `plans/implementation/i2pcontrol-proposal-170/010-bounded-core-router-inspection.md` | residual current-state defects owned by M014 |
-| 011 | corrective pass required | `plans/implementation/i2pcontrol-proposal-170/011-client-services-live-state.md` | residual fencing/SAM defects owned by M014 |
-| 012 | corrective pass required | `plans/implementation/i2pcontrol-proposal-170/012-real-tls-and-request-resource-hardening.md` | residual connection-bound evidence owned by M014 |
-| 013 | corrective pass required | `plans/implementation/i2pcontrol-proposal-170/013-production-conformance-and-independent-reclosure.md` | superseded as final gate by M015 |
-| 014 | closed | `plans/implementation/i2pcontrol-proposal-170/014-spec-constrained-truthfulness-and-local-hardening.md` | accepted by M015 |
-| 015 | closed | `plans/implementation/i2pcontrol-proposal-170/015-focused-independent-reclosure.md` | `plans/closure/i2pcontrol-proposal-170/015-closure.md` |
+| 001–004 | historical closed | existing plans | retained foundations |
+| 005–007 | superseded | existing plans | superseded by corrective sequence |
+| 008–009 | historical closed | existing plans | retained |
+| 010–012 | historical corrective records | existing plans | M014 materially corrected residual behavior; M016 owns only listed remaining defects |
+| 013 | superseded | `013-production-conformance-and-independent-reclosure.md` | superseded by later gates |
+| 014 | corrective pass required | `014-spec-constrained-truthfulness-and-local-hardening.md` | materially landed; M016 owns three residual findings |
+| 015 | strict closure invalidated | `015-focused-independent-reclosure.md` | historical closure record; superseded by M017 |
+| 016 | ready | `016-sam-fencing-and-connection-proof-corrective-pass.md` | only active implementation handoff |
+| 017 | blocked | `017-final-head-independent-reclosure.md` | blocked on frozen M016 head and auditable independent reviewer |
