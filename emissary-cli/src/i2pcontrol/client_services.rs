@@ -393,6 +393,9 @@ fn resolve_sam(
             let snapshot = observation.snapshot().map_err(|_| {
                 "SAM observation source overflowed; refusing an incomplete snapshot".to_string()
             })?;
+            if snapshot.sessions.len() > SAM_SESSION_OBSERVATION_LIMIT {
+                return Err("SAM observation source exceeded its session bound".to_string());
+            }
             let sessions = serialize_sam_sessions(snapshot)?;
             Ok(serde_json::json!({
                 "enabled": true,
