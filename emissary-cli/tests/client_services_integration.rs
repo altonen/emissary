@@ -1,3 +1,5 @@
+#![cfg(feature = "i2pcontrol")]
+
 mod fixtures;
 
 use std::sync::Arc;

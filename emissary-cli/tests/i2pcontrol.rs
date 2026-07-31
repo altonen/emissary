@@ -1,3 +1,5 @@
+#![cfg(feature = "i2pcontrol")]
+
 mod fixtures;
 
 use emissary_cli::i2pcontrol::control_plane::ControlPlane;
