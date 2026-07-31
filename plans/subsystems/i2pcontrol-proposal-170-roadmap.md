@@ -1,6 +1,6 @@
 # I2PControl Proposal 170 Roadmap
 
-Status: active narrow corrective work
+Status: active narrow corrective work — M016 closing, M017 ready
 
 Current planning baseline: `93f96fef0e97447c77051922cf5a22495148b456`
 
@@ -29,13 +29,13 @@ At `9047feecde046dac8e0208bbf1acf2e3883f97ae`:
 
 The earlier M016 blocked record correctly stopped because its original scope did not authorize the shared observation seam required by the adopted SAM contract.
 
-The architecture owner has now authorized one fixed-capacity, read-only SAM session-observation handle. M016 is therefore ready again. M017 remains blocked until the amended implementation lands and freezes a head.
+The architecture owner authorized one fixed-capacity, read-only SAM session-observation handle. M016 implemented it at frozen head `355e243` and is now closing. M017 is unblocked and ready for the required independent final-head review.
 
 ## 3. Remaining finding
 
 | Finding | Severity | Owner | Required correction |
 |---|---|---|---|
-| A listening SAM bridge can return `sessions: {}` while active sessions exist because I2PControl has no canonical bounded read source | medium | M016 | implement exact pinned i2pd session map through one bounded read-only SAM observation handle |
+| A listening SAM bridge can return `sessions: {}` while active sessions exist because I2PControl has no canonical bounded read source | medium | M016 | implemented exact pinned i2pd session map through one bounded read-only SAM observation handle at `355e243`; M017 acceptance pending |
 
 No fencing or connection-limit finding remains active.
 
@@ -48,7 +48,7 @@ M016 Bounded SAM session observation corrective pass
 M017 Final-head independent reclosure
 ```
 
-M016 is the only ready implementation plan. M017 remains blocked.
+M016 is closing. M017 is ready for independent final-head reclosure.
 
 ## 5. Milestone 016
 
@@ -166,5 +166,5 @@ The workstream returns to `closed` only after M017 confirms:
 | 013 | superseded | `013-production-conformance-and-independent-reclosure.md` | superseded |
 | 014 | corrective pass required | `014-spec-constrained-truthfulness-and-local-hardening.md` | formal corrective closure; remaining SAM finding owned by M016 |
 | 015 | strict closure invalidated | `015-focused-independent-reclosure.md` | historical; superseded by M017 |
-| 016 | ready | `016-sam-fencing-and-connection-proof-corrective-pass.md` | amended to authorize bounded SAM observation handle |
-| 017 | blocked | `017-final-head-independent-reclosure.md` | blocked on frozen completed M016 head and auditable independent reviewer |
+| 016 | closing | `016-sam-fencing-and-connection-proof-corrective-pass.md` | implementation frozen at `355e243`; evidence record created |
+| 017 | ready | `017-final-head-independent-reclosure.md` | unblocked by frozen M016 head; requires auditable independent reviewer |

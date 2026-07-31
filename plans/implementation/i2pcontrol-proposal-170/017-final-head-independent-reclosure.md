@@ -1,6 +1,6 @@
 # I2PControl Proposal 170 Milestone 017 — Final-Head Independent Reclosure
 
-Status: blocked
+Status: ready
 
 Planning baseline: `43088a42881a76b3936c76f6e7eb8a51262504c4`
 

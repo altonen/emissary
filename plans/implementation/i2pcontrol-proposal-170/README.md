@@ -14,8 +14,8 @@ Authoritative direction:
 |---|---|---|---|
 | 014 — Spec-constrained truthfulness and local hardening | corrective pass required | `014-spec-constrained-truthfulness-and-local-hardening.md` | remaining SAM truthfulness finding owned by M016 |
 | 015 — Focused independent reclosure | strict closure invalidated | `015-focused-independent-reclosure.md` | historical record; superseded by M017 |
-| 016 — Bounded SAM session observation corrective pass | ready | `016-sam-fencing-and-connection-proof-corrective-pass.md` | one bounded read-only SAM observation handle explicitly authorized |
-| 017 — Final-head independent reclosure | blocked | `017-final-head-independent-reclosure.md` | completed frozen M016 head and auditable distinct reviewer |
+| 016 — Bounded SAM session observation corrective pass | closing | `016-sam-fencing-and-connection-proof-corrective-pass.md` | implementation frozen at `355e243`; evidence record created |
+| 017 — Final-head independent reclosure | ready | `017-final-head-independent-reclosure.md` | completed frozen M016 head and auditable distinct reviewer |
 
 Earlier milestones remain historical or superseded as recorded in the subsystem roadmap.
 
@@ -28,7 +28,7 @@ M016 bounded SAM observation implementation
 M017 independent final-head closure
 ```
 
-M016 is the only ready implementation handoff.
+M016 is in closing at frozen implementation head `355e243`; M017 is the ready independent final-head handoff.
 
 ## M016 current scope
 

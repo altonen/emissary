@@ -1,6 +1,6 @@
 # I2PControl Proposal 170 Milestone 016 — Bounded SAM Session Observation Corrective Pass
 
-Status: ready
+Status: closing
 
 Amended planning baseline: `93f96fef0e97447c77051922cf5a22495148b456`
 
