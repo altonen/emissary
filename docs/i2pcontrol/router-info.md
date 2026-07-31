@@ -1,6 +1,6 @@
 # RouterInfo Method
 
-Status: M009 implemented (availability and truthfulness), M014 corrected (stale source removal, live metrics, per-category fencing)
+Status: M015 closed (availability and truthfulness, live metrics, per-category fencing)
 
 This document describes the Proposal 170 `RouterInfo` JSON-RPC method implementation in Emissary.
 

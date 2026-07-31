@@ -28,8 +28,8 @@ Authoritative direction:
 | 011 — ClientServicesInfo live state | corrective pass required | `011-client-services-live-state.md` | residual defects owned by M014 |
 | 012 — Real TLS and request resource hardening | corrective pass required | `012-real-tls-and-request-resource-hardening.md` | residual defects owned by M014 |
 | 013 — Production conformance and independent reclosure | superseded as final gate | `013-production-conformance-and-independent-reclosure.md` | superseded by M015 |
-| 014 — Spec-constrained truthfulness and local hardening | closing | `014-spec-constrained-truthfulness-and-local-hardening.md` | frozen M014 head for M015 review |
-| 015 — Focused independent reclosure | blocked | `015-focused-independent-reclosure.md` | frozen M014 head and independent reviewer |
+| 014 — Spec-constrained truthfulness and local hardening | closed | `014-spec-constrained-truthfulness-and-local-hardening.md` | accepted by M015 |
+| 015 — Focused independent reclosure | closed | `015-focused-independent-reclosure.md` | `plans/closure/i2pcontrol-proposal-170/015-closure.md` |
 
 ## Current execution order
 

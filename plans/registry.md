@@ -26,13 +26,13 @@ Canonical direction:
 
 | Subsystem | Status | Roadmap | Current milestone | Dependencies or blockers |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | active narrow corrective work | `plans/subsystems/i2pcontrol-proposal-170-roadmap.md` | M014 closing | M015 blocked on frozen M014 head and independent reviewer |
+| I2PControl Proposal 170 | closed | `plans/subsystems/i2pcontrol-proposal-170-roadmap.md` | M015 closed | `plans/closure/i2pcontrol-proposal-170/015-closure.md` |
 
 ## Dependency-ready implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | 014 — spec-constrained truthfulness and local hardening | closing | `plans/implementation/i2pcontrol-proposal-170/014-spec-constrained-truthfulness-and-local-hardening.md` | implementation landed; frozen head for M015 independent review |
+| I2PControl Proposal 170 | 014 — spec-constrained truthfulness and local hardening | closed | `plans/implementation/i2pcontrol-proposal-170/014-spec-constrained-truthfulness-and-local-hardening.md` | accepted by M015 |
 
 ## Active closure work
 
@@ -44,7 +44,7 @@ Canonical direction:
 
 | Subsystem | Milestone | Status | Implementation plan | Blocker |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | 015 — focused independent reclosure | blocked | `plans/implementation/i2pcontrol-proposal-170/015-focused-independent-reclosure.md` | M014 closing; frozen reviewed head required; reviewer distinct from final implementation agent |
+| I2PControl Proposal 170 | 015 — focused independent reclosure | closed | `plans/implementation/i2pcontrol-proposal-170/015-focused-independent-reclosure.md` | `plans/closure/i2pcontrol-proposal-170/015-closure.md` |
 
 ## Corrective scope guard
 

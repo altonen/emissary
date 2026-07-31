@@ -1,6 +1,6 @@
 # I2PControl Proposal 170 Roadmap
 
-Status: active narrow corrective work
+Status: closed
 
 Current corrective planning baseline: `2f0508dc73b8d8e5d7429effcbe4dbee8797833c`
 
@@ -100,7 +100,7 @@ M014 Spec-constrained truthfulness and local hardening
 M015 Focused independent reclosure
 ```
 
-Only M014 is ready. M015 remains blocked until M014 lands, freezes a reviewed head, and moves to `closing`.
+M014 landed and M015 independently accepted the frozen reviewed head.
 
 This is the complete corrective sequence unless M015 identifies a defect that cannot fit an amended M014 boundary. Do not split the work by subsystem merely to create more milestones.
 
@@ -262,5 +262,5 @@ Documentation must qualify selectors that use Proposal-compatible unavailable be
 | 011 | corrective pass required | `plans/implementation/i2pcontrol-proposal-170/011-client-services-live-state.md` | residual fencing/SAM defects owned by M014 |
 | 012 | corrective pass required | `plans/implementation/i2pcontrol-proposal-170/012-real-tls-and-request-resource-hardening.md` | residual connection-bound evidence owned by M014 |
 | 013 | corrective pass required | `plans/implementation/i2pcontrol-proposal-170/013-production-conformance-and-independent-reclosure.md` | superseded as final gate by M015 |
-| 014 | ready | `plans/implementation/i2pcontrol-proposal-170/014-spec-constrained-truthfulness-and-local-hardening.md` | only active handoff |
-| 015 | blocked | `plans/implementation/i2pcontrol-proposal-170/015-focused-independent-reclosure.md` | blocked on frozen M014 head and reviewer independence |
+| 014 | closed | `plans/implementation/i2pcontrol-proposal-170/014-spec-constrained-truthfulness-and-local-hardening.md` | accepted by M015 |
+| 015 | closed | `plans/implementation/i2pcontrol-proposal-170/015-focused-independent-reclosure.md` | `plans/closure/i2pcontrol-proposal-170/015-closure.md` |

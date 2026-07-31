@@ -1,6 +1,6 @@
 # Proposal 170 Conformance Matrix
 
-Status: normative inventory for the Proposal 170 workstream (M014 closing — independent closure pending M015 review)
+Status: normative inventory for the Proposal 170 workstream (M015 closed)
 
 This document records every Proposal 170 method, selector, parameter, action, tunnel type,
 JSON type, nullability rule, validation rule, data source, expected milestone owner, and

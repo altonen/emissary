@@ -1,6 +1,6 @@
 # I2PControl Proposal 170 Milestone 015 — Focused Independent Reclosure
 
-Status: blocked
+Status: closed
 
 Planning baseline: `2f0508dc73b8d8e5d7429effcbe4dbee8797833c`
 
