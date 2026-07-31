@@ -1,6 +1,6 @@
 # I2PControl Proposal 170 Milestone 014 — Spec-Constrained Truthfulness and Local Hardening
 
-Status: ready
+Status: closing
 
 Planning baseline: `2f0508dc73b8d8e5d7429effcbe4dbee8797833c`
 

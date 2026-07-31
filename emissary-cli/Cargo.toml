@@ -55,6 +55,7 @@ dioxus-liveview = { version = "=0.7.3", features = ["axum"], optional = true }
 
 [dev-dependencies]
 fast-socks5 = { version = "1.0.0", features = ["socks4"] }
+rcgen = "0.13"
 reqwest = { version = "0.12.21", default-features = false, features = ["rustls-tls"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "logging", "tls12"] }
 

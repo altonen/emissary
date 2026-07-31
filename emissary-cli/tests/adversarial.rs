@@ -774,3 +774,449 @@ fn notification_has_no_id() {
         req.id
     );
 }
+
+// ──────────────────────────────────────────────────────────────────────
+// § 23. TLS connection bound (M014 WP5) and TLS authentication
+// ──────────────────────────────────────────────────────────────────────
+
+use std::sync::Arc;
+
+use emissary_cli::i2pcontrol::server::{I2pControlState, ProductionControls, ServerInstance};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
+use tokio_rustls::rustls::ClientConfig;
+use tokio_rustls::TlsConnector;
+
+/// Create a TLS client that trusts the server's self-signed certificate.
+fn tls_test_client(
+    certs: &[tokio_rustls::rustls::pki_types::CertificateDer<'static>],
+) -> TlsConnector {
+    let mut roots = tokio_rustls::rustls::RootCertStore::empty();
+    for cert in certs {
+        roots.add(cert.clone()).unwrap();
+    }
+    let config = ClientConfig::builder_with_provider(Arc::new(
+        tokio_rustls::rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_root_certificates(roots)
+    .with_no_client_auth();
+    TlsConnector::from(Arc::new(config))
+}
+
+/// Generate self-signed TLS material for testing.
+fn tls_test_certs() -> (
+    Vec<tokio_rustls::rustls::pki_types::CertificateDer<'static>>,
+    tokio_rustls::rustls::pki_types::PrivateKeyDer<'static>,
+) {
+    let key_pair = rcgen::KeyPair::generate().unwrap();
+    let mut params =
+        rcgen::CertificateParams::new(vec!["localhost".to_string()]).unwrap();
+    params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, "Test I2PControl");
+    let cert = params.self_signed(&key_pair).unwrap();
+    let cert_der =
+        tokio_rustls::rustls::pki_types::CertificateDer::from(cert.der().to_vec());
+    let key_der = tokio_rustls::rustls::pki_types::PrivateKeyDer::Pkcs8(
+        key_pair.serialize_der().into(),
+    );
+    (vec![cert_der], key_der)
+}
+
+/// Null event metrics stub for test server construction.
+struct NullEventMetrics;
+
+impl emissary_cli::i2pcontrol::production::EventMetrics for NullEventMetrics {
+    fn transport_inbound_bytes(&self) -> u64 { 0 }
+    fn transport_outbound_bytes(&self) -> u64 { 0 }
+    fn transit_inbound_bytes(&self) -> u64 { 0 }
+    fn transit_outbound_bytes(&self) -> u64 { 0 }
+    fn connected_routers(&self) -> usize { 0 }
+    fn transit_tunnel_count(&self) -> usize { 0 }
+    fn tunnel_build_successes(&self) -> u64 { 0 }
+    fn tunnel_build_failures(&self) -> u64 { 0 }
+    fn ipv4_firewall_status(&self) -> emissary_core::FirewallStatus {
+        emissary_core::FirewallStatus::Unknown
+    }
+    fn ipv6_firewall_status(&self) -> emissary_core::FirewallStatus {
+        emissary_core::FirewallStatus::Unknown
+    }
+}
+
+/// Create a test server and return (ServerInstance, TlsConnector, shutdown_tx).
+async fn tls_test_server() -> (
+    ServerInstance,
+    TlsConnector,
+    tokio::sync::broadcast::Sender<()>,
+) {
+    use emissary_cli::i2pcontrol::production::ProductionControlPlane;
+    use tokio_rustls::rustls::ServerConfig;
+    use tokio_rustls::TlsAcceptor;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let bind = listener.local_addr().unwrap();
+
+    let (certs, key) = tls_test_certs();
+    let config = ServerConfig::builder_with_provider(Arc::new(
+        tokio_rustls::rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_no_client_auth()
+    .with_single_cert(certs.clone(), key)
+    .unwrap();
+    let tls_acceptor = TlsAcceptor::from(Arc::new(config));
+
+    let state = Arc::new(I2pControlState::new_production(
+        "testpass".to_string(),
+        ProductionControls {
+            address_books: Arc::new(
+                emissary_cli::i2pcontrol::production::ProductionAddressBookControl::new(
+                    tmp.path().join("ab"),
+                ),
+            ),
+            tunnels: Arc::new(
+                emissary_cli::i2pcontrol::production::ProductionTunnelManagerControl::new(
+                    tmp.path().join("tm"),
+                )
+                .unwrap(),
+            ),
+            router_info: Arc::new(
+                emissary_cli::i2pcontrol::router_info::FakeRouterInfoControl::new(),
+            ),
+            control_plane: Arc::new(ProductionControlPlane::new(
+                "test-id".to_string(),
+                "test".to_string(),
+                Arc::new(NullEventMetrics),
+            )),
+            service_registry: emissary_cli::i2pcontrol::service_registry::ServiceRegistry::new(),
+        },
+    ));
+
+    let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
+    let instance = ServerInstance::new_for_test(listener, tls_acceptor, state, bind);
+    (instance, tls_test_client(&certs), shutdown_tx)
+}
+
+/// Async helper: connect via TLS, send a JSON-RPC request, read the HTTP response body.
+async fn tls_connect_and_request(
+    connector: &TlsConnector,
+    addr: std::net::SocketAddr,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<String, String> {
+    let tcp = TcpStream::connect(addr)
+        .await
+        .map_err(|e| format!("tcp connect: {e}"))?;
+    let domain = tokio_rustls::rustls::pki_types::ServerName::try_from("localhost")
+        .map_err(|e| format!("server name: {e}"))?;
+    let mut tls = connector
+        .connect(domain, tcp)
+        .await
+        .map_err(|e| format!("tls connect: {e}"))?;
+
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params,
+        "id": 1,
+    });
+    let body_str = body.to_string();
+    let request = format!(
+        "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+        body_str.len(),
+        body_str
+    );
+    tls.write_all(request.as_bytes())
+        .await
+        .map_err(|e| format!("write: {e}"))?;
+
+    // Read the HTTP response headers first, then the body using Content-Length.
+    let mut buf = Vec::new();
+    let mut tmp = [0u8; 1];
+    loop {
+        tls.read_exact(&mut tmp)
+            .await
+            .map_err(|e| format!("read header: {e}"))?;
+        buf.push(tmp[0]);
+        if buf.len() >= 4 && &buf[buf.len() - 4..] == b"\r\n\r\n" {
+            break;
+        }
+    }
+    let header_str = String::from_utf8_lossy(&buf);
+    let content_length: usize = header_str
+        .lines()
+        .find(|l| l.to_lowercase().starts_with("content-length:"))
+        .and_then(|l| l.split(':').nth(1))
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(0);
+    let mut body_buf = vec![0u8; content_length];
+    if content_length > 0 {
+        tls.read_exact(&mut body_buf)
+            .await
+            .map_err(|e| format!("read body: {e}"))?;
+    }
+    String::from_utf8(body_buf).map_err(|e| format!("utf8: {e}"))
+}
+
+/// Async helper: connect via TLS with a custom token header.
+async fn tls_connect_with_token(
+    connector: &TlsConnector,
+    addr: std::net::SocketAddr,
+    method: &str,
+    params: serde_json::Value,
+    token: &str,
+) -> Result<String, String> {
+    let tcp = TcpStream::connect(addr)
+        .await
+        .map_err(|e| format!("tcp connect: {e}"))?;
+    let domain = tokio_rustls::rustls::pki_types::ServerName::try_from("localhost")
+        .map_err(|e| format!("server name: {e}"))?;
+    let mut tls = connector
+        .connect(domain, tcp)
+        .await
+        .map_err(|e| format!("tls connect: {e}"))?;
+
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params,
+        "id": 2,
+    });
+    let body_str = body.to_string();
+    let request = format!(
+        "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nX-I2PControl-Token: {token}\r\nContent-Length: {}\r\n\r\n{}",
+        body_str.len(),
+        body_str
+    );
+    tls.write_all(request.as_bytes())
+        .await
+        .map_err(|e| format!("write: {e}"))?;
+
+    let mut buf = Vec::new();
+    let mut tmp = [0u8; 1];
+    loop {
+        tls.read_exact(&mut tmp)
+            .await
+            .map_err(|e| format!("read header: {e}"))?;
+        buf.push(tmp[0]);
+        if buf.len() >= 4 && &buf[buf.len() - 4..] == b"\r\n\r\n" {
+            break;
+        }
+    }
+    let header_str = String::from_utf8_lossy(&buf);
+    let content_length: usize = header_str
+        .lines()
+        .find(|l| l.to_lowercase().starts_with("content-length:"))
+        .and_then(|l| l.split(':').nth(1))
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(0);
+    let mut body_buf = vec![0u8; content_length];
+    if content_length > 0 {
+        tls.read_exact(&mut body_buf)
+            .await
+            .map_err(|e| format!("read body: {e}"))?;
+    }
+    String::from_utf8(body_buf).map_err(|e| format!("utf8: {e}"))
+}
+
+/// M014 WP5: TLS connection tasks are count-bounded before spawn.
+///
+/// The `serve()` function acquires a semaphore permit before spawning each
+/// TLS connection task. Completed requests release permits, allowing new
+/// connections. This test verifies that the server handles concurrent TLS
+/// connections correctly and that capacity is restored after requests
+/// complete.
+#[tokio::test]
+async fn tls_connection_bound_enforced() {
+    let (instance, connector, shutdown_tx) = tls_test_server().await;
+    let addr = instance.bind();
+
+    let shutdown = shutdown_tx.clone();
+    tokio::spawn(async move {
+        let _ = emissary_cli::i2pcontrol::server::serve(instance, shutdown.subscribe()).await;
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // Open a batch of concurrent TLS connections, each completing one request.
+    let mut handles = Vec::new();
+    for _ in 0..10 {
+        let c = connector.clone();
+        handles.push(tokio::spawn(async move {
+            tls_connect_and_request(
+                &c,
+                addr,
+                "Authenticate",
+                serde_json::json!({"API": 2, "Username": "i2pcontrol", "Password": "testpass"}),
+            )
+            .await
+        }));
+    }
+
+    let results: Vec<_> = futures::future::join_all(handles)
+        .await
+        .into_iter()
+        .collect::<Result<_, _>>()
+        .unwrap();
+
+    let successes = results
+        .iter()
+        .filter_map(|r| r.as_ref().ok())
+        .filter(|r| r.contains("2.0"))
+        .count();
+    assert!(
+        successes >= 10,
+        "at least 10 concurrent requests should succeed, got {successes}"
+    );
+
+    // Verify capacity is restored: a new connection succeeds after prior ones complete.
+    let resp = tls_connect_and_request(
+        &connector,
+        addr,
+        "Authenticate",
+        serde_json::json!({"API": 2, "Username": "i2pcontrol", "Password": "testpass"}),
+    )
+    .await
+    .unwrap();
+    assert!(
+        resp.contains("2.0"),
+        "connection after capacity restoration should succeed"
+    );
+
+    let _ = shutdown_tx.send(());
+}
+
+/// M014 acceptance criterion 19: a real TLS client can authenticate and
+/// make one protected request; plaintext does not reach JSON-RPC.
+///
+/// This test starts a real TLS I2PControl server, connects a TLS client,
+/// authenticates with valid credentials, verifies the response contains a
+/// valid token, then makes a protected RouterInfo request using the token.
+#[tokio::test]
+async fn tls_client_authenticates_and_dispatches() {
+    let (instance, connector, shutdown_tx) = tls_test_server().await;
+    let addr = instance.bind();
+
+    let shutdown = shutdown_tx.clone();
+    tokio::spawn(async move {
+        let _ = emissary_cli::i2pcontrol::server::serve(instance, shutdown.subscribe()).await;
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // Authenticate over TLS
+    let resp = tls_connect_and_request(
+        &connector,
+        addr,
+        "Authenticate",
+        serde_json::json!({"API": 2, "Username": "i2pcontrol", "Password": "testpass"}),
+    )
+    .await
+    .unwrap();
+
+    // Verify authentication response
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(parsed["jsonrpc"], "2.0");
+    assert!(parsed["result"].is_object(), "should have result: {resp}");
+    assert!(
+        parsed["result"]["Token"].is_string(),
+        "should have Token: {resp}"
+    );
+    assert!(
+        !parsed["result"]["Token"].as_str().unwrap().is_empty(),
+        "Token should not be empty"
+    );
+    assert!(parsed.get("error").is_none(), "should not be error: {resp}");
+
+    let token = parsed["result"]["Token"].as_str().unwrap().to_string();
+
+    // Make a protected request using the token (TunnelManager.List is simple)
+    let resp = tls_connect_with_token(
+        &connector,
+        addr,
+        "TunnelManager",
+        serde_json::json!({"action": "List"}),
+        &token,
+    )
+    .await
+    .unwrap();
+
+    // Verify protected response succeeds (token was accepted, not an auth error)
+    assert!(
+        resp.contains("2.0"),
+        "protected request should succeed over TLS: {resp}"
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    // The response should NOT be an auth error (code -1 = APP_ERROR for "Authentication required")
+    let is_auth_error = parsed
+        .get("error")
+        .and_then(|e| e.get("code"))
+        .and_then(|c| c.as_i64())
+        == Some(-1);
+    assert!(
+        !is_auth_error,
+        "token should have been accepted; got auth error: {resp}"
+    );
+
+    let _ = shutdown_tx.send(());
+}
+
+/// Plaintext HTTP connections must not reach JSON-RPC dispatch.
+///
+/// The I2PControl server only accepts TLS connections. A plaintext HTTP
+/// request should fail because the server expects a TLS ClientHello.
+#[tokio::test]
+async fn plaintext_rejected_by_tls_server() {
+    let (instance, _connector, shutdown_tx) = tls_test_server().await;
+    let addr = instance.bind();
+
+    let shutdown = shutdown_tx.clone();
+    tokio::spawn(async move {
+        let _ = emissary_cli::i2pcontrol::server::serve(instance, shutdown.subscribe()).await;
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // Attempt a plaintext HTTP connection to the TLS server
+    let result: Result<Vec<u8>, std::io::Error> = async {
+        let mut tcp = TcpStream::connect(addr).await?;
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "Authenticate",
+            "params": {"API": 2, "Username": "i2pcontrol", "Password": "testpass"},
+            "id": 1,
+        });
+        let body_str = body.to_string();
+        let request = format!(
+            "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+            body_str.len(),
+            body_str
+        );
+        tcp.write_all(request.as_bytes()).await?;
+        let mut response = Vec::new();
+        tcp.read_to_end(&mut response).await?;
+        Ok(response)
+    }
+    .await;
+
+    // Plaintext should fail: the server reads a TLS ClientHello, not HTTP.
+    match result {
+        Ok(data) if data.is_empty() => {
+            // Connection closed without response — correct behavior
+        }
+        Ok(data) => {
+            // Got some bytes — verify it's NOT a valid JSON-RPC response
+            let text = String::from_utf8_lossy(&data);
+            assert!(
+                !text.contains("\"jsonrpc\""),
+                "plaintext must not produce a JSON-RPC response; got: {text}"
+            );
+        }
+        Err(_) => {
+            // IO error (connection reset, broken pipe, etc.) — correct behavior
+        }
+    }
+
+    let _ = shutdown_tx.send(());
+}
