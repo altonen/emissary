@@ -93,7 +93,7 @@ M016 SAM, fencing, and connection-proof corrective pass
 M017 Final-head independent reclosure
 ```
 
-Only M016 is ready. M017 remains blocked until M016 lands on a frozen implementation head and the registry records an auditable independent reviewer.
+M016 implementation is partially landed but blocked on the exact SAM owner seam described in its closure record. M017 remains blocked until M016 has either resolved that contract/ownership blocker or has an explicitly accepted contract disposition, then lands on a frozen implementation head with an auditable independent reviewer.
 
 This is the complete corrective sequence. If M017 finds a defect that fits M016, return it to M016 rather than creating another milestone.
 

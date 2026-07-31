@@ -1,6 +1,6 @@
 # I2PControl Proposal 170 Milestone 016 — SAM, Fencing, and Connection-Proof Corrective Pass
 
-Status: ready
+Status: blocked
 
 Planning baseline: `43088a42881a76b3936c76f6e7eb8a51262504c4`
 

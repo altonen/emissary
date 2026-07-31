@@ -26,13 +26,13 @@ Canonical direction:
 
 | Subsystem | Status | Roadmap | Current milestone | Dependencies or blockers |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | active narrow corrective work | `plans/subsystems/i2pcontrol-proposal-170-roadmap.md` | M016 ready | M015 invalidated by SAM contract, atomic-fencing, connection-saturation evidence, and final-head review defects |
+| I2PControl Proposal 170 | active narrow corrective work | `plans/subsystems/i2pcontrol-proposal-170-roadmap.md` | M016 blocked | SAM active-session contract is pinned, but the exact i2pd map cannot be populated through an allowed Emissary owner seam |
 
 ## Dependency-ready implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | 016 — SAM, fencing, and connection-proof corrective pass | ready | `plans/implementation/i2pcontrol-proposal-170/016-sam-fencing-and-connection-proof-corrective-pass.md` | baseline `43088a42881a76b3936c76f6e7eb8a51262504c4`; existing M014 implementation boundary |
+| — | — | — | — | — |
 
 ## Active closure work
 
@@ -44,7 +44,8 @@ Canonical direction:
 
 | Subsystem | Milestone | Status | Implementation plan | Blocker |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | 017 — final-head independent reclosure | blocked | `plans/implementation/i2pcontrol-proposal-170/017-final-head-independent-reclosure.md` | M016 implementation complete; frozen final implementation head; M016 moved to `closing`; reviewer distinct and auditable |
+| I2PControl Proposal 170 | 016 — SAM, fencing, and connection-proof corrective pass | blocked | `plans/implementation/i2pcontrol-proposal-170/016-sam-fencing-and-connection-proof-corrective-pass.md` | Official Proposal 170 and pinned i2pd require active SAM session information (`name`, `address`, `sockets`), but safely supplying it requires a new shared owner/observer seam forbidden by M016; no permitted existing unavailable response is defined |
+| I2PControl Proposal 170 | 017 — final-head independent reclosure | blocked | `plans/implementation/i2pcontrol-proposal-170/017-final-head-independent-reclosure.md` | M016 remains blocked; no frozen complete implementation head or accepted contract disposition |
 
 ## M016/M017 scope guard
 
