@@ -858,6 +858,20 @@ mod tests {
     }
 
     #[test]
+    fn resolve_sam_listening_without_observation_is_unavailable() {
+        let entry = crate::i2pcontrol::service_registry::ServiceEntry {
+            category: ServiceCategory::Sam,
+            state: ObservedServiceState::Listening,
+            metadata: ServiceMetadata {
+                enabled: true,
+                ..Default::default()
+            },
+        };
+        let error = resolve_sam(Some(&entry), None).unwrap_err();
+        assert!(error.contains("canonical observation source is unavailable"));
+    }
+
+    #[test]
     fn resolve_i2cp_disabled_when_none() {
         let value = resolve_i2cp(None);
         assert_eq!(value["enabled"], false);
