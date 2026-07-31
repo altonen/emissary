@@ -121,7 +121,7 @@ impl RouterCommand {
                 string,
                 file,
                 output,
-            } => {
+            } =>
                 if let Err(error) = base64::encode(string, file, output) {
                     tracing::error!(
                         target: LOG_TARGET,
@@ -129,13 +129,12 @@ impl RouterCommand {
                         "failed to base64-encode input",
                     );
                     std::process::exit(1);
-                }
-            }
+                },
             RouterCommand::Base64Decode {
                 string,
                 file,
                 output,
-            } => {
+            } =>
                 if let Err(error) = base64::decode(string, file, output) {
                     tracing::error!(
                         target: LOG_TARGET,
@@ -143,17 +142,15 @@ impl RouterCommand {
                         "failed to base64-decode input",
                     );
                     std::process::exit(1);
-                }
-            }
+                },
             RouterCommand::Devnet {
                 num_floodfills,
                 num_routers,
                 path,
             } => devnet::spawn_network(num_floodfills, num_routers, path).await,
             #[cfg(feature = "ui")]
-            RouterCommand::RouterUiDev { path, native } => {
-                router_ui_dev::run(path, native.unwrap_or(false)).await
-            }
+            RouterCommand::RouterUiDev { path, native } =>
+                router_ui_dev::run(path, native.unwrap_or(false)).await,
         }
 
         std::process::exit(0);

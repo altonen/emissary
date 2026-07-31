@@ -84,9 +84,8 @@ pub enum ListenerKind<R: Runtime> {
 impl<R: Runtime> fmt::Debug for ListenerKind<R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Ephemeral { .. } => {
-                f.debug_struct("ListenerKind::Ephemeral").finish_non_exhaustive()
-            }
+            Self::Ephemeral { .. } =>
+                f.debug_struct("ListenerKind::Ephemeral").finish_non_exhaustive(),
             Self::Persistent { port, .. } => f
                 .debug_struct("ListenerKind::Persistent")
                 .field("port", &port)
@@ -222,9 +221,8 @@ impl<R: Runtime> fmt::Debug for ListenerState<R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Uninitialized => f.debug_struct("ListenerState::Uninitialized").finish(),
-            Self::Initializing { kind } => {
-                f.debug_struct("ListenerState::Initialzing").field("kind", &kind).finish()
-            }
+            Self::Initializing { kind } =>
+                f.debug_struct("ListenerState::Initialzing").field("kind", &kind).finish(),
             Self::Ephemeral { sockets } => f
                 .debug_struct("ListenerState::Ephemeral")
                 .field("num_listeners", &sockets.len())

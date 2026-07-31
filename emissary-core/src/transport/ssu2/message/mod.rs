@@ -517,9 +517,8 @@ pub enum Block {
 impl fmt::Debug for Block {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self {
-            Self::DateTime { timestamp } => {
-                f.debug_struct("Block::DateTime").field("timestamp", &timestamp).finish()
-            }
+            Self::DateTime { timestamp } =>
+                f.debug_struct("Block::DateTime").field("timestamp", &timestamp).finish(),
             Self::Options {
                 t_min,
                 t_max,
@@ -541,9 +540,8 @@ impl fmt::Debug for Block {
                 .field("r_deay", &r_delay)
                 .finish(),
             Self::RouterInfo { .. } => f.debug_struct("Block::RouterInfo").finish_non_exhaustive(),
-            Self::I2Np { message } => {
-                f.debug_struct("Block::I2NP").field("message", &message).finish()
-            }
+            Self::I2Np { message } =>
+                f.debug_struct("Block::I2NP").field("message", &message).finish(),
             Self::Termination {
                 num_valid_pkts,
                 reason,
@@ -552,9 +550,8 @@ impl fmt::Debug for Block {
                 .field("num_valid_pkts", &num_valid_pkts)
                 .field("reason", &reason)
                 .finish(),
-            Self::Padding { padding } => {
-                f.debug_struct("Block::Padding").field("padding_len", &padding.len()).finish()
-            }
+            Self::Padding { padding } =>
+                f.debug_struct("Block::Padding").field("padding_len", &padding.len()).finish(),
             Self::FirstFragment {
                 message_type,
                 message_id,
@@ -594,22 +591,18 @@ impl fmt::Debug for Block {
                 .field("expires", &expires)
                 .field("token", &token)
                 .finish(),
-            Self::PathChallenge { challenge } => {
-                f.debug_struct("Block::PathChallenge").field("challenge", &challenge).finish()
-            }
-            Self::PathResponse { response } => {
-                f.debug_struct("Block::PathResponse").field("response", &response).finish()
-            }
+            Self::PathChallenge { challenge } =>
+                f.debug_struct("Block::PathChallenge").field("challenge", &challenge).finish(),
+            Self::PathResponse { response } =>
+                f.debug_struct("Block::PathResponse").field("response", &response).finish(),
             Self::FirstPacketNumber { first_pkt_num } => f
                 .debug_struct("Block::FirstPacketNumber")
                 .field("first_pkt_num", &first_pkt_num)
                 .finish(),
-            Self::Congestion { flag } => {
-                f.debug_struct("Block::Congestion").field("flag", &flag).finish()
-            }
-            Self::PeerTest { message } => {
-                f.debug_struct("Block::PeerTest").field("message", &message).finish()
-            }
+            Self::Congestion { flag } =>
+                f.debug_struct("Block::Congestion").field("flag", &flag).finish(),
+            Self::PeerTest { message } =>
+                f.debug_struct("Block::PeerTest").field("message", &message).finish(),
             _ => f.debug_struct("Unsupported").finish(),
         }
     }

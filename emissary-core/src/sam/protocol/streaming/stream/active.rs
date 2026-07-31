@@ -1203,12 +1203,11 @@ impl<R: Runtime> Future for Stream<R> {
                             this.write_state = WriteState::GetMessage;
                             break;
                         }
-                        Some(message) => {
+                        Some(message) =>
                             this.write_state = WriteState::WriteMessage {
                                 offset: 0usize,
                                 message,
-                            }
-                        }
+                            },
                     },
                     Poll::Ready(None) => return Poll::Ready(this.recv_stream_id),
                     Poll::Ready(Some(StreamEvent::ShutDown)) => {
@@ -1218,9 +1217,8 @@ impl<R: Runtime> Future for Stream<R> {
                     }
                     Poll::Ready(Some(StreamEvent::Packet { packet })) => {
                         match this.on_packet(packet) {
-                            Err(StreamingError::Closed | StreamingError::SequenceNumberTooHigh) => {
-                                return Poll::Ready(this.recv_stream_id)
-                            }
+                            Err(StreamingError::Closed | StreamingError::SequenceNumberTooHigh) =>
+                                return Poll::Ready(this.recv_stream_id),
                             Err(error) => {
                                 tracing::debug!(
                                     target: LOG_TARGET,
@@ -1234,12 +1232,11 @@ impl<R: Runtime> Future for Stream<R> {
                                 this.write_state = WriteState::GetMessage;
                             }
                             Ok(()) => match this.inbound_context.pop_message() {
-                                Some(message) => {
+                                Some(message) =>
                                     this.write_state = WriteState::WriteMessage {
                                         offset: 0usize,
                                         message,
-                                    }
-                                }
+                                    },
                                 None => this.write_state = WriteState::GetMessage,
                             },
                         }
@@ -1283,9 +1280,8 @@ impl<R: Runtime> Future for Stream<R> {
                     }
                     Poll::Ready(Some(StreamEvent::Packet { packet })) => {
                         match this.on_packet(packet) {
-                            Err(StreamingError::Closed | StreamingError::SequenceNumberTooHigh) => {
-                                return Poll::Ready(this.recv_stream_id)
-                            }
+                            Err(StreamingError::Closed | StreamingError::SequenceNumberTooHigh) =>
+                                return Poll::Ready(this.recv_stream_id),
                             Err(error) => {
                                 tracing::debug!(
                                     target: LOG_TARGET,
@@ -1381,7 +1377,7 @@ impl<R: Runtime> Future for Stream<R> {
                             this.rto_timer = Some(R::timer(*this.rto));
                         }
                     }
-                    true if !core::matches!(this.read_state, SocketState::Closed) => {
+                    true if !core::matches!(this.read_state, SocketState::Closed) =>
                         match Pin::new(&mut this.stream)
                             .as_mut()
                             .poll_read(cx, &mut this.read_buffer)
@@ -1399,8 +1395,7 @@ impl<R: Runtime> Future for Stream<R> {
                             Poll::Ready(Ok(nread)) => {
                                 this.read_state = SocketState::SendMessage { offset: nread };
                             }
-                        }
-                    }
+                        },
                     true => break,
                 },
                 SocketState::SendMessage { offset } => {

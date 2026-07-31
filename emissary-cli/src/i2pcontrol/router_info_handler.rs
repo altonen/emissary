@@ -23,10 +23,10 @@
 
 use std::collections::HashSet;
 
-use crate::i2pcontrol::address_book::resolve_address_book_selectors;
-use crate::i2pcontrol::router_info::{InspectionError, RouterInfoControl};
-use crate::i2pcontrol::rpc::{
-    self, JsonRpcErrorResponse, JsonRpcRequest, JsonRpcSuccess, RequestId,
+use crate::i2pcontrol::{
+    address_book::resolve_address_book_selectors,
+    router_info::{InspectionError, RouterInfoControl},
+    rpc::{self, JsonRpcErrorResponse, JsonRpcRequest, JsonRpcSuccess, RequestId},
 };
 
 const LOG_TARGET: &str = "emissary::i2pcontrol::router_info_handler";
@@ -1099,8 +1099,7 @@ fn error_response(id: RequestId, code: i32, message: impl Into<String>) -> serde
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::i2pcontrol::router_info::*;
-    use crate::i2pcontrol::rpc::JsonRpcRequest;
+    use crate::i2pcontrol::{router_info::*, rpc::JsonRpcRequest};
 
     fn test_request(selectors: serde_json::Value) -> JsonRpcRequest {
         JsonRpcRequest {

@@ -24,8 +24,7 @@
 //! - No `EventSubscriber` use anywhere in the I2PControl code path.
 //! - No UI / frontend module imports in inspection code.
 //! - No HTTP / JSON-RPC / server dependencies in the emissary-core crate.
-//! - `RouterInfoControl` and its DTOs do not expose private key types or
-//!   mutable core handles.
+//! - `RouterInfoControl` and its DTOs do not expose private key types or mutable core handles.
 //! - The selector registry contains exactly the Proposal 170 keys.
 //! - The handler only returns requested selector keys.
 //! - The router info adapter never mutates state.
@@ -34,18 +33,19 @@
 
 use std::path::Path;
 
-use emissary_cli::i2pcontrol::control_plane::AddressBookControl;
-use emissary_cli::i2pcontrol::control_plane::TunnelManagerControl;
-use emissary_cli::i2pcontrol::production::{
-    EventMetrics, ProductionAddressBookControl, ProductionControlPlane,
-    ProductionRouterInfoControl, ProductionTunnelManagerControl,
+use emissary_cli::i2pcontrol::{
+    control_plane::{AddressBookControl, TunnelManagerControl},
+    production::{
+        EventMetrics, ProductionAddressBookControl, ProductionControlPlane,
+        ProductionRouterInfoControl, ProductionTunnelManagerControl,
+    },
+    router_info::{
+        ActivePeerStats, I2PTunnelStats, InspectionError, LogSnapshot, NetworkSnapshot, PeerLimits,
+        RecentTransitTraffic, RouterInfoControl, TransitBytes, TransportBytes, TunnelBuildStats,
+        TunnelSummary,
+    },
+    rpc,
 };
-use emissary_cli::i2pcontrol::router_info::{
-    ActivePeerStats, I2PTunnelStats, InspectionError, LogSnapshot, NetworkSnapshot, PeerLimits,
-    RecentTransitTraffic, RouterInfoControl, TransitBytes, TransportBytes, TunnelBuildStats,
-    TunnelSummary,
-};
-use emissary_cli::i2pcontrol::rpc;
 
 // --- Source-level structural guards (probed by file reads) ---
 

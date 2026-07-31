@@ -104,9 +104,8 @@ pub enum RequestKind {
 impl fmt::Debug for RequestKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::HostName { host_name } => {
-                f.debug_struct("RequestKind::HostName").field("host_name", &host_name).finish()
-            }
+            Self::HostName { host_name } =>
+                f.debug_struct("RequestKind::HostName").field("host_name", &host_name).finish(),
             Self::Hash { .. } => f.debug_struct("RequestKind::Hash").finish_non_exhaustive(),
         }
     }

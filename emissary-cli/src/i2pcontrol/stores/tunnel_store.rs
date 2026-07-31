@@ -16,14 +16,12 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use super::generation_store::{GenerationStore, StoreResult};
-use crate::i2pcontrol::domain::revision::StateRevision;
-use crate::i2pcontrol::domain::tunnel::TunnelDefinition;
+use crate::i2pcontrol::domain::{revision::StateRevision, tunnel::TunnelDefinition};
 
 /// Persistent tunnel definitions envelope payload.
 #[allow(dead_code)]

@@ -383,9 +383,8 @@ impl<R: Runtime> Future for Ntcp2Session<R> {
                 ReadState::ReadFrame { size, offset } => {
                     match stream.as_mut().poll_read(cx, &mut this.read_buffer[offset..size]) {
                         Poll::Pending => break,
-                        Poll::Ready(Err(_)) => {
-                            return Poll::Ready(Some(TerminationReason::IoError))
-                        }
+                        Poll::Ready(Err(_)) =>
+                            return Poll::Ready(Some(TerminationReason::IoError)),
                         Poll::Ready(Ok(nread)) => {
                             if nread == 0 {
                                 return Poll::Ready(Some(TerminationReason::IoError));
@@ -408,13 +407,12 @@ impl<R: Runtime> Future for Ntcp2Session<R> {
                                 .increment(this.read_buffer[..size].len());
                             this.metrics_handle.counter(NUM_INBOUND_MESSAGES).increment(1);
 
-                            let data_block = match this
-                                .recv_cipher
-                                .decrypt(this.read_buffer[..size].to_vec())
-                            {
-                                Ok(data_block) => data_block,
-                                Err(_) => return Poll::Ready(Some(TerminationReason::AeadFailure)),
-                            };
+                            let data_block =
+                                match this.recv_cipher.decrypt(this.read_buffer[..size].to_vec()) {
+                                    Ok(data_block) => data_block,
+                                    Err(_) =>
+                                        return Poll::Ready(Some(TerminationReason::AeadFailure)),
+                                };
 
                             let messages = match MessageBlock::parse_multiple(&data_block) {
                                 Ok(messages) => messages,
@@ -458,7 +456,7 @@ impl<R: Runtime> Future for Ntcp2Session<R> {
                             let messages = messages
                                 .into_iter()
                                 .filter_map(|message| match message {
-                                    MessageBlock::I2Np { message } => {
+                                    MessageBlock::I2Np { message } =>
                                         if message.is_expired::<R>() {
                                             tracing::trace!(
                                                 target: LOG_TARGET,
@@ -471,8 +469,7 @@ impl<R: Runtime> Future for Ntcp2Session<R> {
                                             None
                                         } else {
                                             Some(message)
-                                        }
-                                    }
+                                        },
                                     MessageBlock::Padding { .. } => None,
                                     message => {
                                         tracing::debug!(

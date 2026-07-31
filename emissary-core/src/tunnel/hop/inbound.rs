@@ -204,7 +204,7 @@ impl<R: Runtime> InboundTunnel<R> {
                 } = message.message_kind
                 {
                     match delivery_instructions {
-                        DeliveryInstructions::Local => {
+                        DeliveryInstructions::Local =>
                             return Message::parse_standard(message.message)
                                 .inspect_err(|error| {
                                     tracing::warn!(
@@ -215,8 +215,7 @@ impl<R: Runtime> InboundTunnel<R> {
                                         "invalid i2np message",
                                     );
                                 })
-                                .ok()
-                        }
+                                .ok(),
                         delivery_instructions => {
                             tracing::warn!(
                                 target: LOG_TARGET,

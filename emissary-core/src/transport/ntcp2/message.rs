@@ -170,9 +170,8 @@ pub enum MessageBlock<'a> {
 impl fmt::Debug for MessageBlock<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self {
-            Self::DateTime { timestamp } => {
-                f.debug_struct("MessageBlock::DateTime").field("timestamp", &timestamp).finish()
-            }
+            Self::DateTime { timestamp } =>
+                f.debug_struct("MessageBlock::DateTime").field("timestamp", &timestamp).finish(),
             Self::Options {
                 t_min,
                 t_max,
@@ -201,9 +200,8 @@ impl fmt::Debug for MessageBlock<'_> {
                 .field("floodfill", &floodfill_request)
                 .field("router_info_len", &router_info.len())
                 .finish(),
-            Self::I2Np { message } => {
-                f.debug_struct("MessageBlock::I2NP").field("message", &message).finish()
-            }
+            Self::I2Np { message } =>
+                f.debug_struct("MessageBlock::I2NP").field("message", &message).finish(),
             Self::Termination {
                 valid_frames,
                 reason,

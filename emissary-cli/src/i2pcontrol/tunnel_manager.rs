@@ -25,8 +25,7 @@
 //! # Invariants
 //!
 //! - Authentication must precede handler execution.
-//! - Exactly eight actions are accepted: List, Create, Edit, Get, Delete,
-//!   Start, Stop, Restart.
+//! - Exactly eight actions are accepted: List, Create, Edit, Get, Delete, Start, Stop, Restart.
 //! - Exactly twelve tunnel types are accepted.
 //! - `All` is accepted only for Start, Stop, and Restart.
 //! - CRUD success is returned only after durable persistence.
@@ -38,14 +37,14 @@
 //! - No handler calls `tokio::spawn`, binds listeners, or edits files.
 //! - Logs and errors contain no full definitions, credentials, or keys.
 
-use crate::i2pcontrol::domain::tunnel::{
-    StartIntent, TunnelDefinition, TunnelName, TunnelOptions, TunnelOwnership, TunnelRuntimeState,
-    TunnelType, ALL_TUNNEL_TYPES,
+use crate::i2pcontrol::{
+    domain::tunnel::{
+        StartIntent, TunnelDefinition, TunnelName, TunnelOptions, TunnelOwnership,
+        TunnelRuntimeState, TunnelType, ALL_TUNNEL_TYPES,
+    },
+    rpc::{self, JsonRpcErrorResponse, JsonRpcRequest, JsonRpcSuccess, RequestId},
+    server::I2pControlState,
 };
-use crate::i2pcontrol::rpc::{
-    self, JsonRpcErrorResponse, JsonRpcRequest, JsonRpcSuccess, RequestId,
-};
-use crate::i2pcontrol::server::I2pControlState;
 
 const LOG_TARGET: &str = "emissary::i2pcontrol::tunnel_manager";
 
@@ -133,27 +132,20 @@ pub(crate) async fn handle_tunnel_manager(
     // Dispatch based on action
     match action {
         crate::i2pcontrol::domain::tunnel::TunnelAction::List => handle_list(state, id).await,
-        crate::i2pcontrol::domain::tunnel::TunnelAction::Create => {
-            handle_create(state, id, params, tunnel_type_str, name).await
-        }
-        crate::i2pcontrol::domain::tunnel::TunnelAction::Edit => {
-            handle_edit(state, id, params, name, new_name_str, tunnel_type_str).await
-        }
-        crate::i2pcontrol::domain::tunnel::TunnelAction::Get => {
-            handle_get(state, id, name, all).await
-        }
-        crate::i2pcontrol::domain::tunnel::TunnelAction::Delete => {
-            handle_delete(state, id, name).await
-        }
-        crate::i2pcontrol::domain::tunnel::TunnelAction::Start => {
-            handle_lifecycle(state, id, name, all, "start").await
-        }
-        crate::i2pcontrol::domain::tunnel::TunnelAction::Stop => {
-            handle_lifecycle(state, id, name, all, "stop").await
-        }
-        crate::i2pcontrol::domain::tunnel::TunnelAction::Restart => {
-            handle_lifecycle(state, id, name, all, "restart").await
-        }
+        crate::i2pcontrol::domain::tunnel::TunnelAction::Create =>
+            handle_create(state, id, params, tunnel_type_str, name).await,
+        crate::i2pcontrol::domain::tunnel::TunnelAction::Edit =>
+            handle_edit(state, id, params, name, new_name_str, tunnel_type_str).await,
+        crate::i2pcontrol::domain::tunnel::TunnelAction::Get =>
+            handle_get(state, id, name, all).await,
+        crate::i2pcontrol::domain::tunnel::TunnelAction::Delete =>
+            handle_delete(state, id, name).await,
+        crate::i2pcontrol::domain::tunnel::TunnelAction::Start =>
+            handle_lifecycle(state, id, name, all, "start").await,
+        crate::i2pcontrol::domain::tunnel::TunnelAction::Stop =>
+            handle_lifecycle(state, id, name, all, "stop").await,
+        crate::i2pcontrol::domain::tunnel::TunnelAction::Restart =>
+            handle_lifecycle(state, id, name, all, "restart").await,
     }
 }
 
@@ -526,15 +518,14 @@ async fn handle_delete(
 
     // Check existence and ownership before delete
     match state.tunnel_get(tunnel_name).await {
-        Ok(Some(def)) => {
+        Ok(Some(def)) =>
             if def.ownership == TunnelOwnership::StartupManaged {
                 return error_response(
                     id,
                     rpc::error_codes::APP_ERROR,
                     "error - tunnel is managed by the startup configuration",
                 );
-            }
-        }
+            },
         Ok(None) => {
             // Delete of absent name is a successful no-op
             return success_response(id, serde_json::json!("ok"));
@@ -999,8 +990,7 @@ fn error_response(id: RequestId, code: i32, message: impl Into<String>) -> serde
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::i2pcontrol::control_plane::FakeTunnelManagerControl;
-    use crate::i2pcontrol::rpc::JsonRpcRequest;
+    use crate::i2pcontrol::{control_plane::FakeTunnelManagerControl, rpc::JsonRpcRequest};
 
     fn test_state() -> crate::i2pcontrol::server::I2pControlState {
         let mut state =
@@ -1810,8 +1800,9 @@ mod tests {
     fn test_state_with_fake_backend(
         tunnel_type: crate::i2pcontrol::domain::tunnel::TunnelType,
     ) -> crate::i2pcontrol::server::I2pControlState {
-        use crate::i2pcontrol::backends::fake::FakeTunnelBackend;
-        use crate::i2pcontrol::backends::registry::TunnelBackendRegistry;
+        use crate::i2pcontrol::backends::{
+            fake::FakeTunnelBackend, registry::TunnelBackendRegistry,
+        };
         use std::sync::Arc;
 
         let backend = Arc::new(FakeTunnelBackend::new(tunnel_type));
@@ -1922,10 +1913,14 @@ mod tests {
 
     #[tokio::test]
     async fn handler_start_fake_backend_failure() {
-        use crate::i2pcontrol::backends::fake::{FakeAction, FakeBackendScript, FakeTunnelBackend};
-        use crate::i2pcontrol::backends::registry::TunnelBackendRegistry;
-        use crate::i2pcontrol::backends::BackendError;
-        use crate::i2pcontrol::domain::tunnel::TunnelType;
+        use crate::i2pcontrol::{
+            backends::{
+                fake::{FakeAction, FakeBackendScript, FakeTunnelBackend},
+                registry::TunnelBackendRegistry,
+                BackendError,
+            },
+            domain::tunnel::TunnelType,
+        };
         use std::sync::Arc;
 
         let script = FakeBackendScript {

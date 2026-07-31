@@ -116,8 +116,10 @@ fn generation_store_all_corrupt_returns_error() {
 
 #[test]
 fn generation_store_unsupported_version_rejected() {
-    use emissary_cli::i2pcontrol::domain::revision::StateRevision;
-    use emissary_cli::i2pcontrol::stores::generation_store::{Envelope, SCHEMA_IDENTIFIER};
+    use emissary_cli::i2pcontrol::{
+        domain::revision::StateRevision,
+        stores::generation_store::{Envelope, SCHEMA_IDENTIFIER},
+    };
     use std::fs;
 
     let dir = tempfile::tempdir().unwrap();
@@ -437,8 +439,7 @@ fn subscription_store_round_trip() {
 
 #[test]
 fn fake_tunnel_store_crud() {
-    use emissary_cli::i2pcontrol::domain::tunnel::*;
-    use emissary_cli::i2pcontrol::stores::fakes::TunnelStoreFake;
+    use emissary_cli::i2pcontrol::{domain::tunnel::*, stores::fakes::TunnelStoreFake};
 
     let mut store = TunnelStoreFake::new();
     assert!(store.is_empty());
@@ -464,8 +465,7 @@ fn fake_tunnel_store_crud() {
 
 #[test]
 fn fake_address_book_store_crud() {
-    use emissary_cli::i2pcontrol::domain::address_book::*;
-    use emissary_cli::i2pcontrol::stores::fakes::AddressBookStoreFake;
+    use emissary_cli::i2pcontrol::{domain::address_book::*, stores::fakes::AddressBookStoreFake};
 
     let mut store = AddressBookStoreFake::new();
     let entry = AddressBookEntry {
@@ -482,9 +482,10 @@ fn fake_address_book_store_crud() {
 
 #[test]
 fn fake_stores_revision_semantics() {
-    use emissary_cli::i2pcontrol::domain::address_book::*;
-    use emissary_cli::i2pcontrol::domain::tunnel::*;
-    use emissary_cli::i2pcontrol::stores::fakes::*;
+    use emissary_cli::i2pcontrol::{
+        domain::{address_book::*, tunnel::*},
+        stores::fakes::*,
+    };
 
     let mut tunnel_store = TunnelStoreFake::new();
     let rev0 = tunnel_store.revision();
@@ -533,8 +534,7 @@ fn generation_store_rejects_symlink_directory() {
 
 #[test]
 fn concurrent_tunnel_upserts_via_fake() {
-    use emissary_cli::i2pcontrol::domain::tunnel::*;
-    use emissary_cli::i2pcontrol::stores::fakes::TunnelStoreFake;
+    use emissary_cli::i2pcontrol::{domain::tunnel::*, stores::fakes::TunnelStoreFake};
 
     let mut store = TunnelStoreFake::new();
     for i in 0..100 {
@@ -557,8 +557,7 @@ fn concurrent_tunnel_upserts_via_fake() {
 
 #[test]
 fn concurrent_address_book_upserts_via_fake() {
-    use emissary_cli::i2pcontrol::domain::address_book::*;
-    use emissary_cli::i2pcontrol::stores::fakes::AddressBookStoreFake;
+    use emissary_cli::i2pcontrol::{domain::address_book::*, stores::fakes::AddressBookStoreFake};
 
     let mut store = AddressBookStoreFake::new();
     for i in 0..100 {
@@ -610,8 +609,9 @@ fn generation_store_retention_keeps_bounded() {
 
 #[test]
 fn fake_subscription_store() {
-    use emissary_cli::i2pcontrol::domain::address_book::SubscriptionSet;
-    use emissary_cli::i2pcontrol::stores::fakes::SubscriptionStoreFake;
+    use emissary_cli::i2pcontrol::{
+        domain::address_book::SubscriptionSet, stores::fakes::SubscriptionStoreFake,
+    };
 
     let mut store = SubscriptionStoreFake::new();
     assert!(store.is_empty());

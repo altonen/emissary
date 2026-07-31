@@ -25,21 +25,18 @@
 //!
 //! # Invariants
 //!
-//! - Observation is strictly passive: the proxy or listener task is not
-//!   modified, restarted, or supervised.
-//! - The HTTP address-book readiness one-shot is fan-out, not consumed
-//!   or replaced.
-//! - No secrets, credentials, private keys, or sensitive configuration
-//!   ever appears in the registry.
-//! - All transitions use the [`ServiceUpdateHandle`] belonging to the
-//!   same generation the composition root allocated for that category,
-//!   so stale tasks cannot overwrite current state.
+//! - Observation is strictly passive: the proxy or listener task is not modified, restarted, or
+//!   supervised.
+//! - The HTTP address-book readiness one-shot is fan-out, not consumed or replaced.
+//! - No secrets, credentials, private keys, or sensitive configuration ever appears in the
+//!   registry.
+//! - All transitions use the [`ServiceUpdateHandle`] belonging to the same generation the
+//!   composition root allocated for that category, so stale tasks cannot overwrite current state.
 //!
 //! [`ServiceRegistry`]: crate::i2pcontrol::service_registry::ServiceRegistry
 //! [`ServiceUpdateHandle`]: crate::i2pcontrol::service_registry::ServiceUpdateHandle
 
-use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::{collections::HashMap, net::SocketAddr};
 
 use crate::i2pcontrol::service_registry::{
     ObservedServiceState, SanitizedFailure, ServiceCategory, ServiceMetadata, ServiceRegistry,
@@ -318,8 +315,8 @@ impl I2PTunnelInventoryEntry {
 /// spawned by the caller in parallel; this function spawns a sibling
 /// observer task that:
 /// 1. Records `Starting` immediately;
-/// 2. Provides a slot to be notified of `Listening` (the caller writes
-///    the bound address via the returned [`ServiceUpdateHandle`]);
+/// 2. Provides a slot to be notified of `Listening` (the caller writes the bound address via the
+///    returned [`ServiceUpdateHandle`]);
 /// 3. Records `Stopped` when a shared shutdown signal fires.
 ///
 /// The caller wires the actual listener bind/failure/exit transition

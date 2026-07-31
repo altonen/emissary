@@ -34,14 +34,13 @@
 
 use std::collections::HashSet;
 
-use emissary_cli::i2pcontrol::backends::registry::create_default_registry;
-use emissary_cli::i2pcontrol::rpc;
-use emissary_cli::i2pcontrol::rpc::address_book_requests;
-use emissary_cli::i2pcontrol::rpc::address_books;
-use emissary_cli::i2pcontrol::rpc::error_codes;
-use emissary_cli::i2pcontrol::rpc::methods;
-use emissary_cli::i2pcontrol::rpc::tunnel_actions;
-use emissary_cli::i2pcontrol::rpc::tunnel_types;
+use emissary_cli::i2pcontrol::{
+    backends::registry::create_default_registry,
+    rpc,
+    rpc::{
+        address_book_requests, address_books, error_codes, methods, tunnel_actions, tunnel_types,
+    },
+};
 
 // ──────────────────────────────────────────────────────────────────────
 // § 1. Method manifest — every Proposal 170 method
@@ -256,9 +255,8 @@ fn default_registry_covers_all_manifest_types() {
             "streamrclient" => emissary_cli::i2pcontrol::domain::tunnel::TunnelType::StreamrClient,
             "server" => emissary_cli::i2pcontrol::domain::tunnel::TunnelType::Server,
             "httpserver" => emissary_cli::i2pcontrol::domain::tunnel::TunnelType::HttpServer,
-            "httpbidirserver" => {
-                emissary_cli::i2pcontrol::domain::tunnel::TunnelType::HttpBidirServer
-            }
+            "httpbidirserver" =>
+                emissary_cli::i2pcontrol::domain::tunnel::TunnelType::HttpBidirServer,
             "ircserver" => emissary_cli::i2pcontrol::domain::tunnel::TunnelType::IrcServer,
             "streamrserver" => emissary_cli::i2pcontrol::domain::tunnel::TunnelType::StreamrServer,
             _ => panic!("unknown tunnel type in manifest: {}", row.name),
@@ -890,10 +888,9 @@ fn bob_is_always_unavailable() {
 
 #[test]
 fn all_backends_report_unsupported_state() {
-    use emissary_cli::i2pcontrol::domain::tunnel::TunnelDefinition;
-    use emissary_cli::i2pcontrol::domain::tunnel::TunnelName;
-    use emissary_cli::i2pcontrol::domain::tunnel::TunnelOwnership;
-    use emissary_cli::i2pcontrol::domain::tunnel::TunnelType;
+    use emissary_cli::i2pcontrol::domain::tunnel::{
+        TunnelDefinition, TunnelName, TunnelOwnership, TunnelType,
+    };
 
     let registry = create_default_registry().expect("default registry");
     let def = TunnelDefinition {
@@ -943,10 +940,9 @@ fn all_backends_report_unsupported_state() {
 
 #[test]
 fn unsupported_start_returns_not_implemented() {
-    use emissary_cli::i2pcontrol::domain::tunnel::TunnelDefinition;
-    use emissary_cli::i2pcontrol::domain::tunnel::TunnelName;
-    use emissary_cli::i2pcontrol::domain::tunnel::TunnelOwnership;
-    use emissary_cli::i2pcontrol::domain::tunnel::TunnelType;
+    use emissary_cli::i2pcontrol::domain::tunnel::{
+        TunnelDefinition, TunnelName, TunnelOwnership, TunnelType,
+    };
 
     let registry = create_default_registry().expect("default registry");
     let def = TunnelDefinition {

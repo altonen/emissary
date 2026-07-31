@@ -24,11 +24,13 @@
 
 use std::collections::BTreeMap;
 
-use crate::i2pcontrol::domain::address_book::{
-    AddressBookConfiguration, AddressBookEntry, AdministrativeAddressBookType, SubscriptionSet,
+use crate::i2pcontrol::domain::{
+    address_book::{
+        AddressBookConfiguration, AddressBookEntry, AdministrativeAddressBookType, SubscriptionSet,
+    },
+    revision::StateRevision,
+    tunnel::TunnelDefinition,
 };
-use crate::i2pcontrol::domain::revision::StateRevision;
-use crate::i2pcontrol::domain::tunnel::TunnelDefinition;
 
 /// In-memory tunnel definition store.
 ///

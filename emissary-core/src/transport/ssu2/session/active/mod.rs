@@ -667,11 +667,10 @@ impl<R: Runtime> Future for Ssu2Session<R> {
                     self.transmission.schedule(message);
                     let _ = feedback_tx.send(());
                 }
-                Poll::Ready(Some(OutboundMessage::Messages(messages))) => {
+                Poll::Ready(Some(OutboundMessage::Messages(messages))) =>
                     for message in messages {
                         self.transmission.schedule(message);
-                    }
-                }
+                    },
                 Poll::Ready(Some(OutboundMessage::Dummy)) => {}
             }
         }
@@ -787,9 +786,8 @@ impl<R: Runtime> Future for Ssu2Session<R> {
                                 // the next time
                                 self.write_buffer.push_back((pkt, destination));
                             }
-                            Poll::Ready(None) => {
-                                return Poll::Ready(TerminationReason::RouterShutdown)
-                            }
+                            Poll::Ready(None) =>
+                                return Poll::Ready(TerminationReason::RouterShutdown),
                             Poll::Ready(Some(nwritten)) => {
                                 self.router_ctx
                                     .metrics_handle()

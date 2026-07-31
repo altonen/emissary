@@ -124,9 +124,8 @@ enum InitiatorState {
 impl fmt::Debug for InitiatorState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::SessionRequested { .. } => {
-                f.debug_struct("SessionRequested").finish_non_exhaustive()
-            }
+            Self::SessionRequested { .. } =>
+                f.debug_struct("SessionRequested").finish_non_exhaustive(),
             Self::SessionCreated { .. } => f.debug_struct("SessionCreated").finish_non_exhaustive(),
             Self::Poisoned => f.debug_struct("Poisoned").finish(),
         }

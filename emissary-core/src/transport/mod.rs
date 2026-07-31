@@ -38,6 +38,7 @@ use hashbrown::{HashMap, HashSet};
 use thingbuf::mpsc::{errors::TrySendError, Receiver, Sender};
 
 use alloc::{
+    borrow::ToOwned,
     boxed::Box,
     format,
     string::{String, ToString},
@@ -873,12 +874,11 @@ impl<R: Runtime> TransportManager<R> {
                                 if introducer_router_info
                                     .select_transport_with_filter(|address| match address {
                                         RouterAddress::Ntcp2 { .. } => false,
-                                        address @ RouterAddress::Ssu2 { socket_address, .. } => {
+                                        address @ RouterAddress::Ssu2 { socket_address, .. } =>
                                             address.classify().is_some_and(|address| {
                                                 self.supported_transports.contains(&address)
                                                     && socket_address.is_some()
-                                            })
-                                        }
+                                            }),
                                     })
                                     .is_none()
                                 {
@@ -1330,27 +1330,20 @@ impl<R: Runtime> Future for TransportManager<R> {
                                     "kind",
                                     match (direction, encryption) {
                                         (Direction::Inbound, EncryptionKind::X25519) => "ib-x25519",
-                                        (Direction::Inbound, EncryptionKind::MlKem512X25519) => {
-                                            "ib-ml-kem-512"
-                                        }
-                                        (Direction::Inbound, EncryptionKind::MlKem768X25519) => {
-                                            "ib-ml-kem-768"
-                                        }
-                                        (Direction::Inbound, EncryptionKind::MlKem1024X25519) => {
-                                            "ib-ml-kem-1024"
-                                        }
-                                        (Direction::Outbound, EncryptionKind::X25519) => {
-                                            "ob-x25519"
-                                        }
-                                        (Direction::Outbound, EncryptionKind::MlKem512X25519) => {
-                                            "ob-ml-kem-512"
-                                        }
-                                        (Direction::Outbound, EncryptionKind::MlKem768X25519) => {
-                                            "ob-ml-kem-768"
-                                        }
-                                        (Direction::Outbound, EncryptionKind::MlKem1024X25519) => {
-                                            "ob-ml-kem-1024"
-                                        }
+                                        (Direction::Inbound, EncryptionKind::MlKem512X25519) =>
+                                            "ib-ml-kem-512",
+                                        (Direction::Inbound, EncryptionKind::MlKem768X25519) =>
+                                            "ib-ml-kem-768",
+                                        (Direction::Inbound, EncryptionKind::MlKem1024X25519) =>
+                                            "ib-ml-kem-1024",
+                                        (Direction::Outbound, EncryptionKind::X25519) =>
+                                            "ob-x25519",
+                                        (Direction::Outbound, EncryptionKind::MlKem512X25519) =>
+                                            "ob-ml-kem-512",
+                                        (Direction::Outbound, EncryptionKind::MlKem768X25519) =>
+                                            "ob-ml-kem-768",
+                                        (Direction::Outbound, EncryptionKind::MlKem1024X25519) =>
+                                            "ob-ml-kem-1024",
                                     },
                                 );
                             this.router_ctx.metrics_handle().counter(NUM_ACCEPTED).increment(1);
@@ -1399,12 +1392,10 @@ impl<R: Runtime> Future for TransportManager<R> {
                                 );
                                 debug_assert!(false);
                             }
-                            Some(true) => {
-                                this.router_ctx.metrics_handle().gauge(NUM_IPV4).decrement(1)
-                            }
-                            Some(false) => {
-                                this.router_ctx.metrics_handle().gauge(NUM_IPV6).decrement(1)
-                            }
+                            Some(true) =>
+                                this.router_ctx.metrics_handle().gauge(NUM_IPV4).decrement(1),
+                            Some(false) =>
+                                this.router_ctx.metrics_handle().gauge(NUM_IPV6).decrement(1),
                         }
                         this.router_ctx.profile_storage().connection_closed(&router_id);
                         this.router_ctx.metrics_handle().gauge(NUM_ACTIVE_CONNECTIONS).decrement(1);
@@ -1498,9 +1489,8 @@ impl<R: Runtime> Future for TransportManager<R> {
                         expires,
                         ipv4,
                     })) => this.on_introducer_added(router_id, relay_tag, expires, ipv4),
-                    Poll::Ready(Some(TransportEvent::IntroducerRemoved { router_id, ipv4 })) => {
-                        this.on_introducer_removed(&router_id, ipv4)
-                    }
+                    Poll::Ready(Some(TransportEvent::IntroducerRemoved { router_id, ipv4 })) =>
+                        this.on_introducer_removed(&router_id, ipv4),
                 }
             }
 
@@ -5162,13 +5152,12 @@ mod tests {
         let future = {
             futures::future::poll_fn(|cx| loop {
                 match manager.poll_unpin(cx) {
-                    Poll::Pending => {
+                    Poll::Pending =>
                         if !manager.pending_queries.contains(&introducer_router_id) {
                             return Poll::Ready(());
                         } else {
                             return Poll::Pending;
-                        }
-                    }
+                        },
                     Poll::Ready(_) => panic!("manager returned"),
                 }
             })
@@ -5351,13 +5340,12 @@ mod tests {
         let future = {
             futures::future::poll_fn(|cx| loop {
                 match manager.poll_unpin(cx) {
-                    Poll::Pending => {
+                    Poll::Pending =>
                         if !manager.pending_queries.contains(&introducer_router_id) {
                             return Poll::Ready(());
                         } else {
                             return Poll::Pending;
-                        }
-                    }
+                        },
                     Poll::Ready(_) => panic!("manager returned"),
                 }
             })
@@ -5419,12 +5407,11 @@ mod tests {
                 cx: &mut Context<'_>,
             ) -> Poll<Option<Self::Item>> {
                 match futures::ready!(self.event_rx.poll_recv(cx)).unwrap() {
-                    Event::Failure(router_id) => {
+                    Event::Failure(router_id) =>
                         Poll::Ready(Some(TransportEvent::ConnectionFailure {
                             router_id,
                             reason: DialError::Timeout,
-                        }))
-                    }
+                        })),
                 }
             }
         }
@@ -5488,11 +5475,10 @@ mod tests {
             RouterAddress::Ssu2 {
                 introducers: router_introducers,
                 ..
-            } => {
+            } =>
                 for (i, (introducer_router_id, _)) in introducers.iter().enumerate() {
                     router_introducers.push((introducer_router_id.clone(), 1337 + i as u32));
-                }
-            }
+                },
             _ => panic!("expected ssu2"),
         }
 
@@ -5618,14 +5604,13 @@ mod tests {
                 cx: &mut Context<'_>,
             ) -> Poll<Option<Self::Item>> {
                 match futures::ready!(self.event_rx.poll_recv(cx)).unwrap() {
-                    Event::Success(router_id) => {
+                    Event::Success(router_id) =>
                         Poll::Ready(Some(TransportEvent::ConnectionEstablished {
                             address: "127.0.0.1:8888".parse().unwrap(),
                             encryption: EncryptionKind::X25519,
                             direction: Direction::Outbound,
                             router_id,
-                        }))
-                    }
+                        })),
                 }
             }
         }
@@ -5689,11 +5674,10 @@ mod tests {
             RouterAddress::Ssu2 {
                 introducers: router_introducers,
                 ..
-            } => {
+            } =>
                 for (i, (introducer_router_id, _)) in introducers.iter().enumerate() {
                     router_introducers.push((introducer_router_id.clone(), 1337 + i as u32));
-                }
-            }
+                },
             _ => panic!("expected ssu2"),
         }
 
@@ -5819,14 +5803,13 @@ mod tests {
                 cx: &mut Context<'_>,
             ) -> Poll<Option<Self::Item>> {
                 match futures::ready!(self.event_rx.poll_recv(cx)).unwrap() {
-                    Event::Success(router_id) => {
+                    Event::Success(router_id) =>
                         Poll::Ready(Some(TransportEvent::ConnectionEstablished {
                             address: "127.0.0.1:8888".parse().unwrap(),
                             encryption: EncryptionKind::X25519,
                             direction: Direction::Outbound,
                             router_id,
-                        }))
-                    }
+                        })),
                 }
             }
         }
@@ -5890,11 +5873,10 @@ mod tests {
             RouterAddress::Ssu2 {
                 introducers: router_introducers,
                 ..
-            } => {
+            } =>
                 for (i, (introducer_router_id, _)) in introducers.iter().enumerate() {
                     router_introducers.push((introducer_router_id.clone(), 1337 + i as u32));
-                }
-            }
+                },
             _ => panic!("expected ssu2"),
         }
 
@@ -6074,11 +6056,10 @@ mod tests {
             RouterAddress::Ssu2 {
                 introducers: router_introducers,
                 ..
-            } => {
+            } =>
                 for (i, (introducer_router_id, _)) in introducers.iter().enumerate() {
                     router_introducers.push((introducer_router_id.clone(), 1337 + i as u32));
-                }
-            }
+                },
             _ => panic!("expected ssu2"),
         }
 
@@ -6140,13 +6121,12 @@ mod tests {
             let future = {
                 futures::future::poll_fn(|cx| loop {
                     match manager.poll_unpin(cx) {
-                        Poll::Pending => {
+                        Poll::Pending =>
                             if !manager.pending_queries.contains(&introducer) {
                                 return Poll::Ready(());
                             } else {
                                 return Poll::Pending;
-                            }
-                        }
+                            },
                         Poll::Ready(_) => panic!("manager returned"),
                     }
                 })
@@ -6194,13 +6174,12 @@ mod tests {
         let future = {
             futures::future::poll_fn(|cx| loop {
                 match manager.poll_unpin(cx) {
-                    Poll::Pending => {
+                    Poll::Pending =>
                         if !manager.pending_queries.contains(&introducer) {
                             return Poll::Ready(());
                         } else {
                             return Poll::Pending;
-                        }
-                    }
+                        },
                     Poll::Ready(_) => panic!("manager returned"),
                 }
             })
@@ -6256,12 +6235,11 @@ mod tests {
                 cx: &mut Context<'_>,
             ) -> Poll<Option<Self::Item>> {
                 match futures::ready!(self.event_rx.poll_recv(cx)).unwrap() {
-                    Event::Failure(router_id) => {
+                    Event::Failure(router_id) =>
                         Poll::Ready(Some(TransportEvent::ConnectionFailure {
                             router_id,
                             reason: DialError::Timeout,
-                        }))
-                    }
+                        })),
                 }
             }
         }
@@ -6325,11 +6303,10 @@ mod tests {
             RouterAddress::Ssu2 {
                 introducers: router_introducers,
                 ..
-            } => {
+            } =>
                 for (i, (introducer_router_id, _)) in introducers.iter().enumerate() {
                     router_introducers.push((introducer_router_id.clone(), 1337 + i as u32));
-                }
-            }
+                },
             _ => panic!("expected ssu2"),
         }
 
@@ -6395,13 +6372,12 @@ mod tests {
         let future = {
             futures::future::poll_fn(|cx| loop {
                 match manager.poll_unpin(cx) {
-                    Poll::Pending => {
+                    Poll::Pending =>
                         if manager.pending_queries.is_empty() {
                             return Poll::Ready(());
                         } else {
                             return Poll::Pending;
-                        }
-                    }
+                        },
                     Poll::Ready(_) => panic!("manager returned"),
                 }
             })
@@ -6470,14 +6446,13 @@ mod tests {
                 cx: &mut Context<'_>,
             ) -> Poll<Option<Self::Item>> {
                 match futures::ready!(self.event_rx.poll_recv(cx)).unwrap() {
-                    Event::Success(router_id) => {
+                    Event::Success(router_id) =>
                         Poll::Ready(Some(TransportEvent::ConnectionEstablished {
                             address: "127.0.0.1:8888".parse().unwrap(),
                             encryption: EncryptionKind::X25519,
                             direction: Direction::Outbound,
                             router_id,
-                        }))
-                    }
+                        })),
                 }
             }
         }
@@ -6541,11 +6516,10 @@ mod tests {
             RouterAddress::Ssu2 {
                 introducers: router_introducers,
                 ..
-            } => {
+            } =>
                 for (i, (introducer_router_id, _)) in introducers.iter().enumerate() {
                     router_introducers.push((introducer_router_id.clone(), 1337 + i as u32));
-                }
-            }
+                },
             _ => panic!("expected ssu2"),
         }
 
@@ -6611,13 +6585,12 @@ mod tests {
         let future = {
             futures::future::poll_fn(|cx| loop {
                 match manager.poll_unpin(cx) {
-                    Poll::Pending => {
+                    Poll::Pending =>
                         if manager.pending_queries.is_empty() {
                             return Poll::Ready(());
                         } else {
                             return Poll::Pending;
-                        }
-                    }
+                        },
                     Poll::Ready(_) => panic!("manager returned"),
                 }
             })
@@ -7097,27 +7070,23 @@ mod tests {
                     } => {
                         if ipv4 {
                             match socket_address {
-                                Some(address) => {
+                                Some(address) =>
                                     address.is_ipv4()
                                         && options.get(&Str::from("host")).is_some()
-                                        && options.get(&Str::from("port")).is_some()
-                                }
-                                _ => {
+                                        && options.get(&Str::from("port")).is_some(),
+                                _ =>
                                     options.get(&Str::from("host")).is_none()
-                                        && options.get(&Str::from("port")).is_none()
-                                }
+                                        && options.get(&Str::from("port")).is_none(),
                             }
                         } else {
                             match socket_address {
-                                Some(address) => {
+                                Some(address) =>
                                     address.is_ipv6()
                                         && options.get(&Str::from("host")).is_some()
-                                        && options.get(&Str::from("port")).is_some()
-                                }
-                                _ => {
+                                        && options.get(&Str::from("port")).is_some(),
+                                _ =>
                                     options.get(&Str::from("host")).is_none()
-                                        && options.get(&Str::from("port")).is_none()
-                                }
+                                        && options.get(&Str::from("port")).is_none(),
                             }
                         }
                     }
@@ -7215,11 +7184,10 @@ mod tests {
             RouterAddress::Ssu2 {
                 introducers: router_introducers,
                 ..
-            } => {
+            } =>
                 for (i, (introducer_router_id, _)) in introducers.iter().enumerate() {
                     router_introducers.push((introducer_router_id.clone(), 1337 + i as u32));
-                }
-            }
+                },
             _ => panic!("expected ssu2"),
         }
 

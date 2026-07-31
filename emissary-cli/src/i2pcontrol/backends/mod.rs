@@ -92,8 +92,8 @@ pub struct BackendStatus {
 ///
 /// # Contract
 ///
-/// - `start` must not allocate listeners, destinations, sessions, tasks,
-///   or traffic paths for unsupported backends.
+/// - `start` must not allocate listeners, destinations, sessions, tasks, or traffic paths for
+///   unsupported backends.
 /// - `stop` of an inactive definition must be safe and resource-free.
 /// - `inspect` must return the current state without side effects.
 /// - All methods must honor caller deadlines without blocking.

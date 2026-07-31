@@ -351,12 +351,10 @@ impl<R: Runtime> SessionManager<R> {
             inbound: InboundState {
                 ml_kem: match static_key {
                     StaticPrivateKey::X25519(_) => None,
-                    StaticPrivateKey::MlKem512X25519(_) => {
-                        Some(MlKemContext::MlKem512X25519((ml_kem_512.0, ml_kem_512.2)))
-                    }
-                    StaticPrivateKey::MlKem768X25519(_) => {
-                        Some(MlKemContext::MlKem768X25519((ml_kem_768.0, ml_kem_768.2)))
-                    }
+                    StaticPrivateKey::MlKem512X25519(_) =>
+                        Some(MlKemContext::MlKem512X25519((ml_kem_512.0, ml_kem_512.2))),
+                    StaticPrivateKey::MlKem768X25519(_) =>
+                        Some(MlKemContext::MlKem768X25519((ml_kem_768.0, ml_kem_768.2))),
                     StaticPrivateKey::MlKem1024X25519(_) => Some(MlKemContext::MlKem1024X25519((
                         ml_kem_1024.0,
                         ml_kem_1024.2,
@@ -1386,9 +1384,8 @@ mod tests {
         let (_local_router, remote_command_tx) =
             tokio::time::timeout(Duration::from_secs(5), async {
                 match remote_rx.recv().await {
-                    Some(SubsystemEvent::ConnectionEstablished { router_id, tx }) => {
-                        (router_id, tx)
-                    }
+                    Some(SubsystemEvent::ConnectionEstablished { router_id, tx }) =>
+                        (router_id, tx),
                     _ => panic!("invalid event received"),
                 }
             })
@@ -1397,9 +1394,8 @@ mod tests {
         let (_remote_router, _local_command_tx) =
             tokio::time::timeout(Duration::from_secs(5), async {
                 match local_rx.recv().await {
-                    Some(SubsystemEvent::ConnectionEstablished { router_id, tx }) => {
-                        (router_id, tx)
-                    }
+                    Some(SubsystemEvent::ConnectionEstablished { router_id, tx }) =>
+                        (router_id, tx),
                     _ => panic!("invalid event received"),
                 }
             })

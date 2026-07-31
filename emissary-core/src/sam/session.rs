@@ -864,7 +864,7 @@ impl<R: Runtime> SamSession<R> {
                                 );
                             }
                         }
-                        protocol => {
+                        protocol =>
                             if let Err(error) = self.datagram_manager.on_datagram(payload) {
                                 tracing::warn!(
                                     target: LOG_TARGET,
@@ -873,8 +873,7 @@ impl<R: Runtime> SamSession<R> {
                                     ?error,
                                     "failed to handle datagram",
                                 );
-                            }
-                        }
+                            },
                     }
                 }
                 None => tracing::warn!(
@@ -1305,12 +1304,10 @@ impl<R: Runtime> Future for SamSession<R> {
             match self.destination.poll_next_unpin(cx) {
                 Poll::Pending => break,
                 Poll::Ready(None) => return Poll::Ready(Arc::clone(&self.session_id)),
-                Poll::Ready(Some(DestinationEvent::Messages { messages })) => {
-                    self.on_inbound_message(messages)
-                }
-                Poll::Ready(Some(DestinationEvent::LeaseSetFound { destination_id })) => {
-                    self.on_lease_set_found(destination_id)
-                }
+                Poll::Ready(Some(DestinationEvent::Messages { messages })) =>
+                    self.on_inbound_message(messages),
+                Poll::Ready(Some(DestinationEvent::LeaseSetFound { destination_id })) =>
+                    self.on_lease_set_found(destination_id),
                 Poll::Ready(Some(DestinationEvent::LeaseSetNotFound {
                     destination_id,
                     error,

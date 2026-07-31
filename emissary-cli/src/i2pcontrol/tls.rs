@@ -16,16 +16,20 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::fs;
-use std::io::BufReader;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::{
+    fs,
+    io::BufReader,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use rcgen::{CertificateParams, KeyPair};
 use rustls_pemfile::Item;
-use tokio_rustls::rustls::crypto::ring;
-use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use tokio_rustls::rustls::ServerConfig;
+use tokio_rustls::rustls::{
+    crypto::ring,
+    pki_types::{CertificateDer, PrivateKeyDer},
+    ServerConfig,
+};
 use tracing;
 
 use super::errors::I2pControlError;

@@ -38,7 +38,12 @@ use bytes::Bytes;
 use futures::FutureExt;
 use rand::Rng;
 
-use alloc::{string::ToString, sync::Arc, vec::Vec};
+use alloc::{
+    borrow::ToOwned,
+    string::{String, ToString},
+    sync::Arc,
+    vec::Vec,
+};
 use core::{
     future::Future,
     marker::PhantomData,
@@ -478,6 +483,7 @@ impl<R: Runtime> Router<R> {
     /// Used by I2PControl to read transport/transit byte counters,
     /// connected router counts, and tunnel build statistics without
     /// mutating router state.
+    #[allow(private_interfaces)]
     pub fn event_handle(&self) -> &EventHandle<R> {
         self.transport_manager.event_handle()
     }

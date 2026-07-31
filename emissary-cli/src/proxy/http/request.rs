@@ -199,12 +199,10 @@ impl Request {
                     }
                 }
             }
-            (HostKind::Clearnet { .. }, _, Some(OutproxyKind::Host(outproxy))) => {
-                (outproxy.clone(), None, true)
-            }
-            (HostKind::Clearnet { .. }, _, Some(OutproxyKind::HostWithPort(outproxy, port))) => {
-                (outproxy.clone(), Some(*port), true)
-            }
+            (HostKind::Clearnet { .. }, _, Some(OutproxyKind::Host(outproxy))) =>
+                (outproxy.clone(), None, true),
+            (HostKind::Clearnet { .. }, _, Some(OutproxyKind::HostWithPort(outproxy, port))) =>
+                (outproxy.clone(), Some(*port), true),
             (HostKind::I2p { host }, None, _) => {
                 tracing::warn!(
                     target: LOG_TARGET,

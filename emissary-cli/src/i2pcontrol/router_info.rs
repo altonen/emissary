@@ -22,8 +22,7 @@
 //! produce exact Proposal 170 responses. All data is returned as bounded
 //! immutable snapshots. No mutation, no private keys, no EventSubscriber.
 
-use std::collections::HashMap;
-use std::fmt;
+use std::{collections::HashMap, fmt};
 
 use async_trait::async_trait;
 
@@ -439,8 +438,7 @@ use serde::Serialize;
 /// - No private keys, tunnel session keys, or authentication tokens.
 /// - No direct references into mutable core collections.
 /// - Read operations do not block router progress.
-/// - Methods returning `Result` distinguish unavailable, failed, and
-///   successful-but-empty states.
+/// - Methods returning `Result` distinguish unavailable, failed, and successful-but-empty states.
 #[allow(dead_code)]
 #[async_trait]
 pub trait RouterInfoControl: Send + Sync {

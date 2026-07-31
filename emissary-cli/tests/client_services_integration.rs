@@ -2,12 +2,13 @@ mod fixtures;
 
 use std::sync::Arc;
 
-use emissary_cli::i2pcontrol::client_services::is_valid_client_services_selector;
-use emissary_cli::i2pcontrol::rpc::{
-    error_codes, parse_request, JsonRpcRequest, JsonRpcSuccess, RequestId,
-};
-use emissary_cli::i2pcontrol::service_registry::{
-    ObservedServiceState, ServiceCategory, ServiceMetadata, ServiceRegistry, ServiceUpdateHandle,
+use emissary_cli::i2pcontrol::{
+    client_services::is_valid_client_services_selector,
+    rpc::{error_codes, parse_request, JsonRpcRequest, JsonRpcSuccess, RequestId},
+    service_registry::{
+        ObservedServiceState, ServiceCategory, ServiceMetadata, ServiceRegistry,
+        ServiceUpdateHandle,
+    },
 };
 use serde_json::{json, Value};
 

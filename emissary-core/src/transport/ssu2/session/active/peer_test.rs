@@ -96,7 +96,7 @@ impl<R: Runtime> Ssu2Session<R> {
         //
         // duplicate messages may be received due to retransmissions
         match message.nonce() {
-            Some(nonce) => {
+            Some(nonce) =>
                 if !self.duplicate_filter.insert(nonce) {
                     tracing::debug!(
                         target: LOG_TARGET,
@@ -110,8 +110,7 @@ impl<R: Runtime> Ssu2Session<R> {
                         "peer-test",
                     );
                     return;
-                }
-            }
+                },
             None => {
                 tracing::warn!(
                     target: LOG_TARGET,

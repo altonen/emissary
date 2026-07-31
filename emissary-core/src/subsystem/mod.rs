@@ -157,9 +157,8 @@ impl OutboundMessage {
         match self {
             Self::Message(message) => message.serialized_len_short(),
             Self::MessageWithFeedback(message, _) => message.serialized_len_short(),
-            Self::Messages(messages) => {
-                messages.iter().fold(0, |total, message| total + message.serialized_len_short())
-            }
+            Self::Messages(messages) =>
+                messages.iter().fold(0, |total, message| total + message.serialized_len_short()),
             Self::Dummy => unreachable!(),
         }
     }
@@ -577,9 +576,8 @@ impl<R: Runtime> SubsystemManager<R> {
             );
 
             return match message {
-                OutboundMessage::Message(message) => {
-                    self.on_inbound_message(vec![(router_id, message)])
-                }
+                OutboundMessage::Message(message) =>
+                    self.on_inbound_message(vec![(router_id, message)]),
                 OutboundMessage::Messages(messages) => self.on_inbound_message(
                     messages.into_iter().map(|message| (router_id.clone(), message)).collect(),
                 ),
@@ -601,7 +599,7 @@ impl<R: Runtime> SubsystemManager<R> {
                 );
                 pending.push(message);
             }
-            Some(RouterState::Connected { tx }) => {
+            Some(RouterState::Connected { tx }) =>
                 if let Err(error) = tx.try_send(message) {
                     tracing::debug!(
                         target: LOG_TARGET,
@@ -609,8 +607,7 @@ impl<R: Runtime> SubsystemManager<R> {
                         ?error,
                         "failed to send message to router",
                     );
-                }
-            }
+                },
             None => match self.dial_tx.try_send(router_id.clone()) {
                 Ok(()) => {
                     tracing::debug!(
@@ -659,7 +656,7 @@ impl<R: Runtime> SubsystemManager<R> {
                         netdb.push((router_id, message));
                     }
                 }
-                MessageType::Garlic => {
+                MessageType::Garlic =>
                     if let Some(messages) = self.on_garlic_message(message) {
                         let mut inbound = vec![];
                         let mut outbound = vec![];
@@ -683,8 +680,7 @@ impl<R: Runtime> SubsystemManager<R> {
                         outbound.into_iter().for_each(|(router_id, message)| {
                             self.on_outbound_message(router_id, message, Source::Unknown);
                         });
-                    }
-                }
+                    },
                 MessageType::TunnelData => {
                     if let Some(tunnel_id) = EncryptedTunnelData::parse(&message.payload)
                         .map(|message| message.tunnel_id())
@@ -931,7 +927,7 @@ impl<R: Runtime> SubsystemManager<R> {
                                     payload: message_body.to_vec(),
                                 },
                             }),
-                            CloveDeliveryInstructions::Router { hash } => {
+                            CloveDeliveryInstructions::Router { hash } =>
                                 Some(DeliveryInstructions::Router {
                                     router: RouterId::from(hash),
                                     message: Message {
@@ -940,8 +936,7 @@ impl<R: Runtime> SubsystemManager<R> {
                                         expiration,
                                         payload: message_body.to_vec(),
                                     },
-                                })
-                            }
+                                }),
                             CloveDeliveryInstructions::Tunnel { hash, tunnel_id } => {
                                 let message = MessageBuilder::standard()
                                     .with_message_type(message_type)

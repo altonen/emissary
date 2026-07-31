@@ -24,11 +24,11 @@
 
 use std::collections::HashSet;
 
-use crate::i2pcontrol::control_plane::TunnelManagerControl;
-use crate::i2pcontrol::rpc::{
-    self, JsonRpcErrorResponse, JsonRpcRequest, JsonRpcSuccess, RequestId,
+use crate::i2pcontrol::{
+    control_plane::TunnelManagerControl,
+    rpc::{self, JsonRpcErrorResponse, JsonRpcRequest, JsonRpcSuccess, RequestId},
+    service_registry::{ObservedServiceState, ServiceCategory, ServiceSnapshot},
 };
-use crate::i2pcontrol::service_registry::{ObservedServiceState, ServiceCategory, ServiceSnapshot};
 
 const LOG_TARGET: &str = "emissary::i2pcontrol::client_services_handler";
 
@@ -204,7 +204,8 @@ pub async fn assemble_response(
 
 /// Resolve I2PTunnel selector by querying the live TunnelManagerControl.
 ///
-/// Per Proposal 170: `{"client": {<name>: {"address": "..."}}, "server": {<name>: {"address": "...", "port": N}}}`
+/// Per Proposal 170: `{"client": {<name>: {"address": "..."}}, "server": {<name>: {"address":
+/// "...", "port": N}}}`
 ///
 /// This queries the shared TunnelManagerControl at request time, ensuring
 /// that Create/Edit/Delete mutations are visible without restart. Store
@@ -459,8 +460,10 @@ fn error_response(id: RequestId, code: i32, message: impl Into<String>) -> serde
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::i2pcontrol::rpc::JsonRpcRequest;
-    use crate::i2pcontrol::service_registry::{ServiceCategory, ServiceMetadata, ServiceRegistry};
+    use crate::i2pcontrol::{
+        rpc::JsonRpcRequest,
+        service_registry::{ServiceCategory, ServiceMetadata, ServiceRegistry},
+    };
 
     fn test_request(selectors: serde_json::Value) -> JsonRpcRequest {
         JsonRpcRequest {

@@ -165,9 +165,8 @@ pub struct TokioTcpListener(net::TcpListener);
 impl TcpListener<TokioTcpStream> for TokioTcpListener {
     async fn bind(address: SocketAddr) -> Option<Self> {
         let socket = match address {
-            SocketAddr::V4(_) => {
-                Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP)).ok()?
-            }
+            SocketAddr::V4(_) =>
+                Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP)).ok()?,
             SocketAddr::V6(_) => {
                 let socket = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP)).ok()?;
                 socket.set_only_v6(true).ok()?;
@@ -245,9 +244,8 @@ impl UdpSocket for TokioUdpSocket {
     fn bind_with_mtu(address: SocketAddr, mtu: usize) -> impl Future<Output = Option<Self>> {
         async move {
             let socket = match address {
-                SocketAddr::V4(_) => {
-                    Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).ok()?
-                }
+                SocketAddr::V4(_) =>
+                    Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).ok()?,
                 SocketAddr::V6(_) => {
                     let socket =
                         Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP)).ok()?;

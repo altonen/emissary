@@ -452,12 +452,10 @@ impl fmt::Debug for TransmissionMessage {
                 .debug_struct("TransmissionMessage::Message")
                 .field("message", &message)
                 .finish(),
-            Self::PeerTest(block) => {
-                f.debug_struct("TransmissionMessage::PeerTest").field("block", &block).finish()
-            }
-            Self::Relay(block) => {
-                f.debug_struct("TransmissionMessage::Relay").field("block", &block).finish()
-            }
+            Self::PeerTest(block) =>
+                f.debug_struct("TransmissionMessage::PeerTest").field("block", &block).finish(),
+            Self::Relay(block) =>
+                f.debug_struct("TransmissionMessage::Relay").field("block", &block).finish(),
             Self::PeerTestWithRouterInfo((block, _)) => f
                 .debug_struct("TransmissionMessage::PeerTestWithRouterInfo")
                 .field("block", &block)

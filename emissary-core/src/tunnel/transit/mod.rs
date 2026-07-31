@@ -866,11 +866,10 @@ impl<R: Runtime> Future for TransitTunnelManager<R> {
 
                 match result {
                     Ok((router, message, maybe_feedback_tx)) => match maybe_feedback_tx {
-                        None => {
+                        None =>
                             if let Err(error) = self.subsystem_handle.send(&router, message) {
                                 tracing::error!(target: LOG_TARGET, ?error, "failed to send message");
-                            }
-                        }
+                            },
                         Some(tx) => {
                             if let Err(error) =
                                 self.subsystem_handle.send_with_feedback(&router, message, tx)

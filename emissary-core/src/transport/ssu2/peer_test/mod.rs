@@ -203,9 +203,8 @@ impl<R: Runtime> ActiveTest<R> {
     /// The test is considered stale if it's pending or active after 20 seconds of getting started.
     fn is_active(&self) -> bool {
         match self {
-            Self::Pending { started, .. } | Self::Active { started, .. } => {
-                started.elapsed() < PEER_TEST_EXPIRATION
-            }
+            Self::Pending { started, .. } | Self::Active { started, .. } =>
+                started.elapsed() < PEER_TEST_EXPIRATION,
         }
     }
 }
@@ -346,9 +345,7 @@ impl<R: Runtime> PeerTestManager<R> {
                 address
                     if address.supports_peer_testing()
                         && (address.supports_ipv4() || address.supports_ipv6()) =>
-                {
-                    Some((address.supports_ipv4(), address.supports_ipv6()))
-                }
+                    Some((address.supports_ipv4(), address.supports_ipv6())),
                 _ => None,
             })
         else {

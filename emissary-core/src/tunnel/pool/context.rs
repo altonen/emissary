@@ -147,10 +147,9 @@ impl TunnelPoolContextHandle {
                         message_id
                     }
                     None => match inner.listeners.remove(&message_id) {
-                        Some(listener) => {
-                            return listener.send(message).map_err(RoutingError::ChannelClosed)
-                        }
-                        None => {
+                        Some(listener) =>
+                            return listener.send(message).map_err(RoutingError::ChannelClosed),
+                        None =>
                             return self
                                 .event_tx
                                 .try_send(TunnelPoolEvent::Message { message })
@@ -171,8 +170,7 @@ impl TunnelPoolContextHandle {
                                         ) => RoutingError::ChannelClosed(message),
                                         _ => unreachable!(),
                                     }
-                                })
-                        }
+                                }),
                     },
                 }
             }
@@ -214,19 +212,16 @@ impl TunnelPoolContextHandle {
         match inner.listeners.remove(&message_id) {
             Some(listener) => listener.send(message).map_err(RoutingError::ChannelClosed),
             // TODO: is this necessary?
-            None => {
+            None =>
                 self.tx
                     .try_send(TunnelMessage::Inbound { message })
                     .map_err(|error| match error {
-                        mpsc::errors::TrySendError::Full(TunnelMessage::Inbound { message }) => {
-                            RoutingError::ChannelFull(message)
-                        }
-                        mpsc::errors::TrySendError::Closed(TunnelMessage::Inbound { message }) => {
-                            RoutingError::ChannelClosed(message)
-                        }
+                        mpsc::errors::TrySendError::Full(TunnelMessage::Inbound { message }) =>
+                            RoutingError::ChannelFull(message),
+                        mpsc::errors::TrySendError::Closed(TunnelMessage::Inbound { message }) =>
+                            RoutingError::ChannelClosed(message),
                         _ => unreachable!(),
-                    })
-            }
+                    }),
         }
     }
 

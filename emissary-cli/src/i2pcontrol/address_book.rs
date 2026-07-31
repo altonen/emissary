@@ -39,15 +39,16 @@
 //! - No handler writes `router.toml`.
 //! - No handler calls current runtime `AddressBookHandle` mutators.
 //! - No administrative state changes runtime destination resolution.
-//! - Logs and errors contain no full destination, subscription value, configuration value, token, or state path.
+//! - Logs and errors contain no full destination, subscription value, configuration value, token,
+//!   or state path.
 
-use crate::i2pcontrol::domain::address_book::{
-    AddressBookConfiguration, AddressBookEntry, AdministrativeAddressBookType, SubscriptionSet,
+use crate::i2pcontrol::{
+    domain::address_book::{
+        AddressBookConfiguration, AddressBookEntry, AdministrativeAddressBookType, SubscriptionSet,
+    },
+    rpc::{self, JsonRpcErrorResponse, JsonRpcRequest, JsonRpcSuccess, RequestId},
+    server::I2pControlState,
 };
-use crate::i2pcontrol::rpc::{
-    self, JsonRpcErrorResponse, JsonRpcRequest, JsonRpcSuccess, RequestId,
-};
-use crate::i2pcontrol::server::I2pControlState;
 
 const LOG_TARGET: &str = "emissary::i2pcontrol::address_book";
 
@@ -796,8 +797,10 @@ mod tests {
 
     // --- Handler integration tests using FakeAddressBookControl ---
 
-    use crate::i2pcontrol::control_plane::{AddressBookControl, FakeAddressBookControl};
-    use crate::i2pcontrol::rpc::JsonRpcRequest;
+    use crate::i2pcontrol::{
+        control_plane::{AddressBookControl, FakeAddressBookControl},
+        rpc::JsonRpcRequest,
+    };
 
     fn test_state() -> crate::i2pcontrol::server::I2pControlState {
         let mut state =

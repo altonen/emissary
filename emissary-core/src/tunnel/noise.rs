@@ -238,9 +238,8 @@ enum ShortInboundSessionState {
 impl fmt::Debug for ShortInboundSessionState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Initialized { .. } => {
-                f.debug_struct("ShortInboundSessionState::Initialized").finish_non_exhaustive()
-            }
+            Self::Initialized { .. } =>
+                f.debug_struct("ShortInboundSessionState::Initialized").finish_non_exhaustive(),
             Self::RecordDecrypted { .. } => f
                 .debug_struct("ShortInboundSessionState::RecordDecrypted")
                 .finish_non_exhaustive(),
@@ -434,15 +433,13 @@ enum LongInboundSessionState {
 impl fmt::Debug for LongInboundSessionState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Initialized { .. } => {
-                f.debug_struct("LongInboundSessionState::Initialized").finish_non_exhaustive()
-            }
+            Self::Initialized { .. } =>
+                f.debug_struct("LongInboundSessionState::Initialized").finish_non_exhaustive(),
             Self::RecordDecrypted { .. } => f
                 .debug_struct("LongInboundSessionState::RecordDecrypted")
                 .finish_non_exhaustive(),
-            Self::BuildRecordsEncrypted { .. } => {
-                f.debug_struct("LongInboundSessionState::BuildRecordsEncrypted").finish()
-            }
+            Self::BuildRecordsEncrypted { .. } =>
+                f.debug_struct("LongInboundSessionState::BuildRecordsEncrypted").finish(),
             Self::Poisoned => f.debug_struct("LongInboundSessionState::Poisoned").finish(),
         }
     }

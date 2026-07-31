@@ -78,6 +78,7 @@ impl SocksProxy {
     /// Used by the I2PControl passive observation layer to record the
     /// `Listening` transition after the listener has been successfully
     /// bound. Does not mutate or supervise the proxy lifecycle.
+    #[allow(dead_code)]
     pub fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
         self.listener.local_addr()
     }
@@ -161,11 +162,10 @@ impl SocksProxy {
                         );
                         Err(error)
                     }
-                    Ok(mut i2p_stream) => {
+                    Ok(mut i2p_stream) =>
                         tokio::io::copy_bidirectional(&mut i2p_stream, &mut stream)
                             .await
-                            .map_err(From::from)
-                    }
+                            .map_err(From::from),
                 }
             });
 

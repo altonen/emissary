@@ -334,9 +334,8 @@ impl RouterInfo {
     /// Try to locate NTCP2 over IPv4.
     pub fn ntcp2_ipv4(&self) -> Option<&RouterAddress> {
         self.addresses.iter().find(|address| match address {
-            RouterAddress::Ntcp2 { socket_address, .. } => {
-                socket_address.is_some_and(|address| address.is_ipv4())
-            }
+            RouterAddress::Ntcp2 { socket_address, .. } =>
+                socket_address.is_some_and(|address| address.is_ipv4()),
             _ => false,
         })
     }
@@ -344,9 +343,8 @@ impl RouterInfo {
     /// Try to locate NTCP2 over IPv4 and return mutable reference to it.
     pub fn ntcp2_ipv4_mut(&mut self) -> Option<&mut RouterAddress> {
         self.addresses.iter_mut().find(|address| match address {
-            RouterAddress::Ntcp2 { socket_address, .. } => {
-                socket_address.is_some_and(|address| address.is_ipv4())
-            }
+            RouterAddress::Ntcp2 { socket_address, .. } =>
+                socket_address.is_some_and(|address| address.is_ipv4()),
             _ => false,
         })
     }
@@ -354,9 +352,8 @@ impl RouterInfo {
     /// Try to locate NTCP2 over IPv6 and return mutable reference to it.
     pub fn ntcp2_ipv6_mut(&mut self) -> Option<&mut RouterAddress> {
         self.addresses.iter_mut().find(|address| match address {
-            RouterAddress::Ntcp2 { socket_address, .. } => {
-                socket_address.is_some_and(|address| address.is_ipv6())
-            }
+            RouterAddress::Ntcp2 { socket_address, .. } =>
+                socket_address.is_some_and(|address| address.is_ipv6()),
             _ => false,
         })
     }
@@ -364,9 +361,8 @@ impl RouterInfo {
     /// Try to locate SSU2 over IPv4.
     pub fn ssu2_ipv4(&self) -> Option<&RouterAddress> {
         self.addresses.iter().find(|address| match address {
-            RouterAddress::Ssu2 { socket_address, .. } => {
-                socket_address.is_some_and(|address| address.is_ipv4())
-            }
+            RouterAddress::Ssu2 { socket_address, .. } =>
+                socket_address.is_some_and(|address| address.is_ipv4()),
             _ => false,
         })
     }
@@ -374,9 +370,8 @@ impl RouterInfo {
     /// Try to locate SSU2 over IPv6.
     pub fn ssu2_ipv6(&self) -> Option<&RouterAddress> {
         self.addresses.iter().find(|address| match address {
-            RouterAddress::Ssu2 { socket_address, .. } => {
-                socket_address.is_some_and(|address| address.is_ipv6())
-            }
+            RouterAddress::Ssu2 { socket_address, .. } =>
+                socket_address.is_some_and(|address| address.is_ipv6()),
             _ => false,
         })
     }
@@ -384,9 +379,8 @@ impl RouterInfo {
     /// Try to locate SSU2 over IPv4 and return mutable reference to it.
     pub fn ssu2_ipv4_mut(&mut self) -> Option<&mut RouterAddress> {
         self.addresses.iter_mut().find(|address| match address {
-            RouterAddress::Ssu2 { socket_address, .. } => {
-                socket_address.is_some_and(|address| address.is_ipv4())
-            }
+            RouterAddress::Ssu2 { socket_address, .. } =>
+                socket_address.is_some_and(|address| address.is_ipv4()),
             _ => false,
         })
     }
@@ -394,9 +388,8 @@ impl RouterInfo {
     /// Try to locate SSU2 over IPv6 and return mutable reference to it.
     pub fn ssu2_ipv6_mut(&mut self) -> Option<&mut RouterAddress> {
         self.addresses.iter_mut().find(|address| match address {
-            RouterAddress::Ssu2 { socket_address, .. } => {
-                socket_address.is_some_and(|address| address.is_ipv6())
-            }
+            RouterAddress::Ssu2 { socket_address, .. } =>
+                socket_address.is_some_and(|address| address.is_ipv6()),
             _ => false,
         })
     }
@@ -415,11 +408,10 @@ impl RouterInfo {
         self.addresses.iter().fold(None, |selected, transport| {
             match transport.classify() {
                 None => return selected,
-                Some(kind) => {
+                Some(kind) =>
                     if !supported.contains(&kind) {
                         return selected;
-                    }
-                }
+                    },
             }
 
             match selected {

@@ -113,12 +113,10 @@ pub fn Dashboard() -> Element {
     };
     let (pf_text, pf_class) = match &state.read().config.port_forwarding {
         None => (String::from("Off"), "panel-value disabled"),
-        Some(PortForwardingConfig { nat_pmp: true, .. }) => {
-            (String::from("NAT-PMP"), "panel-value enabled")
-        }
-        Some(PortForwardingConfig { upnp: true, .. }) => {
-            (String::from("UPnP"), "panel-value enabled")
-        }
+        Some(PortForwardingConfig { nat_pmp: true, .. }) =>
+            (String::from("NAT-PMP"), "panel-value enabled"),
+        Some(PortForwardingConfig { upnp: true, .. }) =>
+            (String::from("UPnP"), "panel-value enabled"),
         _ => (String::from("Off"), "panel-value disabled"),
     };
 

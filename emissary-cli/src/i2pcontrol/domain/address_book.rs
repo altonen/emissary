@@ -16,8 +16,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::collections::BTreeMap;
-use std::fmt;
+use std::{collections::BTreeMap, fmt};
 
 use serde::{Deserialize, Serialize};
 

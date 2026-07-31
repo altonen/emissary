@@ -21,8 +21,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use super::generation_store::{GenerationStore, StoreResult};
-use crate::i2pcontrol::domain::address_book::SubscriptionSet;
-use crate::i2pcontrol::domain::revision::StateRevision;
+use crate::i2pcontrol::domain::{address_book::SubscriptionSet, revision::StateRevision};
 
 /// Persistent subscription store payload.
 #[allow(dead_code)]

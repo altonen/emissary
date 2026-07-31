@@ -130,16 +130,14 @@ impl<R: Runtime, T: Tunnel<R>> PendingTunnel<R, T> {
 
         // inbound tnnels always have one fake local record
         match T::direction() {
-            TunnelDirection::Outbound => {
+            TunnelDirection::Outbound =>
                 if hops.len() > MAX_BUILD_RECORDS {
                     return Err(TunnelError::TooManyHops(hops.len()));
-                }
-            }
-            TunnelDirection::Inbound => {
+                },
+            TunnelDirection::Inbound =>
                 if hops.len() > MAX_BUILD_RECORDS - 1 {
                     return Err(TunnelError::TooManyHops(hops.len()));
-                }
-            }
+                },
         }
 
         // extract pending tunnel's id and id of the tunnel that's used for reception of the reply
@@ -511,7 +509,7 @@ impl<R: Runtime, T: Tunnel<R>> PendingTunnel<R, T> {
                         hop_results[0].1 = Some(Err(TunnelError::InvalidMessage));
                         return Err(hop_results);
                     }
-                    Some(record) => {
+                    Some(record) =>
                         if Sha256::new().update(record).finalize_new() != checksum {
                             tracing::warn!(
                                 target: LOG_TARGET,
@@ -522,17 +520,15 @@ impl<R: Runtime, T: Tunnel<R>> PendingTunnel<R, T> {
 
                             hop_results[0].1 = Some(Err(TunnelError::InvalidMessage));
                             return Err(hop_results);
-                        }
-                    }
+                        },
                 }
 
                 message.payload.to_vec()
             }
 
             // for outbound builds the reply can be received in `OutboundTunnelBuildReply`
-            (TunnelDirection::Outbound, MessageType::OutboundTunnelBuildReply) => {
-                message.payload.to_vec()
-            }
+            (TunnelDirection::Outbound, MessageType::OutboundTunnelBuildReply) =>
+                message.payload.to_vec(),
 
             // outbound reply can also be wrapped in a `GarlicMessage`
             (TunnelDirection::Outbound, MessageType::Garlic) => {
@@ -595,9 +591,8 @@ impl<R: Runtime, T: Tunnel<R>> PendingTunnel<R, T> {
                         }
                     )
                 }) {
-                    Some(GarlicMessageBlock::GarlicClove { message_body, .. }) => {
-                        message_body.to_vec()
-                    }
+                    Some(GarlicMessageBlock::GarlicClove { message_body, .. }) =>
+                        message_body.to_vec(),
                     _ => {
                         tracing::warn!(
                             target: LOG_TARGET,
@@ -1017,15 +1012,14 @@ mod test {
         };
 
         match pending_tunnel.try_build_tunnel(message) {
-            Err(error) => {
+            Err(error) =>
                 for (i, (_, result)) in error.into_iter().enumerate() {
                     if i % 2 == 0 {
                         assert_eq!(result, Some(Err(TunnelError::TunnelRejected(30))));
                     } else {
                         assert_eq!(result, Some(Ok(())));
                     }
-                }
-            }
+                },
             _ => panic!("invalid result"),
         }
     }

@@ -18,13 +18,17 @@
 
 use async_trait::async_trait;
 
-use crate::i2pcontrol::backends::registry::TunnelBackendRegistry;
-use crate::i2pcontrol::backends::{BackendError, TunnelBackend};
-use crate::i2pcontrol::domain::address_book::{
-    AddressBookConfiguration, AddressBookEntry, AdministrativeAddressBookType, SubscriptionSet,
+use crate::i2pcontrol::{
+    backends::{registry::TunnelBackendRegistry, BackendError, TunnelBackend},
+    domain::{
+        address_book::{
+            AddressBookConfiguration, AddressBookEntry, AdministrativeAddressBookType,
+            SubscriptionSet,
+        },
+        tunnel::{TunnelDefinition, TunnelName, TunnelType},
+    },
+    stores::fakes::TunnelStoreFake,
 };
-use crate::i2pcontrol::domain::tunnel::{TunnelDefinition, TunnelName, TunnelType};
-use crate::i2pcontrol::stores::fakes::TunnelStoreFake;
 
 /// Control plane interface for I2PControl method handlers.
 ///
@@ -271,8 +275,8 @@ impl AddressBookControl for FakeAddressBookControl {
 /// - CRUD operations affect exactly one tunnel definition per call.
 /// - Lifecycle operations are serialized per definition.
 /// - No implementation writes to `router.toml`.
-/// - No implementation performs network or filesystem side effects beyond
-///   persistence of tunnel definitions.
+/// - No implementation performs network or filesystem side effects beyond persistence of tunnel
+///   definitions.
 /// - Unsupported tunnel types return deterministic not-implemented errors.
 /// - Startup-managed definitions are read-only and reject mutations.
 #[allow(dead_code)]
@@ -425,9 +429,8 @@ impl TunnelManagerControl for FakeTunnelManagerControl {
         let backend = self.registry.get(def.tunnel_type);
         match backend.start(&def).await {
             Ok(()) => Ok(format!("ok - {} started", def.tunnel_type.as_str())),
-            Err(BackendError::NotImplemented { tunnel_type }) => {
-                Ok(format!("error - {} not implemented", tunnel_type.as_str()))
-            }
+            Err(BackendError::NotImplemented { tunnel_type }) =>
+                Ok(format!("error - {} not implemented", tunnel_type.as_str())),
             Err(e) => Ok(format!("error - {}", e)),
         }
     }
@@ -462,9 +465,8 @@ impl TunnelManagerControl for FakeTunnelManagerControl {
         let _ = backend.stop(&def).await;
         match backend.start(&def).await {
             Ok(()) => Ok(format!("ok - {} restarted", def.tunnel_type.as_str())),
-            Err(BackendError::NotImplemented { tunnel_type }) => {
-                Ok(format!("error - {} not implemented", tunnel_type.as_str()))
-            }
+            Err(BackendError::NotImplemented { tunnel_type }) =>
+                Ok(format!("error - {} not implemented", tunnel_type.as_str())),
             Err(e) => Ok(format!("error - {}", e)),
         }
     }

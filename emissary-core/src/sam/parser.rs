@@ -788,9 +788,8 @@ impl<'a, R: Runtime> TryFrom<ParsedCommand<'a, R>> for SamCommand {
                 name: parsed_cmd.key_value_pairs.get("NAME").ok_or(())?.to_string(),
             }),
             ("DEST", Some("GENERATE")) => match parsed_cmd.key_value_pairs.get("SIGNATURE_TYPE") {
-                Some(signature_type) if *signature_type == "7" => {
-                    Ok(SamCommand::GenerateDestination)
-                }
+                Some(signature_type) if *signature_type == "7" =>
+                    Ok(SamCommand::GenerateDestination),
                 Some(signature_type) => {
                     tracing::warn!(
                         target: LOG_TARGET,

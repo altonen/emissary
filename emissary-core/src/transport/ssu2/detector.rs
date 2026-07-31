@@ -186,31 +186,28 @@ impl<R: Runtime> Detector<R> {
             (false, false, None) => FirewallStatus::Unknown,
 
             // y n n: firewalled (unless currently symnat)
-            (true, false, None) => {
+            (true, false, None) =>
                 if self.firewall_status == FirewallStatus::SymmetricNat {
                     FirewallStatus::SymmetricNat
                 } else {
                     FirewallStatus::Firewalled
-                }
-            }
+                },
 
             // n y n: ok (unless currently symnat)
-            (false, true, None) => {
+            (false, true, None) =>
                 if self.firewall_status == FirewallStatus::SymmetricNat {
                     FirewallStatus::Unknown
                 } else {
                     FirewallStatus::Ok
-                }
-            }
+                },
 
             // y y n: ok (unless currently symnat)
-            (true, true, None) => {
+            (true, true, None) =>
                 if self.firewall_status == FirewallStatus::SymmetricNat {
                     FirewallStatus::Unknown
                 } else {
                     FirewallStatus::Ok
-                }
-            }
+                },
 
             // n n y: n/a (can't send message 6 without message 4)
             (false, false, Some(_)) => FirewallStatus::Unknown,

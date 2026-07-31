@@ -32,8 +32,7 @@
 
 #![cfg(feature = "i2pcontrol")]
 
-use std::collections::HashSet;
-use std::path::Path;
+use std::{collections::HashSet, path::Path};
 
 // ──────────────────────────────────────────────────────────────────────
 // § 1. Source-level structural guards
@@ -205,9 +204,10 @@ fn production_adapter_is_read_only() {
 #[test]
 fn control_traits_are_send_sync() {
     fn assert_send_sync<T: Send + Sync + ?Sized>() {}
-    use emissary_cli::i2pcontrol::control_plane::AddressBookControl;
-    use emissary_cli::i2pcontrol::control_plane::TunnelManagerControl;
-    use emissary_cli::i2pcontrol::router_info::RouterInfoControl;
+    use emissary_cli::i2pcontrol::{
+        control_plane::{AddressBookControl, TunnelManagerControl},
+        router_info::RouterInfoControl,
+    };
     assert_send_sync::<dyn RouterInfoControl>();
     assert_send_sync::<dyn AddressBookControl>();
     assert_send_sync::<dyn TunnelManagerControl>();
@@ -407,9 +407,10 @@ fn backend_registry_compile_time_guard() {
 #[test]
 fn control_traits_are_object_safe() {
     fn assert_object_safe<T: ?Sized>() {}
-    use emissary_cli::i2pcontrol::control_plane::AddressBookControl;
-    use emissary_cli::i2pcontrol::control_plane::TunnelManagerControl;
-    use emissary_cli::i2pcontrol::router_info::RouterInfoControl;
+    use emissary_cli::i2pcontrol::{
+        control_plane::{AddressBookControl, TunnelManagerControl},
+        router_info::RouterInfoControl,
+    };
     assert_object_safe::<dyn RouterInfoControl>();
     assert_object_safe::<dyn AddressBookControl>();
     assert_object_safe::<dyn TunnelManagerControl>();

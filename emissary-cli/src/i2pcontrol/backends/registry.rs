@@ -16,8 +16,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use super::TunnelBackend;
 use crate::i2pcontrol::domain::tunnel::{TunnelType, ALL_TUNNEL_ACTIONS, ALL_TUNNEL_TYPES};
@@ -155,11 +154,12 @@ const _: () = {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::i2pcontrol::backends::unsupported::UnsupportedTunnelBackend;
-    use crate::i2pcontrol::backends::BackendError;
-    use crate::i2pcontrol::domain::tunnel::{
-        StartIntent, TunnelDefinition, TunnelName, TunnelOptions, TunnelOwnership,
-        TunnelRuntimeState,
+    use crate::i2pcontrol::{
+        backends::{unsupported::UnsupportedTunnelBackend, BackendError},
+        domain::tunnel::{
+            StartIntent, TunnelDefinition, TunnelName, TunnelOptions, TunnelOwnership,
+            TunnelRuntimeState,
+        },
     };
 
     fn test_definition(tunnel_type: TunnelType) -> TunnelDefinition {

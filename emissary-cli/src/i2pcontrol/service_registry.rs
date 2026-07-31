@@ -29,15 +29,15 @@
 //! - Fixed set of service categories; no unbounded dynamic entries.
 //! - Generation-fenced updates: stale tasks cannot overwrite current state.
 //! - Immutable snapshots are cheaply cloneable.
-//! - No task handles, cancellation authority, or mutation capability is
-//!   exposed.
-//! - No secrets, credentials, private keys, or sensitive configuration
-//!   enters the registry.
+//! - No task handles, cancellation authority, or mutation capability is exposed.
+//! - No secrets, credentials, private keys, or sensitive configuration enters the registry.
 //! - Shutdown-safe: updates during shutdown do not race with reads.
 //! - Concurrent readers/writers produce coherent before-or-after snapshots.
 
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::{
+    collections::HashMap,
+    sync::{Arc, RwLock},
+};
 
 /// Sanitized failure description suitable for API responses.
 ///

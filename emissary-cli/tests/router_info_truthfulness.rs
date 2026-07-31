@@ -26,12 +26,14 @@
 
 use std::sync::Arc;
 
-use emissary_cli::i2pcontrol::router_info::{
-    ActivePeerStats, BannedPeer, ClockSkew, FakeRouterInfoControl, I2PTunnelStats, InspectionError,
-    NetworkSnapshot, PeerIdentity, PeerLimits, RouterInfoControl, TunnelBuildStats, TunnelSummary,
-    UdpSnapshot,
+use emissary_cli::i2pcontrol::{
+    router_info::{
+        ActivePeerStats, BannedPeer, ClockSkew, FakeRouterInfoControl, I2PTunnelStats,
+        InspectionError, NetworkSnapshot, PeerIdentity, PeerLimits, RouterInfoControl,
+        TunnelBuildStats, TunnelSummary, UdpSnapshot,
+    },
+    rpc,
 };
-use emissary_cli::i2pcontrol::rpc;
 
 // --- Test helpers ---
 

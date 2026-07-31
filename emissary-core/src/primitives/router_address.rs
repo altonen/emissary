@@ -170,10 +170,9 @@ impl MlKemPreference {
 
         let fits_in_mtu = match preference {
             Self::MlKem512 => true,
-            _ => {
+            _ =>
                 (is_ipv4 && mtu >= constants::crypto::ml_kem::ML_KEM_768_IPV4_MIN_MTU)
-                    || (!is_ipv4 && mtu >= constants::crypto::ml_kem::ML_KEM_768_IPV6_MIN_MTU)
-            }
+                    || (!is_ipv4 && mtu >= constants::crypto::ml_kem::ML_KEM_768_IPV6_MIN_MTU),
         };
 
         if fits_in_mtu {
@@ -585,19 +584,17 @@ impl RouterAddress {
                 // validate PQ options
                 //
                 // TODO: ugly
-                let ml_kem =
-                    if let Some(pq) = options.get(&Str::from("pq")) {
-                        match &**pq {
-                            "3" => Some(MlKemPreference::MlKem512),
-                            value @ ("4" | "3,4" | "4,3") => {
-                                let ipv4 = match socket_address {
-                                    Some(address) => Some(address.is_ipv4()),
-                                    None => options
-                                        .get(&Str::from("caps"))
-                                        .map(|caps| caps.contains("4")),
-                                };
+                let ml_kem = if let Some(pq) = options.get(&Str::from("pq")) {
+                    match &**pq {
+                        "3" => Some(MlKemPreference::MlKem512),
+                        value @ ("4" | "3,4" | "4,3") => {
+                            let ipv4 = match socket_address {
+                                Some(address) => Some(address.is_ipv4()),
+                                None =>
+                                    options.get(&Str::from("caps")).map(|caps| caps.contains("4")),
+                            };
 
-                                match ipv4 {
+                            match ipv4 {
                                 Some(true)
                                     if mtu < constants::crypto::ml_kem::ML_KEM_768_IPV4_MIN_MTU =>
                                     return Err(Err::Error((
@@ -613,23 +610,22 @@ impl RouterAddress {
                                 _ => {}
                             }
 
-                                match value {
-                                    "3,4" => Some(MlKemPreference::MlKem512MlKem768),
-                                    "4" => Some(MlKemPreference::MlKem768),
-                                    "4,3" => Some(MlKemPreference::MlKem768MlKem512),
-                                    _ => unreachable!(),
-                                }
-                            }
-                            _ => {
-                                return Err(Err::Error((
-                                    Some(rest),
-                                    RouterAddressParseError::InvalidPq,
-                                )))
+                            match value {
+                                "3,4" => Some(MlKemPreference::MlKem512MlKem768),
+                                "4" => Some(MlKemPreference::MlKem768),
+                                "4,3" => Some(MlKemPreference::MlKem768MlKem512),
+                                _ => unreachable!(),
                             }
                         }
-                    } else {
-                        None
-                    };
+                        _ =>
+                            return Err(Err::Error((
+                                Some(rest),
+                                RouterAddressParseError::InvalidPq,
+                            ))),
+                    }
+                } else {
+                    None
+                };
 
                 Ok((
                     rest,
@@ -656,9 +652,8 @@ impl RouterAddress {
     pub fn supports_peer_testing(&self) -> bool {
         match self {
             Self::Ntcp2 { .. } => false,
-            Self::Ssu2 { options, .. } => {
-                options.iter().any(|(key, value)| &(**key) == "caps" && value.contains("B"))
-            }
+            Self::Ssu2 { options, .. } =>
+                options.iter().any(|(key, value)| &(**key) == "caps" && value.contains("B")),
         }
     }
 
@@ -666,9 +661,8 @@ impl RouterAddress {
     pub fn supports_relay(&self) -> bool {
         match self {
             Self::Ntcp2 { .. } => false,
-            Self::Ssu2 { options, .. } => {
-                options.iter().any(|(key, value)| &(**key) == "caps" && value.contains("C"))
-            }
+            Self::Ssu2 { options, .. } =>
+                options.iter().any(|(key, value)| &(**key) == "caps" && value.contains("C")),
         }
     }
 
@@ -714,12 +708,11 @@ impl RouterAddress {
     /// `caps` are checked for `4`/`6` flags, with IPv4 preferred.
     pub fn classify(&self) -> Option<TransportKind> {
         match self {
-            Self::Ntcp2 { socket_address, .. } => {
+            Self::Ntcp2 { socket_address, .. } =>
                 socket_address.map(|address| match address.ip() {
                     IpAddr::V4(_) => TransportKind::Ntcp2V4,
                     IpAddr::V6(_) => TransportKind::Ntcp2V6,
-                })
-            }
+                }),
             Self::Ssu2 {
                 socket_address,
                 options,
@@ -1635,7 +1628,7 @@ mod tests {
         .serialize();
 
         match RouterAddress::parse::<MockRuntime>(&serialized).unwrap() {
-            RouterAddress::Ntcp2 { options, .. } => {
+            RouterAddress::Ntcp2 { options, .. } =>
                 if disabled.unwrap_or(false) {
                     assert!(options.get(&Str::from("pq")).is_none());
                 } else {
@@ -1643,8 +1636,7 @@ mod tests {
                         options.get(&Str::from("pq")),
                         Some(&Str::from(variant.to_string()))
                     );
-                }
-            }
+                },
             _ => panic!("invalid ntcp2 address"),
         }
     }

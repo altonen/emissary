@@ -245,7 +245,7 @@ impl<R: Runtime> Future for TerminatingSsu2Session<R> {
                             }
                         }
                     }
-                    None => {
+                    None =>
                         if let Err(error) = self.on_packet(pkt) {
                             tracing::debug!(
                                 target: LOG_TARGET,
@@ -254,8 +254,7 @@ impl<R: Runtime> Future for TerminatingSsu2Session<R> {
                                 ?error,
                                 "failed to handle packet",
                             );
-                        }
-                    }
+                        },
                 },
             }
         }

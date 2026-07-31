@@ -18,8 +18,7 @@
 
 use parking_lot::RwLock;
 use rand::RngExt;
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 /// Maximum number of tokens to retain in memory.
 const MAX_TOKENS: usize = 1024;

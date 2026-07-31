@@ -7,15 +7,15 @@
 
 #![cfg(feature = "i2pcontrol")]
 
-use emissary_cli::i2pcontrol::control_plane::{FakeTunnelManagerControl, TunnelManagerControl};
-use emissary_cli::i2pcontrol::domain::tunnel::{
-    StartIntent, TunnelDefinition, TunnelName, TunnelOptions, TunnelOwnership, TunnelRuntimeState,
-    TunnelType,
-};
-use emissary_cli::i2pcontrol::rpc::{parse_request, JsonRpcRequest};
-use emissary_cli::i2pcontrol::server::I2pControlState;
-use emissary_cli::i2pcontrol::service_registry::{
-    ObservedServiceState, ServiceCategory, ServiceMetadata, ServiceRegistry,
+use emissary_cli::i2pcontrol::{
+    control_plane::{FakeTunnelManagerControl, TunnelManagerControl},
+    domain::tunnel::{
+        StartIntent, TunnelDefinition, TunnelName, TunnelOptions, TunnelOwnership,
+        TunnelRuntimeState, TunnelType,
+    },
+    rpc::{parse_request, JsonRpcRequest},
+    server::I2pControlState,
+    service_registry::{ObservedServiceState, ServiceCategory, ServiceMetadata, ServiceRegistry},
 };
 use serde_json::{json, Value};
 

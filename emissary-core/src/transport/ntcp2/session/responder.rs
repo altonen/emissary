@@ -127,15 +127,12 @@ enum ResponderState {
 impl fmt::Debug for ResponderState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::PublicKeyRead { .. } => {
-                f.debug_struct("ResponderState::PublicKeyRead").finish_non_exhaustive()
-            }
-            Self::SessionRequested { .. } => {
-                f.debug_struct("ResponderState::SessionRequested").finish_non_exhaustive()
-            }
-            Self::SessionCreated { .. } => {
-                f.debug_struct("ResponderState::SessionCreated").finish_non_exhaustive()
-            }
+            Self::PublicKeyRead { .. } =>
+                f.debug_struct("ResponderState::PublicKeyRead").finish_non_exhaustive(),
+            Self::SessionRequested { .. } =>
+                f.debug_struct("ResponderState::SessionRequested").finish_non_exhaustive(),
+            Self::SessionCreated { .. } =>
+                f.debug_struct("ResponderState::SessionCreated").finish_non_exhaustive(),
             Self::Poisoned => f.debug_struct("ResponderState::Poisoned").finish(),
         }
     }
@@ -569,7 +566,7 @@ impl Responder {
             encryption_ctx.noise_ctx().mix_hash(&message[48..]);
 
             match MessageBlock::parse(&router_info) {
-                Ok(MessageBlock::RouterInfo { router_info, .. }) => {
+                Ok(MessageBlock::RouterInfo { router_info, .. }) =>
                     RouterInfo::parse::<R>(router_info)
                         .map(|parsed| (parsed, Bytes::from(router_info.to_vec())))
                         .map_err(|error| {
@@ -580,8 +577,7 @@ impl Responder {
                             );
 
                             Ntcp2Error::InvalidRouterInfo
-                        })
-                }
+                        }),
                 Ok(message) => {
                     tracing::warn!(
                         target: LOG_TARGET,

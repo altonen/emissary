@@ -382,9 +382,8 @@ impl<R: Runtime> Future for PacketRetransmitter<R> {
 
                 match self.pkt {
                     None => Poll::Pending,
-                    Some(ref pkt) => {
-                        Poll::Ready(PacketRetransmitterEvent::Retransmit { pkt: pkt.clone() })
-                    }
+                    Some(ref pkt) =>
+                        Poll::Ready(PacketRetransmitterEvent::Retransmit { pkt: pkt.clone() }),
                 }
             }
             None => Poll::Ready(PacketRetransmitterEvent::Timeout),

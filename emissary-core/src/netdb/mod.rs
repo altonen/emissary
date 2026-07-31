@@ -1293,9 +1293,8 @@ impl<R: Runtime> NetDb<R> {
                 target: LOG_TARGET,
                 "ignoring database lookup, not a floodfill",
             ),
-            MessageType::DatabaseSearchReply => {
-                return self.on_database_search_reply(message, sender)
-            }
+            MessageType::DatabaseSearchReply =>
+                return self.on_database_search_reply(message, sender),
             MessageType::DeliveryStatus => {}
             message_type => tracing::warn!(
                 target: LOG_TARGET,
@@ -1698,9 +1697,8 @@ impl<R: Runtime> NetDb<R> {
                     let reader = self.router_ctx.profile_storage().reader();
 
                     match reader.router_info(&floodfill) {
-                        Some(router_info) => {
-                            break (floodfill, router_info.identity.static_key().clone())
-                        }
+                        Some(router_info) =>
+                            break (floodfill, router_info.identity.static_key().clone()),
                         None => {
                             tracing::debug!(
                                 target: LOG_TARGET,
@@ -1851,7 +1849,7 @@ impl<R: Runtime> Future for NetDb<R> {
                         self.router_dht.as_mut().map(|dht| dht.add_router(router_id.clone()));
                     }
                 }
-                Poll::Ready(Some(NetDbEvent::Message { messages })) => {
+                Poll::Ready(Some(NetDbEvent::Message { messages })) =>
                     messages.into_iter().for_each(|(router_id, message)| {
                         if let Err(error) = self.on_message(message, Some(router_id)) {
                             tracing::debug!(
@@ -1860,8 +1858,7 @@ impl<R: Runtime> Future for NetDb<R> {
                                 "failed to handle message",
                             );
                         }
-                    })
-                }
+                    }),
                 Poll::Ready(Some(NetDbEvent::Dummy)) => {}
             }
         }
@@ -1915,15 +1912,12 @@ impl<R: Runtime> Future for NetDb<R> {
             match self.handle_rx.poll_recv(cx) {
                 Poll::Pending => break,
                 Poll::Ready(None) => return Poll::Ready(()),
-                Poll::Ready(Some(NetDbAction::QueryLeaseSet2 { key, tx })) => {
-                    self.query_lease_set(key, tx)
-                }
-                Poll::Ready(Some(NetDbAction::GetClosestFloodfills { key, tx })) => {
-                    self.get_closest_floodfills(key, tx)
-                }
-                Poll::Ready(Some(NetDbAction::QueryRouterInfo { router_id, tx })) => {
-                    self.query_router_info(router_id, tx)
-                }
+                Poll::Ready(Some(NetDbAction::QueryLeaseSet2 { key, tx })) =>
+                    self.query_lease_set(key, tx),
+                Poll::Ready(Some(NetDbAction::GetClosestFloodfills { key, tx })) =>
+                    self.get_closest_floodfills(key, tx),
+                Poll::Ready(Some(NetDbAction::QueryRouterInfo { router_id, tx })) =>
+                    self.query_router_info(router_id, tx),
                 Poll::Ready(Some(NetDbAction::PublishRouterInfo {
                     router_id,
                     router_info,
@@ -1947,11 +1941,10 @@ impl<R: Runtime> Future for NetDb<R> {
             match self.query_timers.poll_next_unpin(cx) {
                 Poll::Pending => break,
                 Poll::Ready(None) => return Poll::Ready(()),
-                Poll::Ready(Some(key)) => {
+                Poll::Ready(Some(key)) =>
                     if let Some(query) = self.active.remove(&key) {
                         self.handle_timeout(key, query);
-                    }
-                }
+                    },
             }
         }
 
@@ -2572,9 +2565,8 @@ mod tests {
             // verify all floodfills have another pending message
             assert!(floodfills.iter().all(|_| {
                 match event_rx.try_recv().unwrap() {
-                    SubsystemManagerEvent::Message { router_id, .. } => {
-                        floodfills_clone.remove(&router_id)
-                    }
+                    SubsystemManagerEvent::Message { router_id, .. } =>
+                        floodfills_clone.remove(&router_id),
                     _ => panic!("invalid event"),
                 }
             }));
@@ -2620,9 +2612,8 @@ mod tests {
             // verify all floodfills have another pending message
             assert!(floodfills.iter().all(|_| {
                 match event_rx.try_recv().unwrap() {
-                    SubsystemManagerEvent::Message { router_id, .. } => {
-                        floodfills_clone.remove(&router_id)
-                    }
+                    SubsystemManagerEvent::Message { router_id, .. } =>
+                        floodfills_clone.remove(&router_id),
                     _ => panic!("invalid event"),
                 }
             }));

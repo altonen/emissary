@@ -28,15 +28,19 @@
 
 #![cfg(feature = "i2pcontrol")]
 
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-
-use emissary_cli::i2pcontrol::control_plane::{ControlPlane, TunnelManagerControl};
-use emissary_cli::i2pcontrol::production::{
-    EventMetrics, ProductionControlPlane, ProductionRouterInfoControl,
-    ProductionTunnelManagerControl,
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
 };
-use emissary_cli::i2pcontrol::router_info::{RouterInfoControl, TunnelSummary};
+
+use emissary_cli::i2pcontrol::{
+    control_plane::{ControlPlane, TunnelManagerControl},
+    production::{
+        EventMetrics, ProductionControlPlane, ProductionRouterInfoControl,
+        ProductionTunnelManagerControl,
+    },
+    router_info::{RouterInfoControl, TunnelSummary},
+};
 
 use emissary_core::FirewallStatus;
 

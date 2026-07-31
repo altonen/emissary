@@ -124,9 +124,8 @@ impl fmt::Debug for InboundSessionState {
             Self::NewSessionReplySent { .. } => f
                 .debug_struct("InboundSessionState::NewSessionReplySent ")
                 .finish_non_exhaustive(),
-            Self::Poisoned => {
-                f.debug_struct("InboundSessionState::Poisoned ").finish_non_exhaustive()
-            }
+            Self::Poisoned =>
+                f.debug_struct("InboundSessionState::Poisoned ").finish_non_exhaustive(),
         }
     }
 }

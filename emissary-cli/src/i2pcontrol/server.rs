@@ -16,39 +16,42 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
-use axum::routing::post;
-use axum::{Json, Router};
-use hyper_util::rt::{TokioExecutor, TokioIo};
-use hyper_util::server::conn::auto::Builder as HyperBuilder;
-use hyper_util::service::TowerToHyperService;
-use tokio::net::TcpListener;
-use tokio::sync::Semaphore;
+use axum::{
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+    routing::post,
+    Json, Router,
+};
+use hyper_util::{
+    rt::{TokioExecutor, TokioIo},
+    server::conn::auto::Builder as HyperBuilder,
+    service::TowerToHyperService,
+};
+use tokio::{net::TcpListener, sync::Semaphore};
 use tokio_rustls::TlsAcceptor;
 use tower::ServiceExt;
 use tower_http::limit::RequestBodyLimitLayer;
 use tracing;
 
-use super::auth::{self, TokenService};
-use super::control_plane::{AddressBookControl, ControlPlane, TunnelManagerControl};
-use super::errors::I2pControlError;
-use super::production::{
-    EventMetrics, ProductionAddressBookControl, ProductionControlPlane,
-    ProductionRouterInfoControl, ProductionTunnelManagerControl,
+use super::{
+    auth::{self, TokenService},
+    control_plane::{AddressBookControl, ControlPlane, TunnelManagerControl},
+    errors::I2pControlError,
+    production::{
+        EventMetrics, ProductionAddressBookControl, ProductionControlPlane,
+        ProductionRouterInfoControl, ProductionTunnelManagerControl,
+    },
+    router_info::RouterInfoControl,
+    rpc::{
+        self, AuthenticateParams, AuthenticateResult, JsonRpcErrorResponse, JsonRpcRequest,
+        JsonRpcSuccess, RequestId,
+    },
+    service_registry::{ServiceRegistry, ServiceSnapshot},
+    tls::TlsConfig,
 };
-use super::router_info::RouterInfoControl;
-use super::rpc::{
-    self, AuthenticateParams, AuthenticateResult, JsonRpcErrorResponse, JsonRpcRequest,
-    JsonRpcSuccess, RequestId,
-};
-use super::service_registry::{ServiceRegistry, ServiceSnapshot};
-use super::tls::TlsConfig;
 
 use emissary_core::crypto::base64_encode;
 
@@ -171,10 +174,10 @@ impl I2pControlState {
     /// Available only in test builds.
     #[cfg(test)]
     pub fn new_test(password: String) -> Self {
-        use super::control_plane::{
-            FakeAddressBookControl, FakeControlPlane, FakeTunnelManagerControl,
+        use super::{
+            control_plane::{FakeAddressBookControl, FakeControlPlane, FakeTunnelManagerControl},
+            router_info::FakeRouterInfoControl,
         };
-        use super::router_info::FakeRouterInfoControl;
         let log_ring = Arc::new(super::observability::LogRing::default());
         Self {
             token_service: TokenService::new(),
@@ -199,10 +202,10 @@ impl I2pControlState {
     /// `cfg(test)` so integration tests can exercise the handler.
     #[allow(dead_code)]
     pub fn new_for_test(password: String) -> Self {
-        use super::control_plane::{
-            FakeAddressBookControl, FakeControlPlane, FakeTunnelManagerControl,
+        use super::{
+            control_plane::{FakeAddressBookControl, FakeControlPlane, FakeTunnelManagerControl},
+            router_info::FakeRouterInfoControl,
         };
-        use super::router_info::FakeRouterInfoControl;
         let log_ring = Arc::new(super::observability::LogRing::default());
         Self {
             token_service: TokenService::new(),
@@ -1204,10 +1207,10 @@ fn extract_token(headers: &HeaderMap) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::i2pcontrol::control_plane::{
-        FakeAddressBookControl, FakeControlPlane, FakeTunnelManagerControl,
+    use crate::i2pcontrol::{
+        control_plane::{FakeAddressBookControl, FakeControlPlane, FakeTunnelManagerControl},
+        router_info::FakeRouterInfoControl,
     };
-    use crate::i2pcontrol::router_info::FakeRouterInfoControl;
 
     #[test]
     fn config_validation_empty_password() {

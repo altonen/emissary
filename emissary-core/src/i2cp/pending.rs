@@ -193,9 +193,8 @@ impl<R: Runtime> fmt::Debug for PendingSessionState<R> {
                 .debug_struct("PendingSessionState::AwaitingLeaseSet")
                 .field("session_id", &session_id)
                 .finish_non_exhaustive(),
-            Self::Poisoned => {
-                f.debug_struct("PendingSessionState::Poisoned").finish_non_exhaustive()
-            }
+            Self::Poisoned =>
+                f.debug_struct("PendingSessionState::Poisoned").finish_non_exhaustive(),
         }
     }
 }
@@ -446,11 +445,10 @@ impl<R: Runtime> Future for PendingI2cpSession<R> {
             match self.state.socket().poll_next_unpin(cx) {
                 Poll::Pending => break,
                 Poll::Ready(None) => return Poll::Ready(None),
-                Poll::Ready(Some(message)) => {
+                Poll::Ready(Some(message)) =>
                     if let Some(context) = self.on_message(message) {
                         return Poll::Ready(Some(context));
-                    }
-                }
+                    },
             }
         }
 

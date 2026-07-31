@@ -25,18 +25,21 @@
 
 #![cfg(feature = "i2pcontrol")]
 
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::Arc;
-
-use emissary_cli::i2pcontrol::control_plane::ControlPlane;
-use emissary_cli::i2pcontrol::observability::{LogEntry, LogRing};
-use emissary_cli::i2pcontrol::production::{
-    EventMetrics, ProductionAddressBookControl, ProductionControlPlane,
-    ProductionRouterInfoControl, ProductionTunnelManagerControl,
+use std::sync::{
+    atomic::{AtomicU64, AtomicUsize, Ordering},
+    Arc,
 };
-use emissary_cli::i2pcontrol::router_info::{NetworkStatus, RouterInfoControl};
-use emissary_cli::i2pcontrol::stores::address_book_store::AddressBookStore;
-use emissary_cli::i2pcontrol::stores::tunnel_store::TunnelStore;
+
+use emissary_cli::i2pcontrol::{
+    control_plane::ControlPlane,
+    observability::{LogEntry, LogRing},
+    production::{
+        EventMetrics, ProductionAddressBookControl, ProductionControlPlane,
+        ProductionRouterInfoControl, ProductionTunnelManagerControl,
+    },
+    router_info::{NetworkStatus, RouterInfoControl},
+    stores::{address_book_store::AddressBookStore, tunnel_store::TunnelStore},
+};
 
 use emissary_core::FirewallStatus;
 
@@ -170,9 +173,9 @@ async fn production_address_book_control_crud() {
     let ab = ProductionAddressBookControl::new(dir.keep());
     ab.load().await.unwrap();
 
-    use emissary_cli::i2pcontrol::control_plane::AddressBookControl;
-    use emissary_cli::i2pcontrol::domain::address_book::{
-        AddressBookEntry, AdministrativeAddressBookType,
+    use emissary_cli::i2pcontrol::{
+        control_plane::AddressBookControl,
+        domain::address_book::{AddressBookEntry, AdministrativeAddressBookType},
     };
 
     let entries = ab.list(AdministrativeAddressBookType::Private).await.unwrap();
@@ -210,9 +213,9 @@ async fn production_address_book_persistence_round_trip() {
     {
         let ab = ProductionAddressBookControl::new(dir.path().to_path_buf());
         ab.load().await.unwrap();
-        use emissary_cli::i2pcontrol::control_plane::AddressBookControl;
-        use emissary_cli::i2pcontrol::domain::address_book::{
-            AddressBookEntry, AdministrativeAddressBookType,
+        use emissary_cli::i2pcontrol::{
+            control_plane::AddressBookControl,
+            domain::address_book::{AddressBookEntry, AdministrativeAddressBookType},
         };
         ab.add(
             AdministrativeAddressBookType::Private,
@@ -230,8 +233,9 @@ async fn production_address_book_persistence_round_trip() {
     {
         let ab = ProductionAddressBookControl::new(dir.path().to_path_buf());
         ab.load().await.unwrap();
-        use emissary_cli::i2pcontrol::control_plane::AddressBookControl;
-        use emissary_cli::i2pcontrol::domain::address_book::AdministrativeAddressBookType;
+        use emissary_cli::i2pcontrol::{
+            control_plane::AddressBookControl, domain::address_book::AdministrativeAddressBookType,
+        };
         let total = ab.list(AdministrativeAddressBookType::Private).await.unwrap().len()
             + ab.list(AdministrativeAddressBookType::Local).await.unwrap().len();
         assert_eq!(total, 2);
@@ -246,10 +250,12 @@ async fn production_tunnel_manager_crud() {
     let tm = ProductionTunnelManagerControl::new(dir.keep()).unwrap();
     tm.load().await.unwrap();
 
-    use emissary_cli::i2pcontrol::control_plane::TunnelManagerControl;
-    use emissary_cli::i2pcontrol::domain::tunnel::{
-        StartIntent, TunnelDefinition, TunnelName, TunnelOptions, TunnelOwnership,
-        TunnelRuntimeState, TunnelType,
+    use emissary_cli::i2pcontrol::{
+        control_plane::TunnelManagerControl,
+        domain::tunnel::{
+            StartIntent, TunnelDefinition, TunnelName, TunnelOptions, TunnelOwnership,
+            TunnelRuntimeState, TunnelType,
+        },
     };
 
     let list = tm.list().await.unwrap();
@@ -279,10 +285,12 @@ async fn production_tunnel_manager_duplicate_create_rejected() {
     let dir = tempfile::tempdir().unwrap();
     let tm = ProductionTunnelManagerControl::new(dir.keep()).unwrap();
     tm.load().await.unwrap();
-    use emissary_cli::i2pcontrol::control_plane::TunnelManagerControl;
-    use emissary_cli::i2pcontrol::domain::tunnel::{
-        StartIntent, TunnelDefinition, TunnelName, TunnelOptions, TunnelOwnership,
-        TunnelRuntimeState, TunnelType,
+    use emissary_cli::i2pcontrol::{
+        control_plane::TunnelManagerControl,
+        domain::tunnel::{
+            StartIntent, TunnelDefinition, TunnelName, TunnelOptions, TunnelOwnership,
+            TunnelRuntimeState, TunnelType,
+        },
     };
     let def = TunnelDefinition {
         name: TunnelName::new("dup").unwrap(),
@@ -472,10 +480,12 @@ async fn production_router_info_i2ptunnel_stats() {
     let dir = tempfile::tempdir().unwrap();
     let tm = ProductionTunnelManagerControl::new(dir.keep()).unwrap();
     tm.load().await.unwrap();
-    use emissary_cli::i2pcontrol::control_plane::TunnelManagerControl;
-    use emissary_cli::i2pcontrol::domain::tunnel::{
-        StartIntent, TunnelDefinition, TunnelName, TunnelOptions, TunnelOwnership,
-        TunnelRuntimeState, TunnelType,
+    use emissary_cli::i2pcontrol::{
+        control_plane::TunnelManagerControl,
+        domain::tunnel::{
+            StartIntent, TunnelDefinition, TunnelName, TunnelOptions, TunnelOwnership,
+            TunnelRuntimeState, TunnelType,
+        },
     };
     tm.create(TunnelDefinition {
         name: TunnelName::new("t1").unwrap(),

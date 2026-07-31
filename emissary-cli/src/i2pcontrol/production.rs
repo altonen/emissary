@@ -25,32 +25,31 @@
 //! All adapters are `Send + Sync` and document no mutation, no event
 //! subscriber consumption, and no private key exposure.
 
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use async_trait::async_trait;
 
-use crate::i2pcontrol::backends::registry::TunnelBackendRegistry;
-use crate::i2pcontrol::backends::BackendError;
-use crate::i2pcontrol::backends::TunnelBackend;
-use crate::i2pcontrol::control_plane::{AddressBookControl, ControlPlane, TunnelManagerControl};
-use crate::i2pcontrol::domain::address_book::{
-    AddressBookConfiguration, AddressBookEntry, AdministrativeAddressBookType, SubscriptionSet,
+use crate::i2pcontrol::{
+    backends::{registry::TunnelBackendRegistry, BackendError, TunnelBackend},
+    control_plane::{AddressBookControl, ControlPlane, TunnelManagerControl},
+    domain::{
+        address_book::{
+            AddressBookConfiguration, AddressBookEntry, AdministrativeAddressBookType,
+            SubscriptionSet,
+        },
+        tunnel::{TunnelDefinition, TunnelName, TunnelType},
+    },
+    observability::LogRing,
+    router_info::{
+        ActivePeerStats, BannedPeer, ClockSkew, I2PTunnelStats, InspectionError, InspectionGroup,
+        LogEntry, LogSnapshot, NetworkSnapshot, NetworkStatus, PeerIdentity, PeerLimits,
+        RecentTransitTraffic, RouterInfoControl, TransitBytes, TransportBytes, TunnelBuildStats,
+        TunnelSummary,
+    },
+    stores::{address_book_store::AddressBookStore, tunnel_store::TunnelStore},
 };
-use crate::i2pcontrol::domain::tunnel::{TunnelDefinition, TunnelName, TunnelType};
-use crate::i2pcontrol::observability::LogRing;
-use crate::i2pcontrol::router_info::{
-    ActivePeerStats, BannedPeer, ClockSkew, I2PTunnelStats, InspectionError, InspectionGroup,
-    LogEntry, LogSnapshot, NetworkSnapshot, NetworkStatus, PeerIdentity, PeerLimits,
-    RecentTransitTraffic, RouterInfoControl, TransitBytes, TransportBytes, TunnelBuildStats,
-    TunnelSummary,
-};
-use crate::i2pcontrol::stores::address_book_store::AddressBookStore;
-use crate::i2pcontrol::stores::tunnel_store::TunnelStore;
 
-use emissary_core::events::EventHandle;
-use emissary_core::runtime::Runtime;
-use emissary_core::FirewallStatus;
+use emissary_core::{events::EventHandle, runtime::Runtime, FirewallStatus};
 
 // `Runtime` is used by `EventHandleMetrics<R>` below.
 
@@ -415,9 +414,8 @@ impl TunnelManagerControl for ProductionTunnelManagerControl {
         let backend = self.registry.get(def.tunnel_type);
         match backend.start(&def).await {
             Ok(()) => Ok(format!("ok - {} started", def.tunnel_type.as_str())),
-            Err(BackendError::NotImplemented { tunnel_type }) => {
-                Ok(format!("error - {} not implemented", tunnel_type.as_str()))
-            }
+            Err(BackendError::NotImplemented { tunnel_type }) =>
+                Ok(format!("error - {} not implemented", tunnel_type.as_str())),
             Err(e) => Ok(format!("error - {e}")),
         }
     }
@@ -449,9 +447,8 @@ impl TunnelManagerControl for ProductionTunnelManagerControl {
         let _ = backend.stop(&def).await;
         match backend.start(&def).await {
             Ok(()) => Ok(format!("ok - {} restarted", def.tunnel_type.as_str())),
-            Err(BackendError::NotImplemented { tunnel_type }) => {
-                Ok(format!("error - {} not implemented", tunnel_type.as_str()))
-            }
+            Err(BackendError::NotImplemented { tunnel_type }) =>
+                Ok(format!("error - {} not implemented", tunnel_type.as_str())),
             Err(e) => Ok(format!("error - {e}")),
         }
     }

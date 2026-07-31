@@ -418,12 +418,10 @@ impl<R: Runtime> RelayManager<R> {
         // select version for the relay connection
         let version = match ml_kem {
             None => ProtocolVersion::V2,
-            Some(MlKemPreference::MlKem512 | MlKemPreference::MlKem512MlKem768) => {
-                ProtocolVersion::V3
-            }
-            Some(MlKemPreference::MlKem768 | MlKemPreference::MlKem768MlKem512) => {
-                ProtocolVersion::V4
-            }
+            Some(MlKemPreference::MlKem512 | MlKemPreference::MlKem512MlKem768) =>
+                ProtocolVersion::V3,
+            Some(MlKemPreference::MlKem768 | MlKemPreference::MlKem768MlKem512) =>
+                ProtocolVersion::V4,
         };
 
         // create relay request and signature

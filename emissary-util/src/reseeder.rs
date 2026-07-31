@@ -186,13 +186,12 @@ impl Reseeder {
     ) -> anyhow::Result<Vec<ReseedRouterInfo>> {
         match hosts {
             None => Self::reseed_inner::<R>(RESEED_SERVERS, force_ipv4).await,
-            Some(hosts) => {
+            Some(hosts) =>
                 Self::reseed_inner::<R>(
                     &hosts.iter().map(AsRef::as_ref).collect::<Vec<_>>(),
                     force_ipv4,
                 )
-                .await
-            }
+                .await,
         }
     }
 }

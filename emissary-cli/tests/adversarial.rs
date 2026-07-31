@@ -737,8 +737,7 @@ fn selector_with_trailing_space() {
 
 #[test]
 fn token_service_concurrent_access() {
-    use std::sync::Arc;
-    use std::thread;
+    use std::{sync::Arc, thread};
 
     let svc = Arc::new(emissary_cli::i2pcontrol::auth::TokenService::new());
     let mut handles = vec![];
@@ -782,10 +781,11 @@ fn notification_has_no_id() {
 use std::sync::Arc;
 
 use emissary_cli::i2pcontrol::server::{I2pControlState, ProductionControls, ServerInstance};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
-use tokio_rustls::rustls::ClientConfig;
-use tokio_rustls::TlsConnector;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
+};
+use tokio_rustls::{rustls::ClientConfig, TlsConnector};
 
 /// Create a TLS client that trusts the server's self-signed certificate.
 fn tls_test_client(
@@ -863,8 +863,7 @@ async fn tls_test_server() -> (
     tokio::sync::broadcast::Sender<()>,
 ) {
     use emissary_cli::i2pcontrol::production::ProductionControlPlane;
-    use tokio_rustls::rustls::ServerConfig;
-    use tokio_rustls::TlsAcceptor;
+    use tokio_rustls::{rustls::ServerConfig, TlsAcceptor};
 
     let tmp = tempfile::tempdir().unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

@@ -80,21 +80,34 @@ macro_rules! init_logger {
         let targets = parse_log_targets($log);
         let (filter, handle) = reload::Layer::new(targets);
 
-        // Create bounded log ring for I2PControl snapshot/clear
-        let log_ring = Arc::new(crate::i2pcontrol::observability::LogRing::default());
-        let log_ring_layer =
-            crate::i2pcontrol::observability::LogRing::shared_layer(Arc::clone(&log_ring));
+        #[cfg(feature = "i2pcontrol")]
+        let log_ring = {
+            let ring = Arc::new(crate::i2pcontrol::observability::LogRing::default());
+            let layer = crate::i2pcontrol::observability::LogRing::shared_layer(Arc::clone(&ring));
+            (Some(ring), Some(layer))
+        };
+        #[cfg(not(feature = "i2pcontrol"))]
+        let log_ring = (None::<Arc<()>>, None::<()>);
 
+        #[cfg(feature = "i2pcontrol")]
         let _ = tracing_subscriber::registry()
             .with(
                 tracing_subscriber::fmt::layer()
                     .with_timer(ChronoLocal::new(String::from("%H:%M:%S%.3f"))),
             )
             .with(filter)
-            .with(log_ring_layer)
+            .with(log_ring.1.expect("I2PControl log layer is initialized"))
+            .try_init();
+        #[cfg(not(feature = "i2pcontrol"))]
+        let _ = tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_timer(ChronoLocal::new(String::from("%H:%M:%S%.3f"))),
+            )
+            .with(filter)
             .try_init();
 
-        (handle, log_ring)
+        (handle, log_ring.0)
     }};
     ($log:expr, $handle:ident) => {{
         $handle.reload(crate::logger::parse_log_targets($log)).expect("to succeed");

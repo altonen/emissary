@@ -179,9 +179,8 @@ enum PendingSessionState {
 impl fmt::Debug for PendingSessionState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PendingSessionState::AwaitingRetry { .. } => {
-                f.debug_struct("PendingSessionState::AwaitingRetry").finish_non_exhaustive()
-            }
+            PendingSessionState::AwaitingRetry { .. } =>
+                f.debug_struct("PendingSessionState::AwaitingRetry").finish_non_exhaustive(),
             PendingSessionState::SendSessionRequest { token, .. } => f
                 .debug_struct("PendingSessionState::SendSessionRequest")
                 .field("token", &token)
@@ -193,9 +192,8 @@ impl fmt::Debug for PendingSessionState {
                 .debug_struct("PendingSessionState::AwaitingFirstAck")
                 .field("relay_tag", &relay_tag)
                 .finish(),
-            PendingSessionState::Poisoned => {
-                f.debug_struct("PendingSessionState::Poisoned").finish()
-            }
+            PendingSessionState::Poisoned =>
+                f.debug_struct("PendingSessionState::Poisoned").finish(),
         }
     }
 }
@@ -1066,18 +1064,16 @@ impl<R: Runtime> Future for OutboundSsu2Session<R> {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         loop {
             let pkt = match &mut self.rx {
-                None => {
+                None =>
                     return Poll::Ready(PendingSsu2SessionStatus::SocketClosed {
                         started: self.started,
-                    })
-                }
+                    }),
                 Some(rx) => match rx.poll_recv(cx) {
                     Poll::Pending => break,
-                    Poll::Ready(None) => {
+                    Poll::Ready(None) =>
                         return Poll::Ready(PendingSsu2SessionStatus::SocketClosed {
                             started: self.started,
-                        })
-                    }
+                        }),
                     Poll::Ready(Some(Packet { pkt, .. })) => pkt,
                 },
             };
@@ -1123,14 +1119,13 @@ impl<R: Runtime> Future for OutboundSsu2Session<R> {
                     PacketKind::Multi(pkts) => self.write_buffer.extend(pkts),
                 }
             }
-            Poll::Ready(PacketRetransmitterEvent::Timeout) => {
+            Poll::Ready(PacketRetransmitterEvent::Timeout) =>
                 return Poll::Ready(PendingSsu2SessionStatus::Timeout {
                     connection_id: self.src_id,
                     router_id: Some(self.router_id.clone()),
                     started: self.started,
                     address: Some(self.address),
-                })
-            }
+                }),
         }
 
         loop {
@@ -1144,11 +1139,10 @@ impl<R: Runtime> Future for OutboundSsu2Session<R> {
                     self.write_buffer.push_front(pkt);
                     return Poll::Pending;
                 }
-                Poll::Ready(None) => {
+                Poll::Ready(None) =>
                     return Poll::Ready(PendingSsu2SessionStatus::SocketClosed {
                         started: self.started,
-                    })
-                }
+                    }),
                 Poll::Ready(Some(_)) => {}
             }
         }

@@ -22,10 +22,14 @@
 //! - `MetricsSnapshot`: cloneable cumulative metrics source.
 //! - `RollingWindow`: fixed-bucket rolling traffic accumulator.
 
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::{
+    collections::VecDeque,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
+    time::Instant,
+};
 
 // --- Log Ring ---
 
