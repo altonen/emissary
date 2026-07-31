@@ -201,8 +201,9 @@ fn estimate_response_budget(key_set: &HashSet<&str>) -> Result<(), String> {
 
 /// Handle the RouterInfo JSON-RPC method.
 ///
-/// Parses the `Selector` parameter, dispatches to snapshot sources,
-/// and returns only the requested keys.
+/// Proposal 170 additions are selected by direct parameter presence. The
+/// older nested `Selector` map remains available as a compatibility form and
+/// is rejected when mixed with direct canonical parameters.
 pub async fn handle_router_info(
     state: &crate::i2pcontrol::server::I2pControlState,
     request: &JsonRpcRequest,
@@ -217,44 +218,67 @@ pub async fn handle_router_info(
         }
     };
 
-    // Extract Selector parameter — must be a JSON object with boolean values
-    let selector_map = match params.get("Selector") {
-        Some(serde_json::Value::Object(map)) => map,
-        _ => {
-            return error_response(
-                id,
-                rpc::error_codes::INVALID_PARAMS,
-                "Missing or invalid 'Selector' parameter; expected a JSON object",
-            );
-        }
-    };
+    let has_nested_selector = params.contains_key("Selector");
+    let has_direct_parameters = params.keys().any(|key| key != "Selector");
+    if has_nested_selector && has_direct_parameters {
+        return error_response(
+            id,
+            rpc::error_codes::INVALID_PARAMS,
+            "Direct Proposal 170 selectors cannot be mixed with compatibility 'Selector'",
+        );
+    }
 
-    // Build requested key set from presence of true values
     let mut requested_keys: Vec<&str> = Vec::new();
     let mut peer_ri_id: Option<&str> = None;
-    for (key, value) in selector_map {
-        if key.as_str() == rpc::router_info_keys::PEERS_ROUTER_INFO {
-            // PEERS_ROUTER_INFO uses a string value (peer ID) instead of bool
-            if let Some(id_str) = value.as_str() {
-                if !id_str.is_empty() {
-                    peer_ri_id = Some(id_str);
-                    if !rpc::is_valid_router_info_selector(key) {
-                        return error_response(
-                            id,
-                            rpc::error_codes::INVALID_PARAMS,
-                            format!("Unknown selector: '{key}'"),
-                        );
-                    }
-                    requested_keys.push(key.as_str());
-                }
-            }
-        } else if value.as_bool() == Some(true) {
-            // Validate the selector key
-            if !rpc::is_valid_router_info_selector(key) {
+    if has_nested_selector {
+        // Compatibility form: the historical nested selector map only
+        // selects truthy boolean values (with its established peer lookup
+        // string exception).
+        let selector_map = match params.get("Selector") {
+            Some(serde_json::Value::Object(map)) => map,
+            _ => {
                 return error_response(
                     id,
                     rpc::error_codes::INVALID_PARAMS,
-                    format!("Unknown selector: '{key}'"),
+                    "Invalid compatibility 'Selector'; expected a JSON object",
+                );
+            }
+        };
+        for (key, value) in selector_map {
+            if key.as_str() == rpc::router_info_keys::PEERS_ROUTER_INFO {
+                if let Some(id_str) = value.as_str() {
+                    if !id_str.is_empty() {
+                        peer_ri_id = Some(id_str);
+                        if !rpc::is_valid_router_info_selector(key) {
+                            return error_response(
+                                id,
+                                rpc::error_codes::INVALID_PARAMS,
+                                format!("Unknown selector: '{key}'"),
+                            );
+                        }
+                        requested_keys.push(key.as_str());
+                    }
+                }
+            } else if value.as_bool() == Some(true) {
+                if !rpc::is_valid_router_info_selector(key) {
+                    return error_response(
+                        id,
+                        rpc::error_codes::INVALID_PARAMS,
+                        format!("Unknown selector: '{key}'"),
+                    );
+                }
+                requested_keys.push(key.as_str());
+            }
+        }
+    } else {
+        // Canonical form: every direct key is selected by presence, and its
+        // value is intentionally ignored.
+        for key in params.keys() {
+            if !rpc::router_info_keys::is_proposal_170_addition(key) {
+                return error_response(
+                    id,
+                    rpc::error_codes::INVALID_PARAMS,
+                    format!("Unknown direct RouterInfo parameter: '{key}'"),
                 );
             }
             requested_keys.push(key.as_str());
@@ -263,6 +287,7 @@ pub async fn handle_router_info(
 
     // Estimate response budget before expensive queries
     let key_set: HashSet<&str> = requested_keys.iter().copied().collect();
+
     if let Err(e) = estimate_response_budget(&key_set) {
         return error_response(id, rpc::error_codes::INTERNAL_ERROR, e);
     }
@@ -305,9 +330,119 @@ async fn assemble_response(
 
     let key_set: HashSet<&str> = requested_keys.iter().copied().collect();
 
+    // Validate canonical addition availability before querying any source.
+    for key in requested_keys {
+        if let Some(field) = rpc::router_info_keys::PROPOSAL_170_CONTRACT
+            .iter()
+            .find(|field| field.key == *key)
+        {
+            if field.source != rpc::router_info_keys::SourceState::Available {
+                return Err(InspectionError::Unavailable {
+                    group: canonical_group_for_key(key),
+                });
+            }
+        }
+    }
+
+    // Exact Proposal 170 retained and metric fields.
+    if key_set.contains(rpc::router_info_keys::P170_ID) {
+        let id = state.router_id();
+        result.insert(
+            rpc::router_info_keys::P170_ID.to_string(),
+            if id.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::json!(id)
+            },
+        );
+    }
+    if key_set.contains(rpc::router_info_keys::P170_INFO) {
+        let info = state.router_info_b64();
+        result.insert(
+            rpc::router_info_keys::P170_INFO.to_string(),
+            if info.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::json!(info)
+            },
+        );
+    }
+    if key_set.contains(rpc::router_info_keys::P170_CLOCKSKEW) {
+        let skew = router_info.clock_skew().await?;
+        result.insert(
+            rpc::router_info_keys::P170_CLOCKSKEW.to_string(),
+            skew.skew_seconds
+                .map_or(serde_json::Value::Null, |value| serde_json::json!(value)),
+        );
+    }
+    if key_set.contains(rpc::router_info_keys::P170_NET_TOTAL_RECEIVED_BYTES)
+        || key_set.contains(rpc::router_info_keys::P170_NET_TOTAL_SENT_BYTES)
+    {
+        let bytes = router_info.transport_bytes().await?;
+        if key_set.contains(rpc::router_info_keys::P170_NET_TOTAL_RECEIVED_BYTES) {
+            result.insert(
+                rpc::router_info_keys::P170_NET_TOTAL_RECEIVED_BYTES.to_string(),
+                serde_json::json!(bytes.received),
+            );
+        }
+        if key_set.contains(rpc::router_info_keys::P170_NET_TOTAL_SENT_BYTES) {
+            result.insert(
+                rpc::router_info_keys::P170_NET_TOTAL_SENT_BYTES.to_string(),
+                serde_json::json!(bytes.sent),
+            );
+        }
+    }
+    if key_set.contains(rpc::router_info_keys::P170_NET_TOTAL_TRANSIT_BYTES) {
+        let bytes = router_info.transit_bytes().await?;
+        result.insert(
+            rpc::router_info_keys::P170_NET_TOTAL_TRANSIT_BYTES.to_string(),
+            serde_json::json!(bytes.received.saturating_add(bytes.sent)),
+        );
+    }
+    if key_set.contains(rpc::router_info_keys::P170_NET_TUNNELS_SHARE_RATIO) {
+        let ratio = router_info.share_ratio().await?;
+        result.insert(
+            rpc::router_info_keys::P170_NET_TUNNELS_SHARE_RATIO.to_string(),
+            serde_json::json!(ratio),
+        );
+    }
+    if key_set.contains(rpc::router_info_keys::P170_NET_TUNNELS_I2PTUNNEL) {
+        let definitions = state.tunnel_list().await.map_err(|_| InspectionError::QueryFailed {
+            group: crate::i2pcontrol::router_info::InspectionGroup::I2PTunnel,
+        })?;
+        let infos: Vec<serde_json::Value> = definitions
+            .iter()
+            .map(crate::i2pcontrol::tunnel_manager::tunnel_definition_to_get_result)
+            .collect();
+        result.insert(
+            rpc::router_info_keys::P170_NET_TUNNELS_I2PTUNNEL.to_string(),
+            serde_json::Value::Array(infos),
+        );
+    }
+    if key_set.contains(rpc::router_info_keys::P170_NET_TUNNELS_TOTAL_SUCCESS_RATE) {
+        let stats = router_info.tunnel_build_stats().await?;
+        let total = stats.successes.saturating_add(stats.failures);
+        let rate: f64 = if total == 0 {
+            0.0
+        } else {
+            (stats.successes as f64 / total as f64) * 100.0
+        };
+        result.insert(
+            rpc::router_info_keys::P170_NET_TUNNELS_TOTAL_SUCCESS_RATE.to_string(),
+            serde_json::json!(rate),
+        );
+    }
+
     // --- Identity and static router data (retained group) ---
     if key_set.contains(rpc::router_info_keys::IDENTITY) {
-        let identity = router_info.router_identity()?;
+        // The old alias has the same semantic value as the canonical router
+        // hash. Use the retained state when available so requesting both
+        // spellings does not perform two source reads.
+        let identity = if state.router_id().is_empty() {
+            router_info.router_identity()?
+        } else {
+            state.router_id().to_string()
+        };
         result.insert(
             rpc::router_info_keys::IDENTITY.to_string(),
             serde_json::json!(identity),
@@ -479,8 +614,11 @@ async fn assemble_response(
         resolve_peer_selectors(&mut result, &key_set, router_info, peer_ri_id).await?;
     }
 
-    // --- Log selectors ---
-    if key_set.contains(rpc::router_info_keys::LOG_SNAPSHOT) {
+    // --- Log selectors. The canonical `logs` list is string-valued; the
+    // legacy `log` alias retains its historical structured entry shape. ---
+    if key_set.contains(rpc::router_info_keys::LOG_SNAPSHOT)
+        || key_set.contains(rpc::router_info_keys::P170_LOGS)
+    {
         let snap = router_info.log_snapshot().await?;
         if snap.entries.len() > MAX_LOG_ENTRIES {
             return Err(InspectionError::ResultTooLarge {
@@ -500,24 +638,53 @@ async fn assemble_response(
                 })
             })
             .collect();
-        result.insert(
-            rpc::router_info_keys::LOG_SNAPSHOT.to_string(),
-            serde_json::json!(entries),
-        );
+        if key_set.contains(rpc::router_info_keys::LOG_SNAPSHOT) {
+            result.insert(
+                rpc::router_info_keys::LOG_SNAPSHOT.to_string(),
+                serde_json::json!(entries),
+            );
+        }
+        if key_set.contains(rpc::router_info_keys::P170_LOGS) {
+            let messages: Vec<&str> =
+                snap.entries.iter().map(|entry| entry.message.as_str()).collect();
+            result.insert(
+                rpc::router_info_keys::P170_LOGS.to_string(),
+                serde_json::json!(messages),
+            );
+        }
     }
-    if key_set.contains(rpc::router_info_keys::LOG_CLEAR) {
+    if key_set.contains(rpc::router_info_keys::LOG_CLEAR)
+        || key_set.contains(rpc::router_info_keys::P170_LOGS_CLEAR)
+    {
         router_info.log_clear().await?;
-        result.insert(
-            rpc::router_info_keys::LOG_CLEAR.to_string(),
-            serde_json::json!(true),
-        );
+        if key_set.contains(rpc::router_info_keys::LOG_CLEAR) {
+            result.insert(
+                rpc::router_info_keys::LOG_CLEAR.to_string(),
+                serde_json::json!(true),
+            );
+        }
+        if key_set.contains(rpc::router_info_keys::P170_LOGS_CLEAR) {
+            result.insert(
+                rpc::router_info_keys::P170_LOGS_CLEAR.to_string(),
+                serde_json::json!("success"),
+            );
+        }
     }
 
     // --- Address-book selectors ---
     let address_book_keys: Vec<&str> = key_set
         .iter()
         .copied()
-        .filter(|k| rpc::router_info_keys::ADDRESS_BOOK_KEYS.contains(k))
+        .filter(|k| {
+            rpc::router_info_keys::ADDRESS_BOOK_KEYS.contains(k)
+                || matches!(
+                    *k,
+                    rpc::router_info_keys::P170_ADDRESS_BOOK_PRIVATE_LIST
+                        | rpc::router_info_keys::P170_ADDRESS_BOOK_LOCAL_LIST
+                        | rpc::router_info_keys::P170_ADDRESS_BOOK_ROUTER_LIST
+                        | rpc::router_info_keys::P170_ADDRESS_BOOK_PUBLISHED_LIST
+                )
+        })
         .collect();
     if !address_book_keys.is_empty() {
         let ab_result = resolve_address_book_selectors(address_book, &address_book_keys)
@@ -531,6 +698,22 @@ async fn assemble_response(
     }
 
     Ok(result)
+}
+
+fn canonical_group_for_key(key: &str) -> crate::i2pcontrol::router_info::InspectionGroup {
+    if key.starts_with("i2p.router.netdb.") {
+        crate::i2pcontrol::router_info::InspectionGroup::NetDb
+    } else if key.starts_with("i2p.router.addressbook.") {
+        crate::i2pcontrol::router_info::InspectionGroup::AddressBook
+    } else if key.starts_with("i2p.router.net.tunnels.") {
+        crate::i2pcontrol::router_info::InspectionGroup::TunnelSummary
+    } else if key == rpc::router_info_keys::P170_NET_BW_TRANSIT_15S
+        || key == rpc::router_info_keys::P170_NET_TUNNELS_SUCCESS_RATE
+    {
+        crate::i2pcontrol::router_info::InspectionGroup::TrafficMetrics
+    } else {
+        crate::i2pcontrol::router_info::InspectionGroup::Network
+    }
 }
 
 /// Resolve UDP transport selectors into response entries.
@@ -1110,6 +1293,15 @@ mod tests {
         }
     }
 
+    fn direct_request(params: serde_json::Value) -> JsonRpcRequest {
+        JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "RouterInfo".to_string(),
+            params: Some(params.as_object().cloned().unwrap()),
+            id: Some(rpc::RequestId::Number(1)),
+        }
+    }
+
     fn test_state(ri: FakeRouterInfoControl) -> crate::i2pcontrol::server::I2pControlState {
         let mut state = crate::i2pcontrol::server::I2pControlState::new_test("test".to_string());
         state.set_router_info(Box::new(ri));
@@ -1125,6 +1317,84 @@ mod tests {
         assert_eq!(resp["jsonrpc"], "2.0");
         assert!(resp["result"].is_object());
         assert_eq!(resp["result"].as_object().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn canonical_direct_wire_fixture_returns_exact_fields() {
+        let ri = FakeRouterInfoControl::new();
+        ri.set_clock_skew(ClockSkew {
+            skew_seconds: Some(-3),
+        });
+        ri.set_transport_bytes(TransportBytes {
+            received: 11,
+            sent: 22,
+        });
+        ri.set_share_ratio(1.25);
+        ri.set_build_stats(TunnelBuildStats {
+            successes: 3,
+            failures: 1,
+        });
+        let mut state = test_state(ri);
+        state.set_startup_values("router-hash".into(), vec![1, 2, 3], "router-info".into());
+        let req = direct_request(serde_json::json!({
+            "i2p.router.id": false,
+            "i2p.router.info": null,
+            "i2p.router.clockskew": 0,
+            "i2p.router.net.total.received.bytes": "present",
+            "i2p.router.net.total.sent.bytes": true,
+            "i2p.router.net.tunnels.shareratio": {},
+            "i2p.router.net.tunnels.i2ptunnel": true,
+            "i2p.router.net.tunnels.totalsuccessrate": true,
+        }));
+        let resp = handle_router_info(&state, &req).await;
+        let result = resp["result"]
+            .as_object()
+            .unwrap_or_else(|| panic!("canonical fixture response: {resp}"));
+        assert_eq!(result["i2p.router.id"], "router-hash");
+        assert_eq!(result["i2p.router.info"], "router-info");
+        assert_eq!(result["i2p.router.clockskew"], -3);
+        assert_eq!(result["i2p.router.net.total.received.bytes"], 11);
+        assert_eq!(result["i2p.router.net.total.sent.bytes"], 22);
+        assert_eq!(result["i2p.router.net.tunnels.shareratio"], 1.25);
+        assert_eq!(
+            result["i2p.router.net.tunnels.i2ptunnel"],
+            serde_json::json!([])
+        );
+        assert_eq!(result["i2p.router.net.tunnels.totalsuccessrate"], 75.0);
+    }
+
+    #[tokio::test]
+    async fn canonical_logs_and_presence_semantics_are_literal() {
+        let ri = FakeRouterInfoControl::new();
+        ri.set_router_news("news".into());
+        ri.add_log_entry(LogEntry {
+            timestamp_ms: 1,
+            level: "INFO".into(),
+            target: "test".into(),
+            message: "hello".into(),
+        });
+        let state = test_state(ri);
+        let req = direct_request(serde_json::json!({
+            "i2p.router.news": false,
+            "i2p.router.logs": true,
+            "i2p.router.logs.clear": null,
+        }));
+        let resp = handle_router_info(&state, &req).await;
+        let result = resp["result"].as_object().unwrap();
+        assert_eq!(result["i2p.router.news"], "news");
+        assert_eq!(result["i2p.router.logs"], serde_json::json!(["hello"]));
+        assert_eq!(result["i2p.router.logs.clear"], "success");
+    }
+
+    #[tokio::test]
+    async fn canonical_unavailable_field_is_explicit_error() {
+        let state = test_state(FakeRouterInfoControl::new());
+        let req = direct_request(serde_json::json!({
+            "i2p.router.netdb.peers": true,
+        }));
+        let resp = handle_router_info(&state, &req).await;
+        assert_eq!(resp["error"]["code"], -32603);
+        assert!(resp["result"].is_null());
     }
 
     #[tokio::test]

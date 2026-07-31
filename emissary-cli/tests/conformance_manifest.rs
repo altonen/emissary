@@ -266,7 +266,7 @@ fn default_registry_covers_all_manifest_types() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// § 3. Tunnel action manifest — all 8 actions
+// § 3. Tunnel action manifest — seven canonical actions
 // ──────────────────────────────────────────────────────────────────────
 
 struct TunnelActionRow {
@@ -277,35 +277,31 @@ struct TunnelActionRow {
 
 const TUNNEL_ACTION_MANIFEST: &[TunnelActionRow] = &[
     TunnelActionRow {
-        name: tunnel_actions::LIST,
+        name: "create",
         owner_milestone: "M004",
     },
     TunnelActionRow {
-        name: tunnel_actions::CREATE,
+        name: "edit",
         owner_milestone: "M004",
     },
     TunnelActionRow {
-        name: tunnel_actions::EDIT,
+        name: "get",
         owner_milestone: "M004",
     },
     TunnelActionRow {
-        name: tunnel_actions::GET,
+        name: "start",
         owner_milestone: "M004",
     },
     TunnelActionRow {
-        name: tunnel_actions::DELETE,
+        name: "stop",
         owner_milestone: "M004",
     },
     TunnelActionRow {
-        name: tunnel_actions::START,
+        name: "restart",
         owner_milestone: "M004",
     },
     TunnelActionRow {
-        name: tunnel_actions::STOP,
-        owner_milestone: "M004",
-    },
-    TunnelActionRow {
-        name: tunnel_actions::RESTART,
+        name: "delete",
         owner_milestone: "M004",
     },
 ];
@@ -314,8 +310,8 @@ const TUNNEL_ACTION_MANIFEST: &[TunnelActionRow] = &[
 fn tunnel_action_manifest_count() {
     assert_eq!(
         TUNNEL_ACTION_MANIFEST.len(),
-        8,
-        "Proposal 170 defines exactly 8 tunnel actions"
+        7,
+        "Proposal 170 defines exactly 7 canonical tunnel actions"
     );
 }
 
@@ -489,16 +485,19 @@ fn client_services_selector_manifest_matches_production() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// § 7. RouterInfo selector manifest — 121 keys
+// § 7. RouterInfo selector manifests — exact additions and legacy/base keys
 // ──────────────────────────────────────────────────────────────────────
 
 #[test]
 fn router_info_selector_count() {
     assert_eq!(
-        rpc::router_info_keys::ALL.len(),
-        121,
-        "Proposal 170 defines exactly 121 RouterInfo selectors"
+        rpc::router_info_keys::PROPOSAL_170_ADDITIONS.len(),
+        43,
+        "Proposal 170 adds exactly 43 RouterInfo selectors"
     );
+    for key in rpc::router_info_keys::PROPOSAL_170_ADDITIONS {
+        assert!(rpc::is_valid_router_info_selector(key));
+    }
 }
 
 #[test]
@@ -507,9 +506,11 @@ fn router_info_selector_partition_integrity() {
     let core: HashSet<&str> = rpc::router_info_keys::CORE_KEYS.iter().copied().collect();
     let ab: HashSet<&str> = rpc::router_info_keys::ADDRESS_BOOK_KEYS.iter().copied().collect();
 
-    // ALL = CORE ∪ ADDRESS_BOOK
+    // The old partition remains intact; exact additions are tracked
+    // separately and must not be counted as the legacy/base registry.
     let union: HashSet<&str> = core.union(&ab).copied().collect();
-    assert_eq!(all, union, "ALL must equal CORE ∪ ADDRESS_BOOK");
+    assert_eq!(union.len(), 121, "legacy/base registry remains 121 keys");
+    assert!(all.is_superset(&union));
     // CORE ∩ ADDRESS_BOOK = ∅
     assert!(
         core.is_disjoint(&ab),
@@ -519,7 +520,7 @@ fn router_info_selector_partition_integrity() {
     assert_eq!(
         core.len() + ab.len(),
         121,
-        "CORE + ADDRESS_BOOK must sum to 121"
+        "legacy CORE + ADDRESS_BOOK must sum to 121"
     );
 }
 
@@ -623,16 +624,7 @@ fn no_duplicate_tunnel_types() {
 
 #[test]
 fn no_duplicate_tunnel_actions() {
-    let actions = [
-        tunnel_actions::LIST,
-        tunnel_actions::CREATE,
-        tunnel_actions::EDIT,
-        tunnel_actions::GET,
-        tunnel_actions::DELETE,
-        tunnel_actions::START,
-        tunnel_actions::STOP,
-        tunnel_actions::RESTART,
-    ];
+    let actions = tunnel_actions::CANONICAL;
     let set: HashSet<&str> = actions.iter().copied().collect();
     assert_eq!(
         set.len(),
@@ -800,14 +792,14 @@ fn tunnel_type_names_exact() {
 
 #[test]
 fn tunnel_action_names_exact() {
-    assert_eq!(tunnel_actions::LIST, "List");
-    assert_eq!(tunnel_actions::CREATE, "Create");
-    assert_eq!(tunnel_actions::EDIT, "Edit");
-    assert_eq!(tunnel_actions::GET, "Get");
-    assert_eq!(tunnel_actions::DELETE, "Delete");
-    assert_eq!(tunnel_actions::START, "Start");
-    assert_eq!(tunnel_actions::STOP, "Stop");
-    assert_eq!(tunnel_actions::RESTART, "Restart");
+    assert_eq!(
+        tunnel_actions::CANONICAL,
+        &["create", "edit", "get", "start", "stop", "restart", "delete"]
+    );
+    assert_eq!(
+        tunnel_actions::COMPATIBILITY,
+        &["List", "Create", "Edit", "Get", "Start", "Stop", "Restart", "Delete"]
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -1000,7 +992,7 @@ fn selector_keys_contain_no_secret_material() {
 fn const_array_sizes_match_manifests() {
     assert_eq!(tunnel_types::ALL.len(), 12);
     assert_eq!(address_books::ALL.len(), 4);
-    assert_eq!(rpc::router_info_keys::ALL.len(), 121);
+    assert_eq!(rpc::router_info_keys::ALL.len(), 161);
     assert_eq!(rpc::router_info_keys::CORE_KEYS.len(), 115);
     assert_eq!(rpc::router_info_keys::ADDRESS_BOOK_KEYS.len(), 6);
 }

@@ -92,8 +92,9 @@ fn estimate_response_budget(key_set: &HashSet<&str>) -> Result<(), String> {
 
 /// Handle the ClientServicesInfo JSON-RPC method.
 ///
-/// Parses the `Selector` parameter, dispatches to the service registry
-/// snapshot and live tunnel manager, and returns only the requested keys.
+/// Parses direct Proposal 170 service parameters, dispatches to the service
+/// registry snapshot and live tunnel manager, and returns only requested keys.
+/// The historical nested `Selector` map remains a compatibility extension.
 pub(crate) async fn handle_client_services_info(
     state: &crate::i2pcontrol::server::I2pControlState,
     request: &JsonRpcRequest,
@@ -108,27 +109,47 @@ pub(crate) async fn handle_client_services_info(
         }
     };
 
-    // Extract Selector parameter — must be a JSON object with boolean values
-    let selector_map = match params.get("Selector") {
-        Some(serde_json::Value::Object(map)) => map,
-        _ => {
+    let mut requested_keys: Vec<&str> = Vec::new();
+    if let Some(selector) = params.get("Selector") {
+        if params.len() != 1 {
             return error_response(
                 id,
                 rpc::error_codes::INVALID_PARAMS,
-                "Missing or invalid 'Selector' parameter; expected a JSON object",
+                "Direct service parameters cannot be mixed with compatibility 'Selector'",
             );
         }
-    };
-
-    // Build requested key set from presence of true values
-    let mut requested_keys: Vec<&str> = Vec::new();
-    for (key, value) in selector_map {
-        if value.as_bool() == Some(true) {
+        let selector_map = match selector {
+            serde_json::Value::Object(map) => map,
+            _ => {
+                return error_response(
+                    id,
+                    rpc::error_codes::INVALID_PARAMS,
+                    "Invalid compatibility 'Selector'; expected a JSON object",
+                );
+            }
+        };
+        for (key, value) in selector_map {
+            if value.as_bool() == Some(true) {
+                if !is_valid_client_services_selector(key) {
+                    return error_response(
+                        id,
+                        rpc::error_codes::INVALID_PARAMS,
+                        format!("Unknown selector: '{key}'"),
+                    );
+                }
+                requested_keys.push(key.as_str());
+            }
+        }
+    } else {
+        // Canonical Proposal 170 semantics: key presence selects a service,
+        // regardless of whether its value is false, null, or another JSON
+        // type.
+        for key in params.keys() {
             if !is_valid_client_services_selector(key) {
                 return error_response(
                     id,
                     rpc::error_codes::INVALID_PARAMS,
-                    format!("Unknown selector: '{key}'"),
+                    format!("Unknown direct service parameter: '{key}'"),
                 );
             }
             requested_keys.push(key.as_str());
@@ -515,6 +536,15 @@ mod tests {
         }
     }
 
+    fn direct_request(params: serde_json::Value) -> JsonRpcRequest {
+        JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "ClientServicesInfo".to_string(),
+            params: Some(params.as_object().cloned().unwrap()),
+            id: Some(rpc::RequestId::Number(1)),
+        }
+    }
+
     fn test_state(reg: ServiceRegistry) -> crate::i2pcontrol::server::I2pControlState {
         let mut state = crate::i2pcontrol::server::I2pControlState::new_test("test".to_string());
         state.set_service_registry(reg);
@@ -541,6 +571,32 @@ mod tests {
         let result = resp["result"].as_object().unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result["BOB"], false);
+    }
+
+    #[tokio::test]
+    async fn canonical_direct_wire_fixture_selects_by_presence() {
+        let reg = ServiceRegistry::new();
+        let state = test_state(reg);
+        let req = direct_request(serde_json::json!({
+            "I2PTunnel": "ignored",
+            "SAM": false,
+        }));
+        let resp = handle_client_services_info(&state, &req).await;
+        let result = resp["result"].as_object().unwrap();
+        assert_eq!(result.len(), 2);
+        assert!(result.contains_key("I2PTunnel"));
+        assert!(result.contains_key("SAM"));
+    }
+
+    #[tokio::test]
+    async fn canonical_and_compatibility_selectors_cannot_be_mixed() {
+        let state = test_state(ServiceRegistry::new());
+        let req = direct_request(serde_json::json!({
+            "Selector": {"BOB": true},
+            "SAM": true,
+        }));
+        let resp = handle_client_services_info(&state, &req).await;
+        assert_eq!(resp["error"]["code"], -32602);
     }
 
     #[tokio::test]

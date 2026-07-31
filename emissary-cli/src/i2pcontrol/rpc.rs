@@ -293,6 +293,8 @@ pub mod tunnel_types {
 /// TunnelManager actions.
 #[allow(dead_code)]
 pub mod tunnel_actions {
+    /// Emissary compatibility extension; not part of Proposal 170's
+    /// canonical action vocabulary.
     pub const LIST: &str = "List";
     pub const CREATE: &str = "Create";
     pub const EDIT: &str = "Edit";
@@ -301,6 +303,16 @@ pub mod tunnel_actions {
     pub const START: &str = "Start";
     pub const STOP: &str = "Stop";
     pub const RESTART: &str = "Restart";
+
+    /// Canonical Proposal 170 TunnelManager actions.
+    pub const CANONICAL: &[&str] = &[
+        "create", "edit", "get", "start", "stop", "restart", "delete",
+    ];
+
+    /// Already-shipped Emissary action aliases.
+    pub const COMPATIBILITY: &[&str] = &[
+        "List", "Create", "Edit", "Get", "Start", "Stop", "Restart", "Delete",
+    ];
 }
 
 /// AddressBook books.
@@ -461,6 +473,48 @@ pub mod router_info_keys {
     // --- Router news ---
     pub const ROUTER_NEWS: &str = "i2p.router.news";
 
+    // --- Proposal 170 exact additions ---
+    pub const P170_ID: &str = "i2p.router.id";
+    pub const P170_CLOCKSKEW: &str = "i2p.router.clockskew";
+    pub const P170_INFO: &str = "i2p.router.info";
+    pub const P170_LOGS: &str = "i2p.router.logs";
+    pub const P170_LOGS_CLEAR: &str = "i2p.router.logs.clear";
+    pub const P170_NET_TOTAL_RECEIVED_BYTES: &str = "i2p.router.net.total.received.bytes";
+    pub const P170_NET_TOTAL_SENT_BYTES: &str = "i2p.router.net.total.sent.bytes";
+    pub const P170_NET_TOTAL_TRANSIT_BYTES: &str = "i2p.router.net.total.transit.bytes";
+    pub const P170_NET_BW_TRANSIT_15S: &str = "i2p.router.net.bw.transit.15s";
+    pub const P170_NET_TUNNELS_SHARE_RATIO: &str = "i2p.router.net.tunnels.shareratio";
+    pub const P170_NET_TUNNELS_PARTICIPATING_INFO: &str =
+        "i2p.router.net.tunnels.participating.info";
+    pub const P170_NET_TUNNELS_I2PTUNNEL: &str = "i2p.router.net.tunnels.i2ptunnel";
+    pub const P170_NET_TUNNELS_EXPLORATORY_INBOUND: &str =
+        "i2p.router.net.tunnels.exploratory.inbound";
+    pub const P170_NET_TUNNELS_EXPLORATORY_OUTBOUND: &str =
+        "i2p.router.net.tunnels.exploratory.outbound";
+    pub const P170_NET_TUNNELS_EXPLORATORY_INFO_LIST: &str =
+        "i2p.router.net.tunnels.exploratory.info.list";
+    pub const P170_NET_TUNNELS_CLIENT_INBOUND: &str = "i2p.router.net.tunnels.client.inbound";
+    pub const P170_NET_TUNNELS_CLIENT_OUTBOUND: &str = "i2p.router.net.tunnels.client.outbound";
+    pub const P170_NET_TUNNELS_CLIENT_INFO_LIST: &str = "i2p.router.net.tunnels.client.info.list";
+    pub const P170_NET_STATUS_V6: &str = "i2p.router.net.status.v6";
+    pub const P170_NET_ERROR: &str = "i2p.router.net.error";
+    pub const P170_NET_ERROR_V6: &str = "i2p.router.net.error.v6";
+    pub const P170_NET_TESTING: &str = "i2p.router.net.testing";
+    pub const P170_NET_TESTING_V6: &str = "i2p.router.net.testing.v6";
+    pub const P170_NET_TUNNELS_SUCCESS_RATE: &str = "i2p.router.net.tunnels.successrate";
+    pub const P170_NET_TUNNELS_TOTAL_SUCCESS_RATE: &str = "i2p.router.net.tunnels.totalsuccessrate";
+    pub const P170_NET_TUNNELS_QUEUE: &str = "i2p.router.net.tunnels.queue";
+    pub const P170_NET_TUNNELS_TBM_QUEUE: &str = "i2p.router.net.tunnels.tbmqueue";
+    pub const P170_NETDB_PEERS: &str = "i2p.router.netdb.peers";
+    pub const P170_NETDB_ACTIVE_PEERS_INFO: &str = "i2p.router.netdb.activepeers.info";
+    pub const P170_NETDB_NTCP_LIMIT: &str = "i2p.router.netdb.ntcp.limit";
+    pub const P170_NETDB_SSU_LIMIT: &str = "i2p.router.netdb.ssu.limit";
+    pub const P170_NETDB_BANNED_PEERS: &str = "i2p.router.netdb.bannedpeers";
+    pub const P170_NETDB_ACTIVE_PEERS_LIST: &str = "i2p.router.netdb.activepeers.list";
+    pub const P170_NETDB_PEERS_LIST: &str = "i2p.router.netdb.peers.list";
+    pub const P170_NETDB_PEERS_INFO: &str = "i2p.router.netdb.peers.info";
+    pub const P170_NETDB_ACTIVE_PEERS_STATS: &str = "i2p.router.netdb.activepeers.stats";
+
     // --- Clock skew ---
     pub const CLOCK_SKEW: &str = "i2p.router.clock.skew";
 
@@ -504,6 +558,313 @@ pub mod router_info_keys {
     pub const ADDRESS_BOOK_SUBSCRIPTIONS: &str = "i2p.router.addressbook.subscriptions";
     pub const ADDRESS_BOOK_CONFIG: &str = "i2p.router.addressbook.config";
 
+    pub const P170_ADDRESS_BOOK_PRIVATE_LIST: &str = "i2p.router.addressbook.private.list";
+    pub const P170_ADDRESS_BOOK_LOCAL_LIST: &str = "i2p.router.addressbook.local.list";
+    pub const P170_ADDRESS_BOOK_ROUTER_LIST: &str = "i2p.router.addressbook.router.list";
+    pub const P170_ADDRESS_BOOK_PUBLISHED_LIST: &str = "i2p.router.addressbook.published.list";
+    pub const P170_ADDRESS_BOOK_SUBSCRIPTIONS: &str = "i2p.router.addressbook.subscriptions";
+    pub const P170_ADDRESS_BOOK_CONFIG: &str = "i2p.router.addressbook.config";
+
+    /// JSON types used by the pinned Proposal 170 RouterInfo additions.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum JsonType {
+        String,
+        NullableString,
+        NullableInteger,
+        Integer,
+        Number,
+        ArrayOfStrings,
+        ArrayOfObjects,
+        Object,
+    }
+
+    /// Truthful current-source state for a canonical RouterInfo addition.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum SourceState {
+        Available,
+        Unavailable,
+        ProtocolAmbiguity,
+    }
+
+    /// Machine-checkable contract inventory for the pinned revision.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct ContractField {
+        pub key: &'static str,
+        pub json_type: JsonType,
+        pub source: SourceState,
+    }
+
+    /// The exact 43-key Proposal 170 RouterInfo addition set.
+    pub const PROPOSAL_170_ADDITIONS: &[&str; 43] = &[
+        ROUTER_NEWS,
+        P170_ID,
+        P170_CLOCKSKEW,
+        P170_INFO,
+        P170_LOGS,
+        P170_LOGS_CLEAR,
+        P170_NET_TOTAL_RECEIVED_BYTES,
+        P170_NET_TOTAL_SENT_BYTES,
+        P170_NET_TOTAL_TRANSIT_BYTES,
+        P170_NET_BW_TRANSIT_15S,
+        P170_NET_TUNNELS_SHARE_RATIO,
+        P170_NET_TUNNELS_PARTICIPATING_INFO,
+        P170_NET_TUNNELS_I2PTUNNEL,
+        P170_NET_TUNNELS_EXPLORATORY_INBOUND,
+        P170_NET_TUNNELS_EXPLORATORY_OUTBOUND,
+        P170_NET_TUNNELS_EXPLORATORY_INFO_LIST,
+        P170_NET_TUNNELS_CLIENT_INBOUND,
+        P170_NET_TUNNELS_CLIENT_OUTBOUND,
+        P170_NET_TUNNELS_CLIENT_INFO_LIST,
+        P170_NET_STATUS_V6,
+        P170_NET_ERROR,
+        P170_NET_ERROR_V6,
+        P170_NET_TESTING,
+        P170_NET_TESTING_V6,
+        P170_NET_TUNNELS_SUCCESS_RATE,
+        P170_NET_TUNNELS_TOTAL_SUCCESS_RATE,
+        P170_NET_TUNNELS_QUEUE,
+        P170_NET_TUNNELS_TBM_QUEUE,
+        P170_NETDB_PEERS,
+        P170_NETDB_ACTIVE_PEERS_INFO,
+        P170_NETDB_NTCP_LIMIT,
+        P170_NETDB_SSU_LIMIT,
+        P170_NETDB_BANNED_PEERS,
+        P170_NETDB_ACTIVE_PEERS_LIST,
+        P170_NETDB_PEERS_LIST,
+        P170_NETDB_PEERS_INFO,
+        P170_NETDB_ACTIVE_PEERS_STATS,
+        P170_ADDRESS_BOOK_PRIVATE_LIST,
+        P170_ADDRESS_BOOK_LOCAL_LIST,
+        P170_ADDRESS_BOOK_ROUTER_LIST,
+        P170_ADDRESS_BOOK_PUBLISHED_LIST,
+        P170_ADDRESS_BOOK_SUBSCRIPTIONS,
+        P170_ADDRESS_BOOK_CONFIG,
+    ];
+
+    /// Types and source states for every canonical addition.
+    pub const PROPOSAL_170_CONTRACT: &[ContractField; 43] = &[
+        ContractField {
+            key: ROUTER_NEWS,
+            json_type: JsonType::String,
+            source: SourceState::Available,
+        },
+        ContractField {
+            key: P170_ID,
+            json_type: JsonType::NullableString,
+            source: SourceState::Available,
+        },
+        ContractField {
+            key: P170_CLOCKSKEW,
+            json_type: JsonType::NullableInteger,
+            source: SourceState::Available,
+        },
+        ContractField {
+            key: P170_INFO,
+            json_type: JsonType::NullableString,
+            source: SourceState::Available,
+        },
+        ContractField {
+            key: P170_LOGS,
+            json_type: JsonType::ArrayOfStrings,
+            source: SourceState::Available,
+        },
+        ContractField {
+            key: P170_LOGS_CLEAR,
+            json_type: JsonType::String,
+            source: SourceState::Available,
+        },
+        ContractField {
+            key: P170_NET_TOTAL_RECEIVED_BYTES,
+            json_type: JsonType::Integer,
+            source: SourceState::Available,
+        },
+        ContractField {
+            key: P170_NET_TOTAL_SENT_BYTES,
+            json_type: JsonType::Integer,
+            source: SourceState::Available,
+        },
+        ContractField {
+            key: P170_NET_TOTAL_TRANSIT_BYTES,
+            json_type: JsonType::Integer,
+            source: SourceState::Available,
+        },
+        ContractField {
+            key: P170_NET_BW_TRANSIT_15S,
+            json_type: JsonType::Integer,
+            source: SourceState::Unavailable,
+        },
+        ContractField {
+            key: P170_NET_TUNNELS_SHARE_RATIO,
+            json_type: JsonType::Number,
+            source: SourceState::Available,
+        },
+        ContractField {
+            key: P170_NET_TUNNELS_PARTICIPATING_INFO,
+            json_type: JsonType::ArrayOfObjects,
+            source: SourceState::Unavailable,
+        },
+        ContractField {
+            key: P170_NET_TUNNELS_I2PTUNNEL,
+            json_type: JsonType::ArrayOfObjects,
+            source: SourceState::Available,
+        },
+        ContractField {
+            key: P170_NET_TUNNELS_EXPLORATORY_INBOUND,
+            json_type: JsonType::Integer,
+            source: SourceState::Unavailable,
+        },
+        ContractField {
+            key: P170_NET_TUNNELS_EXPLORATORY_OUTBOUND,
+            json_type: JsonType::Integer,
+            source: SourceState::Unavailable,
+        },
+        ContractField {
+            key: P170_NET_TUNNELS_EXPLORATORY_INFO_LIST,
+            json_type: JsonType::ArrayOfObjects,
+            source: SourceState::Unavailable,
+        },
+        ContractField {
+            key: P170_NET_TUNNELS_CLIENT_INBOUND,
+            json_type: JsonType::Integer,
+            source: SourceState::Unavailable,
+        },
+        ContractField {
+            key: P170_NET_TUNNELS_CLIENT_OUTBOUND,
+            json_type: JsonType::Integer,
+            source: SourceState::Unavailable,
+        },
+        ContractField {
+            key: P170_NET_TUNNELS_CLIENT_INFO_LIST,
+            json_type: JsonType::ArrayOfObjects,
+            source: SourceState::Unavailable,
+        },
+        ContractField {
+            key: P170_NET_STATUS_V6,
+            json_type: JsonType::Integer,
+            source: SourceState::ProtocolAmbiguity,
+        },
+        ContractField {
+            key: P170_NET_ERROR,
+            json_type: JsonType::Integer,
+            source: SourceState::Unavailable,
+        },
+        ContractField {
+            key: P170_NET_ERROR_V6,
+            json_type: JsonType::Integer,
+            source: SourceState::Unavailable,
+        },
+        ContractField {
+            key: P170_NET_TESTING,
+            json_type: JsonType::Integer,
+            source: SourceState::ProtocolAmbiguity,
+        },
+        ContractField {
+            key: P170_NET_TESTING_V6,
+            json_type: JsonType::Integer,
+            source: SourceState::ProtocolAmbiguity,
+        },
+        ContractField {
+            key: P170_NET_TUNNELS_SUCCESS_RATE,
+            json_type: JsonType::Number,
+            source: SourceState::Unavailable,
+        },
+        ContractField {
+            key: P170_NET_TUNNELS_TOTAL_SUCCESS_RATE,
+            json_type: JsonType::Number,
+            source: SourceState::Available,
+        },
+        ContractField {
+            key: P170_NET_TUNNELS_QUEUE,
+            json_type: JsonType::Integer,
+            source: SourceState::Unavailable,
+        },
+        ContractField {
+            key: P170_NET_TUNNELS_TBM_QUEUE,
+            json_type: JsonType::Integer,
+            source: SourceState::Unavailable,
+        },
+        ContractField {
+            key: P170_NETDB_PEERS,
+            json_type: JsonType::ArrayOfStrings,
+            source: SourceState::Unavailable,
+        },
+        ContractField {
+            key: P170_NETDB_ACTIVE_PEERS_INFO,
+            json_type: JsonType::ArrayOfStrings,
+            source: SourceState::Unavailable,
+        },
+        ContractField {
+            key: P170_NETDB_NTCP_LIMIT,
+            json_type: JsonType::Integer,
+            source: SourceState::Unavailable,
+        },
+        ContractField {
+            key: P170_NETDB_SSU_LIMIT,
+            json_type: JsonType::Integer,
+            source: SourceState::Unavailable,
+        },
+        ContractField {
+            key: P170_NETDB_BANNED_PEERS,
+            json_type: JsonType::Object,
+            source: SourceState::Unavailable,
+        },
+        ContractField {
+            key: P170_NETDB_ACTIVE_PEERS_LIST,
+            json_type: JsonType::ArrayOfStrings,
+            source: SourceState::Unavailable,
+        },
+        ContractField {
+            key: P170_NETDB_PEERS_LIST,
+            json_type: JsonType::ArrayOfStrings,
+            source: SourceState::Unavailable,
+        },
+        ContractField {
+            key: P170_NETDB_PEERS_INFO,
+            json_type: JsonType::ArrayOfStrings,
+            source: SourceState::Unavailable,
+        },
+        ContractField {
+            key: P170_NETDB_ACTIVE_PEERS_STATS,
+            json_type: JsonType::ArrayOfObjects,
+            source: SourceState::Unavailable,
+        },
+        ContractField {
+            key: P170_ADDRESS_BOOK_PRIVATE_LIST,
+            json_type: JsonType::ArrayOfObjects,
+            source: SourceState::Available,
+        },
+        ContractField {
+            key: P170_ADDRESS_BOOK_LOCAL_LIST,
+            json_type: JsonType::ArrayOfObjects,
+            source: SourceState::Available,
+        },
+        ContractField {
+            key: P170_ADDRESS_BOOK_ROUTER_LIST,
+            json_type: JsonType::ArrayOfObjects,
+            source: SourceState::Available,
+        },
+        ContractField {
+            key: P170_ADDRESS_BOOK_PUBLISHED_LIST,
+            json_type: JsonType::ArrayOfObjects,
+            source: SourceState::Available,
+        },
+        ContractField {
+            key: P170_ADDRESS_BOOK_SUBSCRIPTIONS,
+            json_type: JsonType::Object,
+            source: SourceState::Unavailable,
+        },
+        ContractField {
+            key: P170_ADDRESS_BOOK_CONFIG,
+            json_type: JsonType::Object,
+            source: SourceState::Unavailable,
+        },
+    ];
+
+    /// True when a selector belongs to the exact Proposal 170 addition set.
+    pub fn is_proposal_170_addition(key: &str) -> bool {
+        PROPOSAL_170_ADDITIONS.contains(&key)
+    }
+
     /// All address-book selector keys.
     pub const ADDRESS_BOOK_KEYS: &[&str] = &[
         ADDRESS_BOOK_PRIVATE,
@@ -514,7 +875,7 @@ pub mod router_info_keys {
         ADDRESS_BOOK_CONFIG,
     ];
 
-    /// All Proposal 170 RouterInfo selector keys.
+    /// All legacy/base and exact Proposal 170 RouterInfo selector keys.
     pub const ALL: &[&str] = &[
         // UDP
         UDP_ACTIVE,
@@ -649,6 +1010,47 @@ pub mod router_info_keys {
         ADDRESS_BOOK_PUBLISHED,
         ADDRESS_BOOK_SUBSCRIPTIONS,
         ADDRESS_BOOK_CONFIG,
+        // Exact Proposal 170 additions not already present above.
+        P170_ID,
+        P170_CLOCKSKEW,
+        P170_INFO,
+        P170_LOGS,
+        P170_LOGS_CLEAR,
+        P170_NET_TOTAL_RECEIVED_BYTES,
+        P170_NET_TOTAL_SENT_BYTES,
+        P170_NET_TOTAL_TRANSIT_BYTES,
+        P170_NET_BW_TRANSIT_15S,
+        P170_NET_TUNNELS_SHARE_RATIO,
+        P170_NET_TUNNELS_PARTICIPATING_INFO,
+        P170_NET_TUNNELS_I2PTUNNEL,
+        P170_NET_TUNNELS_EXPLORATORY_INBOUND,
+        P170_NET_TUNNELS_EXPLORATORY_OUTBOUND,
+        P170_NET_TUNNELS_EXPLORATORY_INFO_LIST,
+        P170_NET_TUNNELS_CLIENT_INBOUND,
+        P170_NET_TUNNELS_CLIENT_OUTBOUND,
+        P170_NET_TUNNELS_CLIENT_INFO_LIST,
+        P170_NET_STATUS_V6,
+        P170_NET_ERROR,
+        P170_NET_ERROR_V6,
+        P170_NET_TESTING,
+        P170_NET_TESTING_V6,
+        P170_NET_TUNNELS_SUCCESS_RATE,
+        P170_NET_TUNNELS_TOTAL_SUCCESS_RATE,
+        P170_NET_TUNNELS_QUEUE,
+        P170_NET_TUNNELS_TBM_QUEUE,
+        P170_NETDB_PEERS,
+        P170_NETDB_ACTIVE_PEERS_INFO,
+        P170_NETDB_NTCP_LIMIT,
+        P170_NETDB_SSU_LIMIT,
+        P170_NETDB_BANNED_PEERS,
+        P170_NETDB_ACTIVE_PEERS_LIST,
+        P170_NETDB_PEERS_LIST,
+        P170_NETDB_PEERS_INFO,
+        P170_NETDB_ACTIVE_PEERS_STATS,
+        P170_ADDRESS_BOOK_PRIVATE_LIST,
+        P170_ADDRESS_BOOK_LOCAL_LIST,
+        P170_ADDRESS_BOOK_ROUTER_LIST,
+        P170_ADDRESS_BOOK_PUBLISHED_LIST,
     ];
 
     /// All non-address-book selector keys (owned by M005).
@@ -872,8 +1274,19 @@ mod tests {
 
     #[test]
     fn router_info_selectors_complete() {
-        assert_eq!(router_info_keys::ALL.len(), 121);
+        assert_eq!(router_info_keys::PROPOSAL_170_ADDITIONS.len(), 43);
+        assert_eq!(router_info_keys::PROPOSAL_170_CONTRACT.len(), 43);
+        let additions: std::collections::HashSet<&str> =
+            router_info_keys::PROPOSAL_170_ADDITIONS.iter().copied().collect();
+        assert_eq!(additions.len(), 43);
+        assert_eq!(
+            additions,
+            router_info_keys::PROPOSAL_170_CONTRACT.iter().map(|field| field.key).collect()
+        );
         for key in router_info_keys::ALL {
+            assert!(is_valid_router_info_selector(key));
+        }
+        for key in router_info_keys::PROPOSAL_170_ADDITIONS {
             assert!(is_valid_router_info_selector(key));
         }
         assert!(!is_valid_router_info_selector("unknown.selector"));

@@ -166,31 +166,26 @@ impl fmt::Display for TunnelTypeError {
 
 impl std::error::Error for TunnelTypeError {}
 
-/// Exact Proposal 170 TunnelManager action strings.
+/// TunnelManager actions.
+///
+/// The seven non-`List` variants are the canonical Proposal 170 actions.
+/// `List` is retained as an explicitly non-canonical Emissary extension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "PascalCase")]
+#[serde(rename_all = "lowercase")]
 pub enum TunnelAction {
     #[serde(rename = "List")]
     List,
-    #[serde(rename = "Create")]
     Create,
-    #[serde(rename = "Edit")]
     Edit,
-    #[serde(rename = "Get")]
     Get,
-    #[serde(rename = "Delete")]
     Delete,
-    #[serde(rename = "Start")]
     Start,
-    #[serde(rename = "Stop")]
     Stop,
-    #[serde(rename = "Restart")]
     Restart,
 }
 
-/// All valid tunnel actions in canonical order.
+/// Canonical Proposal 170 actions in wire order.
 pub const ALL_TUNNEL_ACTIONS: &[TunnelAction] = &[
-    TunnelAction::List,
     TunnelAction::Create,
     TunnelAction::Edit,
     TunnelAction::Get,
@@ -205,18 +200,32 @@ impl TunnelAction {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::List => "List",
-            Self::Create => "Create",
-            Self::Edit => "Edit",
-            Self::Get => "Get",
-            Self::Delete => "Delete",
-            Self::Start => "Start",
-            Self::Stop => "Stop",
-            Self::Restart => "Restart",
+            Self::Create => "create",
+            Self::Edit => "edit",
+            Self::Get => "get",
+            Self::Delete => "delete",
+            Self::Start => "start",
+            Self::Stop => "stop",
+            Self::Restart => "restart",
         }
     }
 
     /// Parse from an exact external wire string.
     pub fn from_str_exact(s: &str) -> Option<Self> {
+        match s {
+            "create" => Some(Self::Create),
+            "edit" => Some(Self::Edit),
+            "get" => Some(Self::Get),
+            "delete" => Some(Self::Delete),
+            "start" => Some(Self::Start),
+            "stop" => Some(Self::Stop),
+            "restart" => Some(Self::Restart),
+            _ => None,
+        }
+    }
+
+    /// Parse an already-shipped capitalized Emissary action alias.
+    pub fn from_compatibility_str(s: &str) -> Option<Self> {
         match s {
             "List" => Some(Self::List),
             "Create" => Some(Self::Create),
@@ -727,20 +736,24 @@ mod tests {
     #[test]
     fn tunnel_action_reject_unknown() {
         assert!(TunnelAction::from_str_exact("unknown").is_none());
-        assert!(TunnelAction::from_str_exact("create").is_none());
+        assert!(TunnelAction::from_str_exact("create").is_some());
         assert!(TunnelAction::from_str_exact("CREATE").is_none());
         assert!(TunnelAction::from_str_exact("").is_none());
+        assert_eq!(
+            TunnelAction::from_compatibility_str("Create"),
+            Some(TunnelAction::Create)
+        );
     }
 
     #[test]
     fn tunnel_action_count() {
-        assert_eq!(ALL_TUNNEL_ACTIONS.len(), 8);
+        assert_eq!(ALL_TUNNEL_ACTIONS.len(), 7);
     }
 
     #[test]
     fn tunnel_action_serialization_exact() {
         let json = serde_json::to_string(&TunnelAction::Create).unwrap();
-        assert_eq!(json, "\"Create\"");
+        assert_eq!(json, "\"create\"");
     }
 
     #[test]

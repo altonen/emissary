@@ -177,7 +177,7 @@ fn fixture_ri_all_selectors() {
     let req = router_info_request(emissary_cli::i2pcontrol::rpc::router_info_keys::ALL);
     let parsed = emissary_cli::i2pcontrol::rpc::parse_request(&req.to_string()).unwrap();
     let params = parsed.params.unwrap();
-    assert_eq!(params.len(), 121);
+    assert_eq!(params.len(), 161);
 }
 
 #[test]

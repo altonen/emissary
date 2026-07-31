@@ -1,10 +1,17 @@
 # RouterInfo Selector Source Map
 
-Status: M014 corrected and accepted by M017 (stale source removal and explicit unavailable paths)
+Status: M018 exact-wire source inventory; M019 independent closure pending
 
 This document is the single source of truth for every Proposal 170 RouterInfo
 selector's wire key, output type, nullability, semantic definition, canonical
 Emissary source, snapshot group, bounds, availability, and M010 work-package.
+
+Proposal 170 is Open and pinned here to the 2026-05-20 revision. The exact
+canonical addition set is the 43-key `PROPOSAL_170_ADDITIONS` manifest in
+`rpc.rs`; the legacy/base catalog is separate. Each canonical addition is
+classified in `PROPOSAL_170_CONTRACT` as `Available`, `Unavailable`, or
+`ProtocolAmbiguity`. Unavailable and ambiguous fields are rejected explicitly,
+not populated from semantically different legacy values.
 
 ## Source classes
 

@@ -1,6 +1,6 @@
 # I2PControl TunnelManager
 
-Status: M004 implemented
+Status: M018 canonical wire implementation; M019 independent closure pending
 
 This document describes the Proposal 170 TunnelManager API handler in Emissary.
 
@@ -8,25 +8,28 @@ This document describes the Proposal 170 TunnelManager API handler in Emissary.
 
 The TunnelManager handler implements the `TunnelManager` JSON-RPC method for all declared tunnel types. It provides:
 
-- CRUD operations (List, Create, Edit, Get, Delete) for tunnel definitions
-- Lifecycle dispatch (Start, Stop, Restart) through the backend registry
+- Canonical CRUD operations (create, edit, get, delete) for tunnel definitions
+- Compatibility `List` and capitalized action values
+- Lifecycle dispatch (start, stop, restart) through the backend registry
 - Ownership enforcement for startup-managed tunnels
 - Deterministic unsupported backend behavior for all 12 tunnel types
 
 ## Actions
 
-Exactly eight actions are accepted:
+The seven canonical actions are lowercase:
 
 | Action | Description |
 |---|---|
-| `List` | Return all tunnel definitions |
-| `Create` | Create a new tunnel definition |
-| `Edit` | Update an existing tunnel definition |
-| `Get` | Retrieve a tunnel definition by name |
-| `Delete` | Remove a tunnel definition |
-| `Start` | Start a tunnel through its backend |
-| `Stop` | Stop a tunnel through its backend |
-| `Restart` | Restart a tunnel (stop then start) |
+| `create` | Create a new tunnel definition |
+| `edit` | Update an existing tunnel definition |
+| `get` | Retrieve a tunnel definition by name |
+| `delete` | Remove a tunnel definition |
+| `start` | Start a tunnel through its backend |
+| `stop` | Stop a tunnel through its backend |
+| `restart` | Restart a tunnel (stop then start) |
+
+Capitalized values and `List` are compatibility extensions, not Proposal 170
+actions. `List` is excluded from the canonical action manifest.
 
 ### Action restrictions
 
@@ -71,9 +74,9 @@ All requests follow the JSON-RPC 2.0 envelope:
 
 ### Required fields
 
-- `Action` - One of the eight action strings (exact PascalCase)
-- `Name` - Required for all actions except `List`
-- `Type` - Required for `Create`
+- `Action` - One of the seven lowercase canonical action strings
+- `Name` - Required for all canonical actions
+- `Type` - Required for `create`
 
 ### Optional fields
 
@@ -89,7 +92,7 @@ Creates a new tunnel definition with the specified type and name.
 
 ```json
 {
-  "Action": "Create",
+  "Action": "create",
   "Type": "socks",
   "Name": "my-proxy",
   "i2p.tunnel.listenPort": 1080
@@ -107,7 +110,7 @@ Updates an existing tunnel definition. Preserves omitted fields.
 
 ```json
 {
-  "Action": "Edit",
+  "Action": "edit",
   "Name": "my-proxy",
   "NewName": "renamed-proxy",
   "i2p.tunnel.listenPort": 2080
@@ -124,12 +127,15 @@ Retrieves a tunnel definition by name.
 
 ```json
 {
-  "Action": "Get",
+  "Action": "get",
   "Name": "my-proxy"
 }
 ```
 
-Returns the definition with all typed fields and raw configuration for lossless round-trip.
+Canonical `get` returns `{status, info}`. Canonical `create`, `edit`, lifecycle,
+and `delete` return a structured `{status}` result, with `results` where the
+operation returns a result list. Compatibility requests retain their historical
+response shapes.
 
 ### Delete
 
@@ -137,7 +143,7 @@ Removes a tunnel definition.
 
 ```json
 {
-  "Action": "Delete",
+  "Action": "delete",
   "Name": "my-proxy"
 }
 ```
@@ -145,7 +151,7 @@ Removes a tunnel definition.
 - Startup-managed definitions are rejected
 - Delete of absent name is a successful no-op
 
-### List
+### Compatibility List
 
 Returns all tunnel definitions as an array.
 
@@ -161,7 +167,7 @@ Returns all tunnel definitions as an array.
 
 ```json
 {
-  "Action": "Start",
+  "Action": "start",
   "Name": "my-proxy"
 }
 ```
@@ -175,7 +181,7 @@ Dispatches through the backend registry. Returns:
 
 ```json
 {
-  "Action": "Stop",
+  "Action": "stop",
   "Name": "my-proxy"
 }
 ```
@@ -215,6 +221,22 @@ Composed as stop then start through the backend registry.
 | `StartupManaged` | Rejected | Rejected | Existing startup configuration |
 
 ## Tunnel options
+
+The following matrix is the canonical Proposal 170 option inventory. Fields in
+the second row are parsed into typed Emissary options; fields in the third row
+are accepted, validated where the proposal gives a bound/type, and retained in
+`rawConfig` for lossless round-trip. Retention is wire/CRUD support, not runtime
+data-plane support.
+
+| Disposition | Proposal 170 fields |
+|---|---|
+| Parsed and round-tripped | `Description`, `StartOnLoad`, `TargetDestination`, `Destination`, `TargetPort`, `ReachableBy`, `Port`, `TargetHost`, `Host` |
+| Validated and retained in raw configuration | `TunnelLength` (0–3), `TunnelVariance` (−2–2), `TunnelQuantity` (1–6), `TunnelBackupQuantity` (0–3), `Shared`, `UseSSL`, `UseOutproxyPlugin`, `ProxyAuth`, `OutproxyAuth`, `DelayOpen`, `Reduce`, `Close`, `NewDest`, `PersistentClientKey`, `AllowInternalSSL`, `BlockAccessInProxies`, `UniqueLocalAddressPerClient`, `MultiHoming`, `CustomOptions`, `LeaseSetClientAuths` |
+| Accepted and retained in raw configuration | `SigType`, `EncType`, `ProxyList`, `ProxyUsername`, `ProxyPassword`, `OutproxyUsername`, `OutproxyPassword`, `OutproxyType`, `SSLProxies`, `JumpList`, `ConnectDelay`, `Profile`, `ReduceCount`, `ReduceTime`, `CloseTime`, `PrivKeyFile`, `AllowUserAgent`, `AllowReferer`, `AllowAccept`, `WebsiteHostname`, `SpoofedHost`, `BlockUserAgents`, `UserAgents`, `BlockReferers`, `AccessOption`, `AccessList`, `FilterFilePath`, `MaxConcurrentConns`, `ClientPerMinute`, `ClientPerHour`, `ClientPerDay`, `TotalInPerMinute`, `TotalInPerHour`, `TotalInPerDay`, `PostLimit`, `PostLimitTime`, `PerClientPeriod`, `TotalPeriod`, `TotalBanTime`, `OptionalLookup`, `EncryptLeaseSet` |
+
+No field in this matrix starts a tunnel, creates a data-plane session, or
+reports a fabricated runtime state. Unsupported backends return an explicit
+status/error while preserving durable definitions.
 
 ### General
 

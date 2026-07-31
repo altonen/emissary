@@ -19,13 +19,16 @@
 //! Proposal 170 TunnelManager API handler.
 //!
 //! Implements the `TunnelManager` JSON-RPC method for all declared tunnel
-//! types. Provides CRUD operations (List, Create, Edit, Get, Delete) and
-//! lifecycle dispatch (Start, Stop, Restart) through the backend registry.
+//! types. Provides canonical CRUD operations (create, edit, get, delete) and
+//! lifecycle dispatch (start, stop, restart) through the backend registry.
+//! The historical capitalized actions and `List` remain compatibility
+//! extensions.
 //!
 //! # Invariants
 //!
 //! - Authentication must precede handler execution.
-//! - Exactly eight actions are accepted: List, Create, Edit, Get, Delete, Start, Stop, Restart.
+//! - Exactly seven lowercase actions are canonical; capitalized actions and `List` are
+//!   compatibility extensions.
 //! - Exactly twelve tunnel types are accepted.
 //! - `All` is accepted only for Start, Stop, and Restart.
 //! - CRUD success is returned only after durable persistence.
@@ -87,18 +90,25 @@ pub(crate) async fn handle_tunnel_manager(
         }
     };
 
-    let action = match crate::i2pcontrol::domain::tunnel::TunnelAction::from_str_exact(action_str) {
-        Some(a) => a,
-        None => {
-            return error_response(
-                id,
-                rpc::error_codes::INVALID_PARAMS,
-                format!(
-                    "Invalid action {}; expected one of: List, Create, Edit, Get, Delete, Start, Stop, Restart",
-                    action_str
-                ),
-            );
-        }
+    let (action, canonical) = match crate::i2pcontrol::domain::tunnel::TunnelAction::from_str_exact(
+        action_str,
+    ) {
+        Some(a) => (a, true),
+        None => match crate::i2pcontrol::domain::tunnel::TunnelAction::from_compatibility_str(
+            action_str,
+        ) {
+            Some(a) => (a, false),
+            None => {
+                return error_response(
+                    id,
+                    rpc::error_codes::INVALID_PARAMS,
+                    format!(
+                        "Invalid action {}; expected one of: create, edit, get, start, stop, restart, delete",
+                        action_str
+                    ),
+                );
+            }
+        },
     };
 
     // Extract optional Name
@@ -108,7 +118,18 @@ pub(crate) async fn handle_tunnel_manager(
     let tunnel_type_str = params.get("Type").and_then(|v| v.as_str());
 
     // Extract optional All
-    let all = params.get("All").and_then(|v| v.as_bool()).unwrap_or(false);
+    let all = match params.get("All") {
+        Some(value) => match value.as_bool() {
+            Some(value) => value,
+            None =>
+                return error_response(
+                    id,
+                    rpc::error_codes::INVALID_PARAMS,
+                    "'All' must be a boolean",
+                ),
+        },
+        None => false,
+    };
 
     // Extract optional NewName
     let new_name_str = params.get("NewName").and_then(|v| v.as_str());
@@ -122,10 +143,15 @@ pub(crate) async fn handle_tunnel_manager(
                 | crate::i2pcontrol::domain::tunnel::TunnelAction::Restart
         )
     {
+        let action_name = if canonical {
+            action.as_str()
+        } else {
+            compatibility_action_name(action)
+        };
         return error_response(
             id,
             rpc::error_codes::INVALID_PARAMS,
-            format!("All is not supported for {} action", action.as_str()),
+            format!("All is not supported for {} action", action_name),
         );
     }
 
@@ -133,19 +159,43 @@ pub(crate) async fn handle_tunnel_manager(
     match action {
         crate::i2pcontrol::domain::tunnel::TunnelAction::List => handle_list(state, id).await,
         crate::i2pcontrol::domain::tunnel::TunnelAction::Create =>
-            handle_create(state, id, params, tunnel_type_str, name).await,
+            handle_create(state, id, params, tunnel_type_str, name, canonical).await,
         crate::i2pcontrol::domain::tunnel::TunnelAction::Edit =>
-            handle_edit(state, id, params, name, new_name_str, tunnel_type_str).await,
+            handle_edit(
+                state,
+                id,
+                params,
+                name,
+                new_name_str,
+                tunnel_type_str,
+                canonical,
+            )
+            .await,
         crate::i2pcontrol::domain::tunnel::TunnelAction::Get =>
-            handle_get(state, id, name, all).await,
+            handle_get(state, id, name, all, canonical).await,
         crate::i2pcontrol::domain::tunnel::TunnelAction::Delete =>
-            handle_delete(state, id, name).await,
+            handle_delete(state, id, name, canonical).await,
         crate::i2pcontrol::domain::tunnel::TunnelAction::Start =>
-            handle_lifecycle(state, id, name, all, "start").await,
+            handle_lifecycle(state, id, name, all, "start", canonical).await,
         crate::i2pcontrol::domain::tunnel::TunnelAction::Stop =>
-            handle_lifecycle(state, id, name, all, "stop").await,
+            handle_lifecycle(state, id, name, all, "stop", canonical).await,
         crate::i2pcontrol::domain::tunnel::TunnelAction::Restart =>
-            handle_lifecycle(state, id, name, all, "restart").await,
+            handle_lifecycle(state, id, name, all, "restart", canonical).await,
+    }
+}
+
+fn compatibility_action_name(
+    action: crate::i2pcontrol::domain::tunnel::TunnelAction,
+) -> &'static str {
+    match action {
+        crate::i2pcontrol::domain::tunnel::TunnelAction::List => "List",
+        crate::i2pcontrol::domain::tunnel::TunnelAction::Create => "Create",
+        crate::i2pcontrol::domain::tunnel::TunnelAction::Edit => "Edit",
+        crate::i2pcontrol::domain::tunnel::TunnelAction::Get => "Get",
+        crate::i2pcontrol::domain::tunnel::TunnelAction::Start => "Start",
+        crate::i2pcontrol::domain::tunnel::TunnelAction::Stop => "Stop",
+        crate::i2pcontrol::domain::tunnel::TunnelAction::Restart => "Restart",
+        crate::i2pcontrol::domain::tunnel::TunnelAction::Delete => "Delete",
     }
 }
 
@@ -178,6 +228,7 @@ async fn handle_create(
     params: &serde_json::Map<String, serde_json::Value>,
     tunnel_type_str: Option<&str>,
     name: Option<&str>,
+    canonical: bool,
 ) -> serde_json::Value {
     // Type is required for Create
     let tunnel_type = match tunnel_type_str {
@@ -239,6 +290,12 @@ async fn handle_create(
         );
     }
 
+    if canonical {
+        if let Err(message) = validate_canonical_options(params) {
+            return error_response(id, rpc::error_codes::INVALID_PARAMS, message);
+        }
+    }
+
     // Parse options from params
     let options = match extract_tunnel_options(params) {
         Ok(o) => o,
@@ -268,7 +325,7 @@ async fn handle_create(
     let start_intent = options.start_on_load.unwrap_or(StartIntent::DoNotStart);
 
     let definition = TunnelDefinition {
-        name: tunnel_name,
+        name: tunnel_name.clone(),
         tunnel_type,
         ownership: TunnelOwnership::ControlPlane,
         runtime_state: TunnelRuntimeState::Stopped,
@@ -278,10 +335,18 @@ async fn handle_create(
     };
 
     match state.tunnel_create(definition).await {
+        Ok(()) if canonical => operation_response(
+            id,
+            format!("success - created tunnel {}", tunnel_name.as_str()),
+            Some(serde_json::json!([])),
+            None,
+        ),
         Ok(()) => success_response(id, serde_json::json!("ok")),
         Err(e) => {
             // Duplicate name is a Proposal 170 textual operation status, not a JSON-RPC error
-            if e.contains("already exists") {
+            if canonical && e.contains("already exists") {
+                operation_response(id, e, None, None)
+            } else if e.contains("already exists") {
                 success_response(id, serde_json::json!(e))
             } else {
                 tracing::error!(target: LOG_TARGET, "Create failed: {}", e);
@@ -302,6 +367,7 @@ async fn handle_edit(
     name: Option<&str>,
     new_name_str: Option<&str>,
     tunnel_type_str: Option<&str>,
+    canonical: bool,
 ) -> serde_json::Value {
     let tunnel_name = match name {
         Some(s) => s,
@@ -372,6 +438,12 @@ async fn handle_edit(
         }
     }
 
+    if canonical {
+        if let Err(message) = validate_canonical_options(params) {
+            return error_response(id, rpc::error_codes::INVALID_PARAMS, message);
+        }
+    }
+
     // Parse new options from params (merging with existing)
     let new_options = match extract_tunnel_options(params) {
         Ok(o) => o,
@@ -424,6 +496,12 @@ async fn handle_edit(
     };
 
     match state.tunnel_update(tunnel_name, definition, new_name.clone()).await {
+        Ok(true) if canonical => operation_response(
+            id,
+            format!("success - edited tunnel {tunnel_name}"),
+            None,
+            None,
+        ),
         Ok(true) => success_response(id, serde_json::json!("ok")),
         Ok(false) => error_response(
             id,
@@ -446,6 +524,7 @@ async fn handle_get(
     id: RequestId,
     name: Option<&str>,
     all: bool,
+    canonical: bool,
 ) -> serde_json::Value {
     if all {
         // Get all definitions
@@ -462,7 +541,16 @@ async fn handle_get(
         };
         let result: Vec<serde_json::Value> =
             definitions.iter().map(tunnel_definition_to_get_result).collect();
-        return success_response(id, serde_json::json!(result));
+        return if canonical {
+            operation_response(
+                id,
+                "success - options for all tunnels",
+                None,
+                Some(serde_json::Value::Array(result)),
+            )
+        } else {
+            success_response(id, serde_json::json!(result))
+        };
     }
 
     let tunnel_name = match name {
@@ -479,7 +567,16 @@ async fn handle_get(
     match state.tunnel_get(tunnel_name).await {
         Ok(Some(definition)) => {
             let result = tunnel_definition_to_get_result(&definition);
-            success_response(id, result)
+            if canonical {
+                operation_response(
+                    id,
+                    format!("success - options for {}", definition.name.as_str()),
+                    None,
+                    Some(result),
+                )
+            } else {
+                success_response(id, result)
+            }
         }
         Ok(None) => error_response(
             id,
@@ -504,6 +601,7 @@ async fn handle_delete(
     state: &I2pControlState,
     id: RequestId,
     name: Option<&str>,
+    canonical: bool,
 ) -> serde_json::Value {
     let tunnel_name = match name {
         Some(s) => s,
@@ -528,7 +626,16 @@ async fn handle_delete(
             },
         Ok(None) => {
             // Delete of absent name is a successful no-op
-            return success_response(id, serde_json::json!("ok"));
+            return if canonical {
+                operation_response(
+                    id,
+                    format!("success - deleting tunnel {tunnel_name}"),
+                    None,
+                    None,
+                )
+            } else {
+                success_response(id, serde_json::json!("ok"))
+            };
         }
         Err(e) => {
             tracing::error!(target: LOG_TARGET, "Delete lookup failed: {}", e);
@@ -541,6 +648,18 @@ async fn handle_delete(
     }
 
     match state.tunnel_delete(tunnel_name).await {
+        Ok(true) if canonical => operation_response(
+            id,
+            format!("success - deleting tunnel {tunnel_name}"),
+            None,
+            None,
+        ),
+        Ok(false) if canonical => operation_response(
+            id,
+            format!("success - deleting tunnel {tunnel_name}"),
+            None,
+            None,
+        ),
         Ok(true) => success_response(id, serde_json::json!("ok")),
         Ok(false) => success_response(id, serde_json::json!("ok")),
         Err(e) => {
@@ -565,9 +684,10 @@ async fn handle_lifecycle(
     name: Option<&str>,
     all: bool,
     action: &str,
+    canonical: bool,
 ) -> serde_json::Value {
     if all {
-        return handle_lifecycle_all(state, id, action).await;
+        return handle_lifecycle_all(state, id, action, canonical).await;
     }
 
     let tunnel_name = match name {
@@ -618,6 +738,7 @@ async fn handle_lifecycle(
     };
 
     match result {
+        Ok(status) if canonical => operation_response(id, status, None, None),
         Ok(status) => success_response(id, serde_json::json!(status)),
         Err(e) => {
             tracing::error!(target: LOG_TARGET, "{} failed: {}", action, e);
@@ -634,6 +755,7 @@ async fn handle_lifecycle_all(
     state: &I2pControlState,
     id: RequestId,
     action: &str,
+    canonical: bool,
 ) -> serde_json::Value {
     let definitions = match state.tunnel_list().await {
         Ok(defs) => defs,
@@ -648,7 +770,16 @@ async fn handle_lifecycle_all(
     };
 
     if definitions.is_empty() {
-        return success_response(id, serde_json::json!("ok"));
+        return if canonical {
+            operation_response(
+                id,
+                format!("success - {action} all tunnels"),
+                Some(serde_json::json!([])),
+                None,
+            )
+        } else {
+            success_response(id, serde_json::json!("ok"))
+        };
     }
 
     if definitions.len() > MAX_ALL_TARGETS {
@@ -660,6 +791,7 @@ async fn handle_lifecycle_all(
     }
 
     let mut last_result = "ok".to_string();
+    let mut results = Vec::new();
     let mut any_error = false;
 
     for def in &definitions {
@@ -677,12 +809,14 @@ async fn handle_lifecycle_all(
 
         match result {
             Ok(status) => {
+                results.push(serde_json::json!(status));
                 last_result = status;
                 if last_result.starts_with("error") {
                     any_error = true;
                 }
             }
             Err(e) => {
+                results.push(serde_json::json!(e));
                 last_result = e;
                 any_error = true;
             }
@@ -690,14 +824,32 @@ async fn handle_lifecycle_all(
     }
 
     if any_error {
-        success_response(id, serde_json::json!(last_result))
+        if canonical {
+            operation_response(
+                id,
+                last_result,
+                Some(serde_json::Value::Array(results)),
+                None,
+            )
+        } else {
+            success_response(id, serde_json::json!(last_result))
+        }
     } else {
-        success_response(id, serde_json::json!("ok"))
+        if canonical {
+            operation_response(
+                id,
+                format!("success - {action} all tunnels"),
+                Some(serde_json::Value::Array(results)),
+                None,
+            )
+        } else {
+            success_response(id, serde_json::json!("ok"))
+        }
     }
 }
 
 /// Convert a TunnelDefinition to the Proposal 170 Get result format.
-fn tunnel_definition_to_get_result(def: &TunnelDefinition) -> serde_json::Value {
+pub(crate) fn tunnel_definition_to_get_result(def: &TunnelDefinition) -> serde_json::Value {
     let mut result = serde_json::Map::new();
 
     result.insert("Name".to_string(), serde_json::json!(def.name.as_str()));
@@ -770,10 +922,18 @@ fn extract_tunnel_options(
     let mut options = TunnelOptions::default();
 
     // General
-    if let Some(v) = params.get("description").and_then(|v| v.as_str()) {
+    if let Some(v) = params
+        .get("Description")
+        .or_else(|| params.get("description"))
+        .and_then(|v| v.as_str())
+    {
         options.description = Some(v.to_string());
     }
-    if let Some(v) = params.get("i2p.tunnel.startOnLoad").and_then(|v| v.as_bool()) {
+    if let Some(v) = params
+        .get("StartOnLoad")
+        .or_else(|| params.get("i2p.tunnel.startOnLoad"))
+        .and_then(|v| v.as_bool())
+    {
         options.start_on_load = Some(if v {
             StartIntent::StartOnLoad
         } else {
@@ -782,10 +942,19 @@ fn extract_tunnel_options(
     }
 
     // Client options
-    if let Some(v) = params.get("i2p.tunnel.clientDest").and_then(|v| v.as_str()) {
+    if let Some(v) = params
+        .get("TargetDestination")
+        .or_else(|| params.get("Destination"))
+        .or_else(|| params.get("i2p.tunnel.clientDest"))
+        .and_then(|v| v.as_str())
+    {
         options.target_destination = Some(v.to_string());
     }
-    if let Some(v) = params.get("i2p.tunnel.clientDestPort").and_then(|v| v.as_u64()) {
+    if let Some(v) = params
+        .get("TargetPort")
+        .or_else(|| params.get("i2p.tunnel.clientDestPort"))
+        .and_then(|v| v.as_u64())
+    {
         if v > u16::MAX as u64 {
             return Err(format!(
                 "i2p.tunnel.clientDestPort value {} out of range",
@@ -794,10 +963,18 @@ fn extract_tunnel_options(
         }
         options.target_port = Some(v as u16);
     }
-    if let Some(v) = params.get("i2p.tunnel.listenInterface").and_then(|v| v.as_str()) {
+    if let Some(v) = params
+        .get("ReachableBy")
+        .or_else(|| params.get("i2p.tunnel.listenInterface"))
+        .and_then(|v| v.as_str())
+    {
         options.listen_interface = Some(v.to_string());
     }
-    if let Some(v) = params.get("i2p.tunnel.listenPort").and_then(|v| v.as_u64()) {
+    if let Some(v) = params
+        .get("Port")
+        .or_else(|| params.get("i2p.tunnel.listenPort"))
+        .and_then(|v| v.as_u64())
+    {
         if v > u16::MAX as u64 {
             return Err(format!("i2p.tunnel.listenPort value {} out of range", v));
         }
@@ -811,7 +988,12 @@ fn extract_tunnel_options(
     }
 
     // Server options
-    if let Some(v) = params.get("i2p.tunnel.serverHostingDestination").and_then(|v| v.as_str()) {
+    if let Some(v) = params
+        .get("TargetHost")
+        .or_else(|| params.get("Host"))
+        .or_else(|| params.get("i2p.tunnel.serverHostingDestination"))
+        .and_then(|v| v.as_str())
+    {
         options.hosting_destination = Some(v.to_string());
     }
     if let Some(v) = params.get("i2p.tunnel.isPrivate").and_then(|v| v.as_bool()) {
@@ -975,12 +1157,92 @@ fn action_to_display(action: &str) -> &str {
     }
 }
 
+/// Validate the canonical Proposal 170 option names and the numeric ranges
+/// explicitly stated by the proposal. All other listed fields are retained
+/// losslessly in `raw_config` until a runtime backend exists.
+fn validate_canonical_options(
+    params: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    for (key, value) in params {
+        match key.as_str() {
+            "Port" | "TargetPort" => {
+                let port = value.as_u64().ok_or_else(|| format!("{key} must be an integer"))?;
+                if port > u16::MAX as u64 {
+                    return Err(format!("{key} value {port} out of range"));
+                }
+            }
+            "TunnelLength" => validate_integer_range(key, value, 0, 3)?,
+            "TunnelVariance" => validate_integer_range(key, value, -2, 2)?,
+            "TunnelQuantity" => validate_integer_range(key, value, 1, 6)?,
+            "TunnelBackupQuantity" => validate_integer_range(key, value, 0, 3)?,
+            "StartOnLoad"
+            | "Shared"
+            | "UseSSL"
+            | "UseOutproxyPlugin"
+            | "ProxyAuth"
+            | "OutproxyAuth"
+            | "DelayOpen"
+            | "Reduce"
+            | "Close"
+            | "NewDest"
+            | "PersistentClientKey"
+            | "AllowInternalSSL"
+            | "BlockAccessInProxies"
+            | "UniqueLocalAddressPerClient"
+            | "MultiHoming"
+            | "EncryptLeaseSet" => {
+                if key == "EncryptLeaseSet" && !value.is_string() {
+                    return Err(format!("{key} must be a string"));
+                }
+                if key != "EncryptLeaseSet" && !value.is_boolean() {
+                    return Err(format!("{key} must be a boolean"));
+                }
+            }
+            "CustomOptions" | "LeaseSetClientAuths" if !value.is_object() && !value.is_array() => {
+                return Err(format!("{key} must be an object or array"));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn validate_integer_range(
+    key: &str,
+    value: &serde_json::Value,
+    min: i64,
+    max: i64,
+) -> Result<(), String> {
+    let number = value.as_i64().ok_or_else(|| format!("{key} must be an integer"))?;
+    if !(min..=max).contains(&number) {
+        return Err(format!("{key} value {number} out of range {min}..={max}"));
+    }
+    Ok(())
+}
+
 fn resolve_id(id: &Option<RequestId>) -> RequestId {
     id.clone().unwrap_or(RequestId::Null)
 }
 
 fn success_response(id: RequestId, result: serde_json::Value) -> serde_json::Value {
     serde_json::to_value(JsonRpcSuccess::new(id, result)).unwrap()
+}
+
+fn operation_response(
+    id: RequestId,
+    status: impl Into<String>,
+    results: Option<serde_json::Value>,
+    info: Option<serde_json::Value>,
+) -> serde_json::Value {
+    let mut result = serde_json::Map::new();
+    result.insert("status".to_string(), serde_json::json!(status.into()));
+    if let Some(results) = results {
+        result.insert("results".to_string(), results);
+    }
+    if let Some(info) = info {
+        result.insert("info".to_string(), info);
+    }
+    success_response(id, serde_json::Value::Object(result))
 }
 
 fn error_response(id: RequestId, code: i32, message: impl Into<String>) -> serde_json::Value {
@@ -1061,6 +1323,52 @@ mod tests {
         );
         let resp = handle_tunnel_manager(&state, &req).await;
         assert_eq!(resp["result"], "ok");
+    }
+
+    #[tokio::test]
+    async fn canonical_wire_fixture_covers_all_seven_actions() {
+        let state = test_state();
+        let create = tm_request(
+            "TunnelManager",
+            serde_json::json!({
+                "Action": "create",
+                "Type": "client",
+                "Name": "canonical-tunnel",
+                "Port": 1234,
+                "TunnelLength": 2
+            }),
+        );
+        let resp = handle_tunnel_manager(&state, &create).await;
+        assert!(resp["result"]["status"].as_str().unwrap().contains("created"));
+        assert!(resp["result"]["results"].is_array());
+
+        for action in ["edit", "get", "start", "stop", "restart"] {
+            let mut params = serde_json::json!({
+                "Action": action,
+                "Name": "canonical-tunnel"
+            });
+            if action == "edit" {
+                params["Description"] = serde_json::json!("edited");
+            }
+            let resp = handle_tunnel_manager(&state, &tm_request("TunnelManager", params)).await;
+            assert!(
+                resp["result"]["status"].is_string(),
+                "canonical {action} must return a structured status: {resp}"
+            );
+            if action == "get" {
+                assert_eq!(resp["result"]["info"]["Name"], "canonical-tunnel");
+            }
+        }
+
+        let delete = tm_request(
+            "TunnelManager",
+            serde_json::json!({
+                "Action": "delete",
+                "Name": "canonical-tunnel"
+            }),
+        );
+        let resp = handle_tunnel_manager(&state, &delete).await;
+        assert!(resp["result"]["status"].is_string());
     }
 
     #[tokio::test]

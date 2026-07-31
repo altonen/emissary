@@ -269,8 +269,10 @@ fn router_info_dtos_clone_and_default() {
 
 #[test]
 fn selector_registry_is_complete() {
-    // 121 Proposal 170 RouterInfo selectors.
-    assert_eq!(rpc::router_info_keys::ALL.len(), 121);
+    // The registry contains the legacy/base selectors plus the exact
+    // Proposal 170 additions. The additions themselves are checked against
+    // the normative manifest in conformance_manifest.rs.
+    assert_eq!(rpc::router_info_keys::ALL.len(), 161);
 }
 
 #[test]
@@ -287,8 +289,11 @@ fn selector_registry_address_book_partition() {
     let ab: HashSet<&str> = rpc::router_info_keys::ADDRESS_BOOK_KEYS.iter().copied().collect();
     let core: HashSet<&str> = rpc::router_info_keys::CORE_KEYS.iter().copied().collect();
 
-    // ALL = CORE ∪ ADDRESS_BOOK
-    assert_eq!(all, core.union(&ab).copied().collect::<HashSet<_>>());
+    // CORE ∪ ADDRESS_BOOK is the legacy/base partition. Exact Proposal 170
+    // additions extend that partition without changing either legacy set.
+    let legacy: HashSet<&str> = core.union(&ab).copied().collect();
+    assert_eq!(legacy.len(), 121);
+    assert!(all.is_superset(&legacy));
     // CORE ∩ ADDRESS_BOOK = ∅
     assert!(core.is_disjoint(&ab));
 }

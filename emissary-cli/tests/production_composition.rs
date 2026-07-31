@@ -34,15 +34,18 @@ use std::sync::{
 };
 
 use emissary_cli::i2pcontrol::{
+    client_services::assemble_response_with_observation,
     control_plane::{ControlPlane, TunnelManagerControl},
     production::{
         EventMetrics, ProductionControlPlane, ProductionRouterInfoControl,
         ProductionTunnelManagerControl,
     },
     router_info::{RouterInfoControl, TunnelSummary},
+    server::{I2pControlState, ProductionControls},
+    service_registry::{ObservedServiceState, ServiceCategory, ServiceMetadata, ServiceRegistry},
 };
 
-use emissary_core::FirewallStatus;
+use emissary_core::{FirewallStatus, SamSessionObservationHandle};
 
 // --- In-memory EventMetrics for tests ---
 
@@ -176,6 +179,73 @@ async fn production_router_info_uses_shared_tunnel_service() {
         stats.configured_count, 1,
         "RouterInfo should see 1 configured tunnel via shared service"
     );
+}
+
+#[tokio::test]
+async fn production_sam_observation_source_reaches_client_services_serializer() {
+    // A real SAM protocol activation cannot be made deterministic in this
+    // repository-wide production-composition test: the publisher is private
+    // to SamServer and activation requires a live destination/session path.
+    // This is the closest production seam: real production controls and the
+    // exact shared observation handle are passed through I2pControlState to
+    // the ClientServicesInfo serializer. M019 must decide whether this is
+    // sufficient or require an environment-specific SAM integration.
+    let tmp = tempfile::tempdir().unwrap();
+    let tunnels =
+        Arc::new(ProductionTunnelManagerControl::new(tmp.path().join("tunnels")).unwrap());
+    tunnels.load().await.unwrap();
+    let metrics = Arc::new(TestMetrics::new());
+    let router_info = Arc::new(ProductionRouterInfoControl::new(
+        "test-id".into(),
+        "test".into(),
+        0.0,
+        0,
+        0,
+        metrics.clone(),
+        Arc::new(emissary_cli::i2pcontrol::observability::LogRing::default()),
+        tunnels.clone() as Arc<dyn TunnelManagerControl>,
+    ));
+    let sam_handle = SamSessionObservationHandle::empty_for_test();
+    let registry = ServiceRegistry::new();
+    registry
+        .allocate_handle(ServiceCategory::Sam)
+        .update(
+            ObservedServiceState::Listening,
+            ServiceMetadata {
+                enabled: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let state = I2pControlState::new_production_with_sam_observation(
+        "testpass".into(),
+        ProductionControls {
+            address_books: Arc::new(
+                emissary_cli::i2pcontrol::production::ProductionAddressBookControl::new(
+                    tmp.path().join("addressbooks"),
+                ),
+            ),
+            tunnels: tunnels.clone() as Arc<dyn TunnelManagerControl>,
+            router_info,
+            control_plane: Arc::new(ProductionControlPlane::new(
+                "test-id".into(),
+                "test".into(),
+                metrics,
+            )),
+            service_registry: registry,
+        },
+        Some(sam_handle.clone()),
+    );
+    let result = assemble_response_with_observation(
+        &state.service_snapshot(),
+        &["SAM"],
+        state.tunnel_manager(),
+        state.sam_session_observation(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result["SAM"]["enabled"], true);
+    assert_eq!(result["SAM"]["sessions"], serde_json::json!({}));
 }
 
 // --- ControlPlane narrowed tests ---

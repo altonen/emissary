@@ -1,6 +1,6 @@
 # RouterInfo Method
 
-Status: M014 corrective work accepted by M017 final-head review
+Status: M018 exact-wire implementation; M019 independent closure pending
 
 This document describes the Proposal 170 `RouterInfo` JSON-RPC method implementation in Emissary.
 
@@ -10,15 +10,24 @@ The `RouterInfo` method allows authenticated callers to request specific router 
 
 ## Selector registry
 
-All 121 Proposal 170 RouterInfo selectors are registered in `rpc.rs` and verified by the `router_info_selectors_complete` test.
+`rpc.rs` contains 121 legacy/base selectors plus the exact 43-key Proposal 170
+addition manifest. The 121-key catalog is not counted as Proposal 170
+coverage. The machine-checkable manifest declares the JSON type and source
+state (`available`, `unavailable`, or `protocol ambiguity`) for every addition.
 
-### Selector groups
+Canonical Proposal 170 additions are selected by direct parameter presence and
+are returned under the exact same key. Values are ignored. The four available
+address-book list additions end in `.private.list`, `.local.list`,
+`.router.list`, and `.published.list`; the subscription/config additions are
+recognized but unavailable because their canonical source shape is not wired.
+
+### Legacy/base selector groups
 
 | Group | Prefix | Count | Source |
 |---|---|---|---|
 | Identity/static | `i2p.router.identity`, `i2p.router.version`, `i2p.router.uptime` | 3 | Startup-retained values |
-| Router news | `i2p.router.news` | 1 | Empty string (no news subsystem) |
-| Clock skew | `i2p.router.clock.skew` | 1 | Retained (no estimate yet) |
+| Router news | `i2p.router.news` | 1 | RouterInfo control source |
+| Clock skew | `i2p.router.clock.skew` | 1 | Compatibility alias; RouterInfo control source |
 | Network status | `i2p.router.net.bw.*` | 2 | EventMetrics firewall status |
 | Share ratio | `i2p.router.shareRatio` | 1 | Retained configuration |
 | Configured BW | `i2p.router.configuredbw.*` | 2 | Retained configuration |
@@ -34,8 +43,10 @@ All 121 Proposal 170 RouterInfo selectors are registered in `rpc.rs` and verifie
 
 ### Selector behavior
 
-- Selector-by-presence: only keys with `true` value in the `Selector` object are included
-- Keys with `false` or missing are omitted from the response
+- Canonical additions: direct key presence selects, including `false`, `null`,
+  and non-boolean values
+- Compatibility nested `Selector`: only truthy boolean values select
+- Direct and nested forms cannot be mixed
 - Unknown selector keys return an error (`INVALID_PARAMS`)
 - Only requested keys appear in the response (no unrelated keys)
 
@@ -105,10 +116,18 @@ If estimated response exceeds bounds, the request fails with an explicit error b
 
 Per-selector item bounds enforce limits on returned collections.
 
+## Canonical source status
+
+Available canonical fields include retained identity/info/clock skew, cumulative
+byte counters, share ratio, I2PTunnel controller info list, total success rate, router news,
+logs, log clear, and the four address-book lists. Canonical fields without a
+truthful current source return the established JSON-RPC unavailable error;
+Emissary never substitutes zero, false, or an empty collection.
+
 ## Null/unavailable behavior
 
 - Clock skew: `null` when not yet determined (protocol-permitted nullable)
-- Router news: empty string (no news subsystem; retained constant)
+- Router news: source-provided string
 - Peer RouterInfo: `null` when no peer ID specified
 - Network status: exact string codes ("OK", "Firewalled", "Testing", etc.)
 - Share ratio: from retained configuration

@@ -24,7 +24,8 @@
 //! # Invariants
 //!
 //! - Authentication must precede parsing of expensive destination payloads.
-//! - Entry mutation, `SetSubscriptions`, and `SetConfig` are separate methods.
+//! - Canonical entry mutation, `SetSubscriptions`, and `SetConfig` all live inside the
+//!   `AddressBook` method.
 //! - Book type accepts exactly `private`, `local`, `router`, and `published`.
 //! - `Delete` selects deletion by parameter presence, not boolean value.
 //! - Hostnames are bounded and validated before persistence.
@@ -91,7 +92,32 @@ pub(crate) async fn handle_address_book(
         }
     };
 
-    // Extract and validate book type
+    // Canonical Proposal 170 modes take precedence. Compatibility requests
+    // are handled below and may not be mixed with canonical parameters.
+    let canonical_keys = [
+        "Type",
+        "Hostname",
+        "Destination",
+        "Delete",
+        "SetSubscriptions",
+        "SetConfig",
+    ];
+    let has_canonical = canonical_keys.iter().any(|key| params.contains_key(*key));
+    let has_compatibility =
+        ["book", "request", "name", "value"].iter().any(|key| params.contains_key(*key));
+    if has_canonical {
+        if has_compatibility {
+            return error_response(
+                id,
+                rpc::error_codes::INVALID_PARAMS,
+                "Canonical AddressBook parameters cannot be mixed with compatibility parameters",
+            );
+        }
+        return handle_canonical_address_book(state, id, params).await;
+    }
+
+    // Existing action-style form is retained as an explicitly compatible
+    // Emissary extension.
     let book_type = match params.get("book").and_then(|v| v.as_str()) {
         Some(s) => match AdministrativeAddressBookType::from_str_exact(s) {
             Some(bt) => bt,
@@ -142,6 +168,171 @@ pub(crate) async fn handle_address_book(
             ),
         ),
     }
+}
+
+async fn handle_canonical_address_book(
+    state: &I2pControlState,
+    id: RequestId,
+    params: &serde_json::Map<String, serde_json::Value>,
+) -> serde_json::Value {
+    let mode_count = usize::from(params.contains_key("SetSubscriptions"))
+        + usize::from(params.contains_key("SetConfig"))
+        + usize::from(
+            params.contains_key("Type")
+                || params.contains_key("Hostname")
+                || params.contains_key("Destination")
+                || params.contains_key("Delete"),
+        );
+    if mode_count != 1 {
+        return error_response(
+            id,
+            rpc::error_codes::INVALID_PARAMS,
+            "AddressBook request must select exactly one canonical operation mode",
+        );
+    }
+
+    if let Some(value) = params.get("SetSubscriptions") {
+        let subscriptions = match parse_subscriptions(value) {
+            Ok(value) => value,
+            Err(message) => return error_response(id, rpc::error_codes::INVALID_PARAMS, message),
+        };
+        return match state.address_book_set_subscriptions(subscriptions).await {
+            Ok(()) => success_response(
+                id,
+                serde_json::json!({
+                    "success": true,
+                    "message": "Successfully modified subscriptions"
+                }),
+            ),
+            Err(e) => {
+                tracing::error!(target: LOG_TARGET, "Canonical SetSubscriptions failed: {}", e);
+                error_response(
+                    id,
+                    rpc::error_codes::INTERNAL_ERROR,
+                    "Failed to persist subscriptions",
+                )
+            }
+        };
+    }
+
+    if let Some(value) = params.get("SetConfig") {
+        let configuration = match parse_configuration(value) {
+            Ok(value) => value,
+            Err(message) => return error_response(id, rpc::error_codes::INVALID_PARAMS, message),
+        };
+        return match state.address_book_set_configuration(configuration).await {
+            Ok(()) => success_response(
+                id,
+                serde_json::json!({
+                    "success": true,
+                    "message": "Successfully modified configuration"
+                }),
+            ),
+            Err(e) => {
+                tracing::error!(target: LOG_TARGET, "Canonical SetConfig failed: {}", e);
+                error_response(
+                    id,
+                    rpc::error_codes::INTERNAL_ERROR,
+                    "Failed to persist configuration",
+                )
+            }
+        };
+    }
+
+    let book_type = match params.get("Type").and_then(|value| value.as_str()) {
+        Some(value) => match AdministrativeAddressBookType::from_str_exact(value) {
+            Some(book_type) => book_type,
+            None =>
+                return error_response(
+                    id,
+                    rpc::error_codes::INVALID_PARAMS,
+                    "Invalid 'Type' parameter; expected private, local, router, or published",
+                ),
+        },
+        None =>
+            return error_response(
+                id,
+                rpc::error_codes::INVALID_PARAMS,
+                "Missing or invalid 'Type' parameter",
+            ),
+    };
+    let hostname = match params.get("Hostname").and_then(|value| value.as_str()) {
+        Some(value) => value,
+        None =>
+            return error_response(
+                id,
+                rpc::error_codes::INVALID_PARAMS,
+                "Missing or invalid 'Hostname' parameter",
+            ),
+    };
+    if let Err(message) = validate_hostname(hostname) {
+        return error_response(id, rpc::error_codes::INVALID_PARAMS, message);
+    }
+    let destination = match params.get("Destination").and_then(|value| value.as_str()) {
+        Some(value) => value,
+        None =>
+            return error_response(
+                id,
+                rpc::error_codes::INVALID_PARAMS,
+                "Missing or invalid 'Destination' parameter",
+            ),
+    };
+    if let Err(message) = validate_destination(destination) {
+        return error_response(id, rpc::error_codes::INVALID_PARAMS, message);
+    }
+
+    if params.contains_key("Delete") {
+        let deleted = match state.address_book_delete(book_type, hostname).await {
+            Ok(deleted) => deleted,
+            Err(e) => {
+                tracing::error!(target: LOG_TARGET, "Canonical delete failed: {}", e);
+                return error_response(
+                    id,
+                    rpc::error_codes::INTERNAL_ERROR,
+                    "Failed to delete address book entry",
+                );
+            }
+        };
+        let message = if deleted {
+            format!("Deleted {hostname} in {book_type} addressbook")
+        } else {
+            format!("Failed to Delete {hostname} in {book_type} addressbook")
+        };
+        return success_response(
+            id,
+            serde_json::json!({"success": deleted, "message": message}),
+        );
+    }
+
+    let entry = AddressBookEntry::new(hostname, destination);
+    let updated = match state.address_book_update(book_type, entry.clone()).await {
+        Ok(updated) => updated,
+        Err(e) => {
+            tracing::error!(target: LOG_TARGET, "Canonical add/update failed: {}", e);
+            return error_response(
+                id,
+                rpc::error_codes::INTERNAL_ERROR,
+                "Failed to persist address book entry",
+            );
+        }
+    };
+    if !updated {
+        if let Err(e) = state.address_book_add(book_type, entry).await {
+            tracing::error!(target: LOG_TARGET, "Canonical add failed: {}", e);
+            return error_response(
+                id,
+                rpc::error_codes::INTERNAL_ERROR,
+                "Failed to persist address book entry",
+            );
+        }
+    }
+    success_response(
+        id,
+        serde_json::json!({
+            "success": true,
+            "message": format!("Added {hostname} in {book_type} addressbook")
+        }),
+    )
 }
 
 /// Handle List request: return all entries in the specified book.
@@ -395,6 +586,73 @@ async fn handle_delete(
             }
         }
     }
+}
+
+fn parse_subscriptions(value: &serde_json::Value) -> Result<SubscriptionSet, String> {
+    let subs_array = value
+        .as_array()
+        .ok_or_else(|| "'SetSubscriptions' must be a JSON array".to_string())?;
+    if subs_array.len() > MAX_SUBSCRIPTIONS {
+        return Err(format!(
+            "Too many subscriptions; maximum is {}",
+            MAX_SUBSCRIPTIONS
+        ));
+    }
+
+    let mut subscriptions = SubscriptionSet::new();
+    for (i, item) in subs_array.iter().enumerate() {
+        let url = item.as_str().ok_or_else(|| format!("Subscription {} is not a string", i))?;
+        if url.len() > MAX_SUBSCRIPTION_LENGTH {
+            return Err(format!(
+                "Subscription {} exceeds maximum length of {}",
+                i, MAX_SUBSCRIPTION_LENGTH
+            ));
+        }
+        if url.chars().any(|c| c.is_control()) {
+            return Err(format!("Subscription {} contains control characters", i));
+        }
+        subscriptions.push(url.to_string());
+    }
+    Ok(subscriptions)
+}
+
+fn parse_configuration(value: &serde_json::Value) -> Result<AddressBookConfiguration, String> {
+    let config_map = value
+        .as_object()
+        .ok_or_else(|| "'SetConfig' must be a JSON object".to_string())?;
+    if config_map.len() > MAX_CONFIG_ENTRIES {
+        return Err(format!(
+            "Too many configuration entries; maximum is {}",
+            MAX_CONFIG_ENTRIES
+        ));
+    }
+
+    let mut configuration = AddressBookConfiguration::new();
+    for (key, value) in config_map {
+        if key.len() > MAX_CONFIG_KEY_LENGTH {
+            return Err(format!(
+                "Configuration key exceeds maximum length of {}",
+                MAX_CONFIG_KEY_LENGTH
+            ));
+        }
+        let value = value
+            .as_str()
+            .ok_or_else(|| format!("Configuration value for '{}' is not a string", key))?;
+        if value.len() > MAX_CONFIG_VALUE_LENGTH {
+            return Err(format!(
+                "Configuration value for '{}' exceeds maximum length of {}",
+                key, MAX_CONFIG_VALUE_LENGTH
+            ));
+        }
+        if key.chars().any(|c| c.is_control()) || value.chars().any(|c| c.is_control()) {
+            return Err(format!(
+                "Configuration key '{}' contains control characters",
+                key
+            ));
+        }
+        configuration.insert(key.clone(), value.to_string());
+    }
+    Ok(configuration)
 }
 
 /// Handle SetSubscriptions method: replace the subscription set.
@@ -668,54 +926,66 @@ pub async fn resolve_address_book_selectors(
 ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
     let mut result = serde_json::Map::new();
 
-    for key in requested_keys {
-        match *key {
-            rpc::router_info_keys::ADDRESS_BOOK_PRIVATE => {
-                let entries = control.list(AdministrativeAddressBookType::Private).await?;
-                result.insert(
-                    key.to_string(),
-                    serde_json::json!(entries_to_json(&entries)),
-                );
-            }
-            rpc::router_info_keys::ADDRESS_BOOK_LOCAL => {
-                let entries = control.list(AdministrativeAddressBookType::Local).await?;
-                result.insert(
-                    key.to_string(),
-                    serde_json::json!(entries_to_json(&entries)),
-                );
-            }
-            rpc::router_info_keys::ADDRESS_BOOK_ROUTER => {
-                let entries = control.list(AdministrativeAddressBookType::Router).await?;
-                result.insert(
-                    key.to_string(),
-                    serde_json::json!(entries_to_json(&entries)),
-                );
-            }
-            rpc::router_info_keys::ADDRESS_BOOK_PUBLISHED => {
-                let entries = control.list(AdministrativeAddressBookType::Published).await?;
-                result.insert(
-                    key.to_string(),
-                    serde_json::json!(entries_to_json(&entries)),
-                );
-            }
-            rpc::router_info_keys::ADDRESS_BOOK_SUBSCRIPTIONS => {
-                let subs = control.subscriptions().await?;
-                let urls: Vec<&str> = subs.as_slice().iter().map(|s| s.as_str()).collect();
-                result.insert(key.to_string(), serde_json::json!(urls));
-            }
-            rpc::router_info_keys::ADDRESS_BOOK_CONFIG => {
-                let config = control.configuration().await?;
-                let map: serde_json::Map<String, serde_json::Value> = config
-                    .as_map()
-                    .iter()
-                    .map(|(k, v)| (k.clone(), serde_json::json!(v)))
-                    .collect();
-                result.insert(key.to_string(), serde_json::json!(map));
-            }
-            _ => {
-                // Unknown selector — skip (not an error, just not our key)
-            }
+    // Fetch each book at most once when its canonical and compatibility names
+    // are requested together.
+    for (book_type, keys) in [
+        (
+            AdministrativeAddressBookType::Private,
+            [
+                rpc::router_info_keys::ADDRESS_BOOK_PRIVATE,
+                rpc::router_info_keys::P170_ADDRESS_BOOK_PRIVATE_LIST,
+            ],
+        ),
+        (
+            AdministrativeAddressBookType::Local,
+            [
+                rpc::router_info_keys::ADDRESS_BOOK_LOCAL,
+                rpc::router_info_keys::P170_ADDRESS_BOOK_LOCAL_LIST,
+            ],
+        ),
+        (
+            AdministrativeAddressBookType::Router,
+            [
+                rpc::router_info_keys::ADDRESS_BOOK_ROUTER,
+                rpc::router_info_keys::P170_ADDRESS_BOOK_ROUTER_LIST,
+            ],
+        ),
+        (
+            AdministrativeAddressBookType::Published,
+            [
+                rpc::router_info_keys::ADDRESS_BOOK_PUBLISHED,
+                rpc::router_info_keys::P170_ADDRESS_BOOK_PUBLISHED_LIST,
+            ],
+        ),
+    ] {
+        let requested: Vec<&&str> =
+            keys.iter().filter(|key| requested_keys.contains(key)).collect();
+        if requested.is_empty() {
+            continue;
         }
+        let entries = control.list(book_type).await?;
+        let value = serde_json::json!(entries_to_json(&entries));
+        for key in requested {
+            result.insert((*key).to_string(), value.clone());
+        }
+    }
+
+    if requested_keys.contains(&rpc::router_info_keys::ADDRESS_BOOK_SUBSCRIPTIONS) {
+        let subs = control.subscriptions().await?;
+        let urls: Vec<&str> = subs.as_slice().iter().map(|s| s.as_str()).collect();
+        result.insert(
+            rpc::router_info_keys::ADDRESS_BOOK_SUBSCRIPTIONS.to_string(),
+            serde_json::json!(urls),
+        );
+    }
+    if requested_keys.contains(&rpc::router_info_keys::ADDRESS_BOOK_CONFIG) {
+        let config = control.configuration().await?;
+        let map: serde_json::Map<String, serde_json::Value> =
+            config.as_map().iter().map(|(k, v)| (k.clone(), serde_json::json!(v))).collect();
+        result.insert(
+            rpc::router_info_keys::ADDRESS_BOOK_CONFIG.to_string(),
+            serde_json::json!(map),
+        );
     }
 
     Ok(result)
@@ -852,6 +1122,73 @@ mod tests {
         assert_eq!(arr.len(), 1);
         assert_eq!(arr[0]["name"], "test.i2p");
         assert_eq!(arr[0]["value"], "base64dest");
+    }
+
+    #[tokio::test]
+    async fn canonical_wire_fixture_mutates_entry_and_uses_result_object() {
+        let state = test_state();
+        let add = ab_request(
+            "AddressBook",
+            serde_json::json!({
+                "Type": "private",
+                "Hostname": "canonical.i2p",
+                "Destination": "base64dest"
+            }),
+        );
+        let resp = handle_address_book(&state, &add).await;
+        assert_eq!(resp["result"]["success"], true);
+        assert!(resp["result"]["message"].is_string());
+        assert!(resp.get("success").is_none());
+
+        let delete = ab_request(
+            "AddressBook",
+            serde_json::json!({
+                "Type": "private",
+                "Hostname": "canonical.i2p",
+                "Destination": "base64dest",
+                "Delete": false
+            }),
+        );
+        let resp = handle_address_book(&state, &delete).await;
+        assert_eq!(resp["result"]["success"], true);
+    }
+
+    #[tokio::test]
+    async fn canonical_wire_fixture_supports_subscription_and_config_modes() {
+        let state = test_state();
+        let subscriptions = ab_request(
+            "AddressBook",
+            serde_json::json!({
+                "SetSubscriptions": ["https://example.i2p/hosts.txt"]
+            }),
+        );
+        let resp = handle_address_book(&state, &subscriptions).await;
+        assert_eq!(resp["result"]["success"], true);
+
+        let config = ab_request(
+            "AddressBook",
+            serde_json::json!({
+                "SetConfig": {"updateInterval": "3600"}
+            }),
+        );
+        let resp = handle_address_book(&state, &config).await;
+        assert_eq!(resp["result"]["success"], true);
+    }
+
+    #[tokio::test]
+    async fn canonical_and_compatibility_address_book_forms_cannot_mix() {
+        let state = test_state();
+        let req = ab_request(
+            "AddressBook",
+            serde_json::json!({
+                "Type": "private",
+                "book": "private",
+                "Hostname": "mixed.i2p",
+                "Destination": "base64dest"
+            }),
+        );
+        let resp = handle_address_book(&state, &req).await;
+        assert_eq!(resp["error"]["code"], -32602);
     }
 
     #[tokio::test]

@@ -147,7 +147,7 @@ const _: () = {
 /// Compile-time guard: every TunnelAction variant is listed in ALL_TUNNEL_ACTIONS.
 const _: () = {
     #[allow(dead_code)]
-    const EXPECTED_COUNT: usize = 8;
+    const EXPECTED_COUNT: usize = 7;
     const _CHECK: [(); EXPECTED_COUNT] = [(); ALL_TUNNEL_ACTIONS.len()];
 };
 

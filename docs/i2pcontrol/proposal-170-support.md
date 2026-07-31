@@ -1,6 +1,16 @@
 # Proposal 170 Support Status
 
-Status: Proposal 170 workstream closed by M017 final-head reclosure
+Status: M018 implementation complete; M019 pinned-revision independent closure pending
+
+Proposal 170 remains Open and this status is pinned to the 2026-05-20 revision.
+M017's broad closure is invalidated historical evidence.
+
+Support is reported separately as:
+
+- **Wire** — exact public names, casing, presence semantics, response fields,
+  and JSON types;
+- **Source** — truthful current Emissary data source;
+- **Runtime** — real backend implementation.
 
 This document tracks the implementation status of Proposal 170 I2PControl expansion in Emissary.
 
@@ -10,23 +20,23 @@ This document tracks the implementation status of Proposal 170 I2PControl expans
 |---|---|---|
 | `Authenticate` | Implemented | M001 |
 | `GetKeys` | Not started | — |
-| `RouterInfo` | Implemented (corrective pass) | M005 |
-| `AddressBook` | Implemented | M003 |
-| `TunnelManager` | Implemented | M004 |
-| `ClientServicesInfo` | Implemented | M006 |
+| `RouterInfo` | Canonical wire implemented; source classified per exact key | M018 |
+| `AddressBook` | Canonical wire and administrative source implemented | M018 |
+| `TunnelManager` | Canonical wire/CRUD implemented; lifecycle runtime is explicit per backend | M018 |
+| `ClientServicesInfo` | Canonical direct wire and live sources implemented | M018 |
 
 ## TunnelManager action support
 
 | Action | Status | Notes |
 |---|---|---|
-| `List` | Implemented | Returns all definitions |
-| `Create` | Implemented | All 12 types |
-| `Edit` | Implemented | Atomic rename, field preservation |
-| `Get` | Implemented | Lossless round-trip |
-| `Delete` | Implemented | Startup-managed rejected |
-| `Start` | Implemented | Backend dispatch |
-| `Stop` | Implemented | Idempotent for unsupported |
-| `Restart` | Implemented | Stop then start |
+| `list` | Compatibility only | Emissary extension; not canonical |
+| `create` | Wire/CRUD implemented | All 12 types; structured result |
+| `edit` | Wire/CRUD implemented | Atomic rename, field preservation |
+| `get` | Wire/CRUD implemented | Structured `status` + `info` |
+| `delete` | Wire/CRUD implemented | Startup-managed rejected |
+| `start` | Wire implemented; runtime per backend | Unsupported backends return explicit status |
+| `stop` | Wire implemented; runtime per backend | Unsupported stop is safe/idempotent |
+| `restart` | Wire implemented; runtime per backend | Unsupported backends return explicit status |
 
 ## Tunnel type runtime support
 
@@ -76,12 +86,15 @@ Real tunnel data-plane implementations are deferred outside the I2PControl scope
 
 ## RouterInfo selectors
 
-121 selectors registered and dispatched. See [router-info.md](router-info.md) for the full selector catalog and [router-info-source-map.md](router-info-source-map.md) for the complete source map.
+121 legacy/base selectors plus exactly 43 canonical Proposal 170 additions are
+registered and dispatched. See [router-info.md](router-info.md) for the split
+catalog and [router-info-source-map.md](router-info-source-map.md) for source
+classification. Canonical unavailable fields return an explicit error.
 
 | Selector group | Status | Notes |
 |---|---|---|
 | Identity/static | Implemented | Startup-retained values |
-| Router news | Implemented | Empty string (no news subsystem) |
+| Router news | Wire/source implemented | Source-provided string |
 | Clock skew | Implemented | Protocol-permitted null (no clock skew estimate) |
 | Network status | Implemented | EventMetrics firewall status |
 | Share ratio | Implemented | Retained configuration |
@@ -95,17 +108,17 @@ Real tunnel data-plane implementations are deferred outside the I2PControl scope
 | Bandwidth recent windows | Unavailable | No canonical production rolling-window source |
 | Tunnels (participating, configured) | Implemented | Live EventMetrics + TunnelManager |
 | Tunnels (exploratory, client, queue) | Unavailable | Tunnel pool tasks are spawned; no inspection interface |
-| I2PTunnel | Implemented | TunnelManager administrative store |
+| I2PTunnel controller info | Wire/source implemented | Canonical response is an info list from the shared TunnelManager store |
 | Peers (known, active, RouterInfo lookup) | Unavailable | No bounded live source exposed by Emissary core |
 | Peers (banned, limits, activeStats) | Unavailable | No canonical ban owner or per-peer transport stats |
 | Logs | Implemented | LogRing with redaction |
-| Address book | Implemented | M003 adapter |
+| Address book | Canonical list wire/source implemented | Subscription/config canonical RouterInfo fields remain unavailable |
 
 ## ClientServicesInfo selectors
 
-Implemented in M006, corrected in M011 for live state truthfulness.
-The `ClientServicesInfo` method accepts a `Selector` map
-with boolean values for the six exact Proposal 170 keys:
+Implemented in M006, corrected in M011 for live state truthfulness, and
+reconciled in M018. Direct presence of the six exact keys selects a service;
+the nested boolean `Selector` map is compatibility-only:
 
 | Selector | Response shape | Source | M011 status |
 |---|---|---|---|
@@ -154,4 +167,6 @@ configured-vs-listening semantics, and integration evidence.
 | M014 | Closed | Spec-constrained truthfulness and local hardening |
 | M015 | Superseded | Historical reclosure; superseded by M017 |
 | M016 | Closed | Bounded SAM session observation corrective pass |
-| M017 | Closed | Final-head independent reclosure |
+| M017 | Invalidated | Historical final-head review; broad closure superseded by M018/M019 |
+| M018 | Closing | Exact wire-contract reconciliation implementation |
+| M019 | Ready after M018 handoff | Pinned-revision independent reclosure |

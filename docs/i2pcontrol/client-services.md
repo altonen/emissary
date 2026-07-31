@@ -14,7 +14,7 @@ and session state without taking ownership, supervision, or control of
 any service. No method invocation starts, stops, restarts, rebinds, or
 reconfigures a service.
 
-## Request shape
+## Canonical request shape
 
 ```json
 {
@@ -22,22 +22,18 @@ reconfigures a service.
   "id": 1,
   "method": "ClientServicesInfo",
   "params": {
-    "Selector": {
-      "I2PTunnel": true,
-      "HTTPProxy": true,
-      "SOCKS": true,
-      "SAM": true,
-      "BOB": true,
-      "I2CP": true
-    }
+    "I2PTunnel": "",
+    "SAM": ""
   }
 }
 ```
 
-The `Selector` parameter is a JSON object whose keys are the six
-Proposal 170 client-service categories. Only entries whose value is
-`true` produce a response section; absent keys or `false` values cause
-the corresponding section to be omitted.
+The six exact keys (`I2PTunnel`, `HTTPProxy`, `SOCKS`, `SAM`, `BOB`, and
+`I2CP`) are selected by direct parameter presence. Any JSON value selects the
+service; only requested keys appear in the response.
+
+The historical nested `Selector` boolean object remains a compatibility
+extension. Direct and nested forms cannot be mixed.
 
 Only the six exact selector keys listed below are accepted. Any other
 key returns `INVALID_PARAMS`.

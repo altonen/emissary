@@ -1,6 +1,67 @@
 # Proposal 170 Conformance Matrix
 
-Status: normative inventory for the closed Proposal 170 workstream (M017 accepted)
+Status: normative inventory for M018 implementation; M019 independent closure pending
+
+Proposal 170 remains Open and this inventory is pinned to the revision created
+and last updated on 2026-05-20. M017's broad closure is invalidated historical
+evidence; M019 is the independent final-head review.
+
+Coverage is reported in three dimensions: **wire implemented** (exact request
+and response contract), **source available** (truthful current data source),
+and **runtime implemented** (real operation backend). An unavailable source or
+unsupported runtime is never counted as operational support.
+
+The exact 43 RouterInfo additions are:
+
+```text
+i2p.router.news
+i2p.router.id
+i2p.router.clockskew
+i2p.router.info
+i2p.router.logs
+i2p.router.logs.clear
+i2p.router.net.total.received.bytes
+i2p.router.net.total.sent.bytes
+i2p.router.net.total.transit.bytes
+i2p.router.net.bw.transit.15s
+i2p.router.net.tunnels.shareratio
+i2p.router.net.tunnels.participating.info
+i2p.router.net.tunnels.i2ptunnel
+i2p.router.net.tunnels.exploratory.inbound
+i2p.router.net.tunnels.exploratory.outbound
+i2p.router.net.tunnels.exploratory.info.list
+i2p.router.net.tunnels.client.inbound
+i2p.router.net.tunnels.client.outbound
+i2p.router.net.tunnels.client.info.list
+i2p.router.net.status.v6
+i2p.router.net.error
+i2p.router.net.error.v6
+i2p.router.net.testing
+i2p.router.net.testing.v6
+i2p.router.net.tunnels.successrate
+i2p.router.net.tunnels.totalsuccessrate
+i2p.router.net.tunnels.queue
+i2p.router.net.tunnels.tbmqueue
+i2p.router.netdb.peers
+i2p.router.netdb.activepeers.info
+i2p.router.netdb.ntcp.limit
+i2p.router.netdb.ssu.limit
+i2p.router.netdb.bannedpeers
+i2p.router.netdb.activepeers.list
+i2p.router.netdb.peers.list
+i2p.router.netdb.peers.info
+i2p.router.netdb.activepeers.stats
+i2p.router.addressbook.private.list
+i2p.router.addressbook.local.list
+i2p.router.addressbook.router.list
+i2p.router.addressbook.published.list
+i2p.router.addressbook.subscriptions
+i2p.router.addressbook.config
+```
+
+The 121 legacy/base selectors remain documented separately and are not part of
+this addition count. The exact machine-readable types/source states live in
+`rpc::router_info_keys::PROPOSAL_170_CONTRACT`.
 
 This document records every Proposal 170 method, selector, parameter, action, tunnel type,
 JSON type, nullability rule, validation rule, data source, expected milestone owner, and
@@ -130,16 +191,14 @@ fixture/test ID. It is the single source of truth for contract completeness.
 | Contract item | Request key/type | Required/optional/presence | Response key/type | Nullability | Validation/error behavior | Planned data source | Owner milestone | Fixture/test ID | Notes |
 |---|---|---|---|---|---|---|---|---|---|
 | AddressBook method | `method` = `"AddressBook"` | required | — | — | — | — | M003 | `fixture_address_book` | Implemented |
-| `book` parameter | `params.book` | required | — | — | Must be one of: `private`, `local`, `router`, `published` | — | M003 | `fixture_ab_book` | Exact spellings; implemented |
-| `request` parameter | `params.request` | required | — | — | Must be one of: `List`, `Lookup`, `Add`, `Update`, `Delete` | — | M003 | `fixture_ab_request` | Exact spellings; implemented |
-| `name` parameter | `params.name` | required for Lookup/Add/Update/Delete | — | — | Non-empty destination name; validated for length/syntax | — | M003 | `fixture_ab_name` | Implemented |
-| `value` parameter | `params.value` | required for Add/Update | — | — | Valid I2P destination; validated for length/control chars | — | M003 | `fixture_ab_value` | Implemented |
+| `Type` / `Hostname` / `Destination` | direct params | entry mode | — | — | Exact book type and bounded hostname/destination validation | Administrative store | M018 | `canonical_wire_fixture_mutates_entry_and_uses_result_object` | Wire implemented; source available |
+| `Delete` | direct param presence | optional | — | — | Presence selects delete regardless of value | Administrative store | M018 | `canonical_wire_fixture_mutates_entry_and_uses_result_object` | Wire implemented; source available |
 | `signature` parameter | `params.signature` | optional | — | — | Valid signature if present | — | M003 | `fixture_ab_signature` | Accepted but not validated (no signature verification in M003) |
 | List result | `result` | on List | array of objects | non-null | — | Administrative store | M003 | `fixture_ab_list` | Each entry has `name` and `value`; implemented |
 | Lookup result | `result` | on Lookup | object or null | null if not found | — | Administrative store | M003 | `fixture_ab_lookup` | Implemented |
 | Delete presence semantics | `name` param presence | presence-based | string | — | Presence of `name` param = delete specific entry; absence = delete all in book | — | M003 | `fixture_ab_delete` | Implemented |
-| SetConfig | `method` = `"SetConfig"` | required | — | — | — | — | M003 | `fixture_set_config` | Implemented |
-| SetSubscriptions | `method` = `"SetSubscriptions"` | required | — | — | — | — | M003 | `fixture_set_subscriptions` | Implemented |
+| SetConfig | `params.SetConfig` inside `AddressBook` | canonical mode | `result.success`, `result.message` | non-null on success | Exactly one canonical mode; bounded string map | Administrative store | M018 | `canonical_wire_fixture_supports_subscription_and_config_modes` | Wire/source implemented; standalone method is compatibility-only |
+| SetSubscriptions | `params.SetSubscriptions` inside `AddressBook` | canonical mode | `result.success`, `result.message` | non-null on success | Exactly one canonical mode; bounded string list | Administrative store | M018 | `canonical_wire_fixture_supports_subscription_and_config_modes` | Wire/source implemented; standalone method is compatibility-only |
 | `i2p.router.addressbook.private` | param presence | selector | array | non-null when returned | — | Administrative store | M003 | `fixture_ri_ab_private` | Implemented |
 | `i2p.router.addressbook.local` | param presence | selector | array | non-null when returned | — | Administrative store | M003 | `fixture_ri_ab_local` | Implemented |
 | `i2p.router.addressbook.router` | param presence | selector | array | non-null when returned | — | Administrative store | M003 | `fixture_ri_ab_router` | Implemented |
@@ -152,12 +211,12 @@ fixture/test ID. It is the single source of truth for contract completeness.
 | Contract item | Request key/type | Required/optional/presence | Response key/type | Nullability | Validation/error behavior | Planned data source | Owner milestone | Fixture/test ID | Notes |
 |---|---|---|---|---|---|---|---|---|---|
 | TunnelManager method | `method` = `"TunnelManager"` | required | — | — | — | — | M004 | `fixture_tunnel_manager` | — |
-| `action` parameter | `params.action` | required | — | — | Must be one of: `List`, `Create`, `Edit`, `Get`, `Delete`, `Start`, `Stop`, `Restart` | — | M004 | `fixture_tm_action` | Exact spellings |
+| `Action` parameter | `params.Action` | required | — | — | Canonical values: `create`, `edit`, `get`, `start`, `stop`, `restart`, `delete` | — | M018 | `canonical_wire_fixture_covers_all_seven_actions` | Lowercase is canonical; capitalized values and `List` are compatibility-only |
 | `type` parameter | `params.type` | required for Create/Edit | — | — | Must be one of declared tunnel types | — | M004 | `fixture_tm_type` | Exact type names |
 | `name` parameter | `params.name` | required for most actions | — | — | Non-empty string | — | M004 | `fixture_tm_name` | — |
-| List result | `result` | on List | object | non-null | Keys are tunnel names, values are tunnel type strings | — | M004 | `fixture_tm_list` | — |
-| Create result | `result.status` | on Create | string | non-null | Operation status text | — | M004 | `fixture_tm_create` | — |
-| Get result | `result` | on Get | object | null if not found | Tunnel definition with all options | — | M004 | `fixture_tm_get` | — |
+| List result | `result` | compatibility `List` only | array | non-null | Historical extension | — | M004 | `fixture_tm_list` | Not in canonical action manifest |
+| Create result | `result.status`, `result.results` | on canonical `create` | structured object | non-null | Operation status text and result list | Durable store | M018 | `canonical_wire_fixture_covers_all_seven_actions` | Wire/source implemented |
+| Get result | `result.status`, `result.info` | on canonical `get` | structured object | non-null | Tunnel definition in `info` | Durable store | M018 | `canonical_wire_fixture_covers_all_seven_actions` | Runtime lifecycle may remain unsupported |
 | Edit result | `result.status` | on Edit | string | non-null | Operation status text | — | M004 | `fixture_tm_edit` | — |
 | Delete result | `result.status` | on Delete | string | non-null | Operation status text | — | M004 | `fixture_tm_delete` | — |
 | Start result | `result.status` | on Start | string | non-null | Operation status text | — | M004 | `fixture_tm_start` | — |
@@ -170,9 +229,7 @@ fixture/test ID. It is the single source of truth for contract completeness.
 | Contract item | Request key/type | Required/optional/presence | Response key/type | Nullability | Validation/error behavior | Planned data source | Owner milestone | Fixture/test ID | Notes |
 |---|---|---|---|---|---|---|---|---|---|
 | All tunnel name | `params.name` = `"All"` | reserved | — | — | Must not be used for Create; used only with Start/Stop/Restart | — | M004 | `fixture_tm_all` | Exact spelling: `All` (capital A) |
-| All Start | `action` = `Start`, `name` = `All` | — | string | non-null | Starts all defined tunnels | — | M004 | `fixture_tm_all_start` | — |
-| All Stop | `action` = `Stop`, `name` = `All` | — | string | non-null | Stops all defined tunnels | — | M004 | `fixture_tm_all_stop` | — |
-| All Restart | `action` = `Restart`, `name` = `All` | — | string | non-null | Restarts all defined tunnels | — | M004 | `fixture_tm_all_restart` | — |
+| All Start/Stop/Restart | canonical lowercase action + `All: true` | — | structured status object | non-null | Dispatches all definitions; unsupported backends remain explicit | Backend registry | M018 | `canonical_wire_fixture_covers_all_seven_actions` | Runtime support is per backend |
 
 ### Tunnel Types
 
@@ -196,7 +253,7 @@ fixture/test ID. It is the single source of truth for contract completeness.
 | Contract item | Request key/type | Required/optional/presence | Response key/type | Nullability | Validation/error behavior | Planned data source | Owner milestone | Fixture/test ID | Notes |
 |---|---|---|---|---|---|---|---|---|---|
 | ClientServicesInfo method | `method` = `"ClientServicesInfo"` | required | — | — | — | — | M006 | `fixture_client_services_info` | — |
-| I2PTunnel selector | `I2PTunnel` | selector | object (`{client: {}, server: {}}`) | non-null when returned | Only returned if requested | Live `TunnelManagerControl::list()` | M011 | `fixture_csi_i2ptunnel` | Live query at request time (M011) |
+| I2PTunnel selector | direct `I2PTunnel` presence | selector | object (`{client: {}, server: {}}`) | non-null when returned | Any value selects; nested `Selector` is compatibility-only | Live `TunnelManagerControl::list()` | M018 | `canonical_direct_wire_fixture_selects_by_presence` | Wire/source implemented |
 | HTTPProxy selector | `HTTPProxy` | selector | object (`{enabled, address, port}`) | non-null when returned | Only returned if requested; `enabled: true` only after bind | Service registry listener observation | M011 | `fixture_csi_httpproxy` | `enabled: true` only for `Listening` state (M011) |
 | SOCKS selector | `SOCKS` | selector | object (`{enabled, address, port}`) | non-null when returned | Only returned if requested; `enabled: true` only after bind | Service registry listener observation | M011 | `fixture_csi_socks` | `enabled: true` only for `Listening` state (M011) |
 | SAM selector | `SAM` | selector | object (`{enabled, sessions}`) | non-null when returned | Only returned if requested | Service registry listener plus canonical bounded `SamServer` snapshot | M016 | `fixture_csi_sam` | Active primary sessions and sanitized sockets are current; overflow is an explicit internal error |
