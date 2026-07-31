@@ -125,7 +125,7 @@ M015 remains a historical closure record but is not the current closure authorit
 | 011 | `plans/closure/i2pcontrol-proposal-170/011-closure.md` | M016 owns remaining SAM/fencing defects |
 | 012 | `plans/closure/i2pcontrol-proposal-170/012-closure.md` | M016 owns remaining saturation-proof defect |
 | 013 | `plans/closure/i2pcontrol-proposal-170/013-closure.md` | superseded |
-| 014 | no standalone accepted final closure | materially landed; narrow corrective pass M016 required |
+| 014 | `plans/closure/i2pcontrol-proposal-170/014-closure.md` | corrective pass required; M016 owns the remaining SAM contract/ownership blocker and related residual evidence |
 | 015 | `plans/closure/i2pcontrol-proposal-170/015-closure.md` | strict closure invalidated; superseded by M017 |
 
 ## Registry maintenance rules
