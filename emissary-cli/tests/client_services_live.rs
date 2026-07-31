@@ -72,10 +72,11 @@ async fn assemble_response_live(state: &I2pControlState, req: &JsonRpcRequest) -
             requested_keys.push(key.as_str());
         }
     }
-    match emissary_cli::i2pcontrol::client_services::assemble_response(
+    match emissary_cli::i2pcontrol::client_services::assemble_response_with_observation(
         &snapshot,
         &requested_keys,
         tm,
+        state.sam_session_observation(),
     )
     .await
     {

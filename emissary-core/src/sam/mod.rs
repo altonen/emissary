@@ -1167,7 +1167,7 @@ mod observation_tests {
         assert_eq!(session.name.as_ref(), &base64_encode([2u8; 32])[..4]);
         assert_eq!(
             session.address,
-            format!("{}.b32.i2p", base32_encode([2u8; 32]))
+            format!("{}.b32.i2p", base32_encode([2u8; 32])).into()
         );
         assert_eq!(session.sockets.len(), 1);
         assert_eq!(session.sockets[0].socket_type, 1);
@@ -1250,7 +1250,7 @@ mod observation_tests {
         publisher
             .activate_session(&id, &destination_id(8), &options(), 1, Some(peer()))
             .unwrap();
-        for socket_id in 2..=SAM_SOCKET_OBSERVATION_LIMIT as u64 + 1 {
+        for socket_id in 2..=SAM_SOCKET_OBSERVATION_LIMIT as u64 {
             publisher.add_socket(&id, socket_id, 2, Some(peer())).unwrap();
         }
         assert_eq!(
