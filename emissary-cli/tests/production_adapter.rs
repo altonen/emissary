@@ -65,6 +65,11 @@ impl InMemoryMetrics {
         self.ipv4_status.store(ipv4 as usize, Ordering::Release);
         self.ipv6_status.store(ipv6 as usize, Ordering::Release);
     }
+
+    fn set_transport_bytes(&self, inbound: u64, outbound: u64) {
+        self.transport_inbound.store(inbound, Ordering::Release);
+        self.transport_outbound.store(outbound, Ordering::Release);
+    }
 }
 
 impl EventMetrics for InMemoryMetrics {
@@ -118,6 +123,28 @@ fn make_tunnel_manager() -> Arc<ProductionTunnelManagerControl> {
     let dir = tempfile::tempdir().unwrap();
     let tm = ProductionTunnelManagerControl::new(dir.keep()).unwrap();
     Arc::new(tm)
+}
+
+#[tokio::test]
+async fn production_router_info_reads_live_event_metrics() {
+    let metrics = make_metrics();
+    metrics.set_transport_bytes(1234, 5678);
+    let tm = make_tunnel_manager();
+    tm.load().await.unwrap();
+    let ri = ProductionRouterInfoControl::new(
+        "test-id".to_string(),
+        "test".to_string(),
+        0.0,
+        0,
+        0,
+        metrics,
+        Arc::new(LogRing::default()),
+        tm,
+    );
+
+    let bytes = ri.transport_bytes().await.unwrap();
+    assert_eq!(bytes.received, 1234);
+    assert_eq!(bytes.sent, 5678);
 }
 
 // --- ProductionControlPlane ---

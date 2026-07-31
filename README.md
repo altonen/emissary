@@ -19,10 +19,14 @@
   * SOCKSv5
 * I2PControl (Proposal 170):
   * JSON-RPC 2.0 API over TLS
-  * RouterInfo inspection
+  * RouterInfo inspection with live event metrics and explicit unavailable responses where Emissary has no canonical source
   * AddressBook administration
   * TunnelManager configuration
   * ClientServicesInfo
+
+Proposal 170 administrative CRUD and the exact API surface are implemented; runtime tunnel
+data-plane backends and inspection sources that Emissary does not own remain explicit
+unsupported/unavailable behavior. See [`docs/i2pcontrol/proposal-170-support.md`](docs/i2pcontrol/proposal-170-support.md).
 
 ### Directory layout
 

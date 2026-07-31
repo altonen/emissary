@@ -422,32 +422,36 @@ async fn assemble_response(
         resolve_netdb_selectors(&mut result, &key_set, &netdb);
     }
 
-    // --- Bandwidth (one group query) ---
+    // --- Bandwidth ---
     if key_set.iter().any(|k| k.starts_with("i2p.router.bw.")) {
-        let metrics = state.metrics_snapshot();
-        let snapshot = metrics.snapshot();
-        let transport = crate::i2pcontrol::router_info::TransportBytes {
-            received: snapshot.total_transport_received,
-            sent: snapshot.total_transport_sent,
+        let router_info = state.router_info();
+        let transport = if key_set.contains(rpc::router_info_keys::BW_INBOUND_TOTAL)
+            || key_set.contains(rpc::router_info_keys::BW_OUTBOUND_TOTAL)
+        {
+            Some(router_info.transport_bytes().await?)
+        } else {
+            None
         };
-        let transit = crate::i2pcontrol::router_info::TransitBytes {
-            received: snapshot.total_transit_received,
-            sent: snapshot.total_transit_sent,
+        let recent = if key_set.iter().any(|key| {
+            matches!(
+                *key,
+                rpc::router_info_keys::BW_INBOUND_1S
+                    | rpc::router_info_keys::BW_INBOUND_15S
+                    | rpc::router_info_keys::BW_INBOUND_1M
+                    | rpc::router_info_keys::BW_INBOUND_1H
+                    | rpc::router_info_keys::BW_INBOUND_1D
+                    | rpc::router_info_keys::BW_OUTBOUND_1S
+                    | rpc::router_info_keys::BW_OUTBOUND_15S
+                    | rpc::router_info_keys::BW_OUTBOUND_1M
+                    | rpc::router_info_keys::BW_OUTBOUND_1H
+                    | rpc::router_info_keys::BW_OUTBOUND_1D
+            )
+        }) {
+            Some(router_info.recent_transit_traffic().await?)
+        } else {
+            None
         };
-        let rolling = state.rolling_window().read();
-        let recent = crate::i2pcontrol::router_info::RecentTransitTraffic {
-            inbound_1s: rolling.inbound_1s,
-            outbound_1s: rolling.outbound_1s,
-            inbound_15s: rolling.inbound_15s,
-            outbound_15s: rolling.outbound_15s,
-            inbound_1m: rolling.inbound_1m,
-            outbound_1m: rolling.outbound_1m,
-            inbound_1h: rolling.inbound_1h,
-            outbound_1h: rolling.outbound_1h,
-            inbound_1d: rolling.inbound_1d,
-            outbound_1d: rolling.outbound_1d,
-        };
-        resolve_bw_selectors(&mut result, &key_set, &transport, &transit, &recent);
+        resolve_bw_selectors(&mut result, &key_set, transport.as_ref(), recent.as_ref());
     }
 
     // --- Tunnel selectors (one group query) ---
@@ -780,18 +784,19 @@ fn resolve_netdb_selectors(
 fn resolve_bw_selectors(
     result: &mut serde_json::Map<String, serde_json::Value>,
     key_set: &HashSet<&str>,
-    transport: &crate::i2pcontrol::router_info::TransportBytes,
-    _transit: &crate::i2pcontrol::router_info::TransitBytes,
-    recent: &crate::i2pcontrol::router_info::RecentTransitTraffic,
+    transport: Option<&crate::i2pcontrol::router_info::TransportBytes>,
+    recent: Option<&crate::i2pcontrol::router_info::RecentTransitTraffic>,
 ) {
     // Cumulative total
     if key_set.contains(rpc::router_info_keys::BW_INBOUND_TOTAL) {
+        let transport = transport.expect("transport bytes queried for requested total");
         result.insert(
             rpc::router_info_keys::BW_INBOUND_TOTAL.to_string(),
             serde_json::json!(transport.received),
         );
     }
     if key_set.contains(rpc::router_info_keys::BW_OUTBOUND_TOTAL) {
+        let transport = transport.expect("transport bytes queried for requested total");
         result.insert(
             rpc::router_info_keys::BW_OUTBOUND_TOTAL.to_string(),
             serde_json::json!(transport.sent),
@@ -800,12 +805,14 @@ fn resolve_bw_selectors(
 
     // Rolling 1-second
     if key_set.contains(rpc::router_info_keys::BW_INBOUND_1S) {
+        let recent = recent.expect("recent traffic queried for requested interval");
         result.insert(
             rpc::router_info_keys::BW_INBOUND_1S.to_string(),
             serde_json::json!(recent.inbound_1s),
         );
     }
     if key_set.contains(rpc::router_info_keys::BW_OUTBOUND_1S) {
+        let recent = recent.expect("recent traffic queried for requested interval");
         result.insert(
             rpc::router_info_keys::BW_OUTBOUND_1S.to_string(),
             serde_json::json!(recent.outbound_1s),
@@ -814,12 +821,14 @@ fn resolve_bw_selectors(
 
     // Rolling 15-second
     if key_set.contains(rpc::router_info_keys::BW_INBOUND_15S) {
+        let recent = recent.expect("recent traffic queried for requested interval");
         result.insert(
             rpc::router_info_keys::BW_INBOUND_15S.to_string(),
             serde_json::json!(recent.inbound_15s),
         );
     }
     if key_set.contains(rpc::router_info_keys::BW_OUTBOUND_15S) {
+        let recent = recent.expect("recent traffic queried for requested interval");
         result.insert(
             rpc::router_info_keys::BW_OUTBOUND_15S.to_string(),
             serde_json::json!(recent.outbound_15s),
@@ -828,12 +837,14 @@ fn resolve_bw_selectors(
 
     // Rolling 1-minute
     if key_set.contains(rpc::router_info_keys::BW_INBOUND_1M) {
+        let recent = recent.expect("recent traffic queried for requested interval");
         result.insert(
             rpc::router_info_keys::BW_INBOUND_1M.to_string(),
             serde_json::json!(recent.inbound_1m),
         );
     }
     if key_set.contains(rpc::router_info_keys::BW_OUTBOUND_1M) {
+        let recent = recent.expect("recent traffic queried for requested interval");
         result.insert(
             rpc::router_info_keys::BW_OUTBOUND_1M.to_string(),
             serde_json::json!(recent.outbound_1m),
@@ -842,12 +853,14 @@ fn resolve_bw_selectors(
 
     // Rolling 1-hour
     if key_set.contains(rpc::router_info_keys::BW_INBOUND_1H) {
+        let recent = recent.expect("recent traffic queried for requested interval");
         result.insert(
             rpc::router_info_keys::BW_INBOUND_1H.to_string(),
             serde_json::json!(recent.inbound_1h),
         );
     }
     if key_set.contains(rpc::router_info_keys::BW_OUTBOUND_1H) {
+        let recent = recent.expect("recent traffic queried for requested interval");
         result.insert(
             rpc::router_info_keys::BW_OUTBOUND_1H.to_string(),
             serde_json::json!(recent.outbound_1h),
@@ -856,12 +869,14 @@ fn resolve_bw_selectors(
 
     // Rolling 1-day
     if key_set.contains(rpc::router_info_keys::BW_INBOUND_1D) {
+        let recent = recent.expect("recent traffic queried for requested interval");
         result.insert(
             rpc::router_info_keys::BW_INBOUND_1D.to_string(),
             serde_json::json!(recent.inbound_1d),
         );
     }
     if key_set.contains(rpc::router_info_keys::BW_OUTBOUND_1D) {
+        let recent = recent.expect("recent traffic queried for requested interval");
         result.insert(
             rpc::router_info_keys::BW_OUTBOUND_1D.to_string(),
             serde_json::json!(recent.outbound_1d),
@@ -1266,9 +1281,11 @@ mod tests {
     #[tokio::test]
     async fn handle_router_info_bw_selectors() {
         let ri = FakeRouterInfoControl::new();
+        ri.set_transport_bytes(crate::i2pcontrol::router_info::TransportBytes {
+            received: 1000000,
+            sent: 500000,
+        });
         let state = test_state(ri);
-        state.metrics_snapshot().record_transport_received(1000000);
-        state.metrics_snapshot().record_transport_sent(500000);
         let req = test_request(serde_json::json!({
             "i2p.router.bw.inbound.total": true,
             "i2p.router.bw.outbound.total": true,

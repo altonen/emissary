@@ -811,17 +811,12 @@ fn tls_test_certs() -> (
     tokio_rustls::rustls::pki_types::PrivateKeyDer<'static>,
 ) {
     let key_pair = rcgen::KeyPair::generate().unwrap();
-    let mut params =
-        rcgen::CertificateParams::new(vec!["localhost".to_string()]).unwrap();
-    params
-        .distinguished_name
-        .push(rcgen::DnType::CommonName, "Test I2PControl");
+    let mut params = rcgen::CertificateParams::new(vec!["localhost".to_string()]).unwrap();
+    params.distinguished_name.push(rcgen::DnType::CommonName, "Test I2PControl");
     let cert = params.self_signed(&key_pair).unwrap();
-    let cert_der =
-        tokio_rustls::rustls::pki_types::CertificateDer::from(cert.der().to_vec());
-    let key_der = tokio_rustls::rustls::pki_types::PrivateKeyDer::Pkcs8(
-        key_pair.serialize_der().into(),
-    );
+    let cert_der = tokio_rustls::rustls::pki_types::CertificateDer::from(cert.der().to_vec());
+    let key_der =
+        tokio_rustls::rustls::pki_types::PrivateKeyDer::Pkcs8(key_pair.serialize_der().into());
     (vec![cert_der], key_der)
 }
 
@@ -829,14 +824,30 @@ fn tls_test_certs() -> (
 struct NullEventMetrics;
 
 impl emissary_cli::i2pcontrol::production::EventMetrics for NullEventMetrics {
-    fn transport_inbound_bytes(&self) -> u64 { 0 }
-    fn transport_outbound_bytes(&self) -> u64 { 0 }
-    fn transit_inbound_bytes(&self) -> u64 { 0 }
-    fn transit_outbound_bytes(&self) -> u64 { 0 }
-    fn connected_routers(&self) -> usize { 0 }
-    fn transit_tunnel_count(&self) -> usize { 0 }
-    fn tunnel_build_successes(&self) -> u64 { 0 }
-    fn tunnel_build_failures(&self) -> u64 { 0 }
+    fn transport_inbound_bytes(&self) -> u64 {
+        0
+    }
+    fn transport_outbound_bytes(&self) -> u64 {
+        0
+    }
+    fn transit_inbound_bytes(&self) -> u64 {
+        0
+    }
+    fn transit_outbound_bytes(&self) -> u64 {
+        0
+    }
+    fn connected_routers(&self) -> usize {
+        0
+    }
+    fn transit_tunnel_count(&self) -> usize {
+        0
+    }
+    fn tunnel_build_successes(&self) -> u64 {
+        0
+    }
+    fn tunnel_build_failures(&self) -> u64 {
+        0
+    }
     fn ipv4_firewall_status(&self) -> emissary_core::FirewallStatus {
         emissary_core::FirewallStatus::Unknown
     }
@@ -908,15 +919,10 @@ async fn tls_connect_and_request(
     method: &str,
     params: serde_json::Value,
 ) -> Result<String, String> {
-    let tcp = TcpStream::connect(addr)
-        .await
-        .map_err(|e| format!("tcp connect: {e}"))?;
+    let tcp = TcpStream::connect(addr).await.map_err(|e| format!("tcp connect: {e}"))?;
     let domain = tokio_rustls::rustls::pki_types::ServerName::try_from("localhost")
         .map_err(|e| format!("server name: {e}"))?;
-    let mut tls = connector
-        .connect(domain, tcp)
-        .await
-        .map_err(|e| format!("tls connect: {e}"))?;
+    let mut tls = connector.connect(domain, tcp).await.map_err(|e| format!("tls connect: {e}"))?;
 
     let body = serde_json::json!({
         "jsonrpc": "2.0",
@@ -930,17 +936,13 @@ async fn tls_connect_and_request(
         body_str.len(),
         body_str
     );
-    tls.write_all(request.as_bytes())
-        .await
-        .map_err(|e| format!("write: {e}"))?;
+    tls.write_all(request.as_bytes()).await.map_err(|e| format!("write: {e}"))?;
 
     // Read the HTTP response headers first, then the body using Content-Length.
     let mut buf = Vec::new();
     let mut tmp = [0u8; 1];
     loop {
-        tls.read_exact(&mut tmp)
-            .await
-            .map_err(|e| format!("read header: {e}"))?;
+        tls.read_exact(&mut tmp).await.map_err(|e| format!("read header: {e}"))?;
         buf.push(tmp[0]);
         if buf.len() >= 4 && &buf[buf.len() - 4..] == b"\r\n\r\n" {
             break;
@@ -955,9 +957,7 @@ async fn tls_connect_and_request(
         .unwrap_or(0);
     let mut body_buf = vec![0u8; content_length];
     if content_length > 0 {
-        tls.read_exact(&mut body_buf)
-            .await
-            .map_err(|e| format!("read body: {e}"))?;
+        tls.read_exact(&mut body_buf).await.map_err(|e| format!("read body: {e}"))?;
     }
     String::from_utf8(body_buf).map_err(|e| format!("utf8: {e}"))
 }
@@ -970,15 +970,10 @@ async fn tls_connect_with_token(
     params: serde_json::Value,
     token: &str,
 ) -> Result<String, String> {
-    let tcp = TcpStream::connect(addr)
-        .await
-        .map_err(|e| format!("tcp connect: {e}"))?;
+    let tcp = TcpStream::connect(addr).await.map_err(|e| format!("tcp connect: {e}"))?;
     let domain = tokio_rustls::rustls::pki_types::ServerName::try_from("localhost")
         .map_err(|e| format!("server name: {e}"))?;
-    let mut tls = connector
-        .connect(domain, tcp)
-        .await
-        .map_err(|e| format!("tls connect: {e}"))?;
+    let mut tls = connector.connect(domain, tcp).await.map_err(|e| format!("tls connect: {e}"))?;
 
     let body = serde_json::json!({
         "jsonrpc": "2.0",
@@ -992,16 +987,12 @@ async fn tls_connect_with_token(
         body_str.len(),
         body_str
     );
-    tls.write_all(request.as_bytes())
-        .await
-        .map_err(|e| format!("write: {e}"))?;
+    tls.write_all(request.as_bytes()).await.map_err(|e| format!("write: {e}"))?;
 
     let mut buf = Vec::new();
     let mut tmp = [0u8; 1];
     loop {
-        tls.read_exact(&mut tmp)
-            .await
-            .map_err(|e| format!("read header: {e}"))?;
+        tls.read_exact(&mut tmp).await.map_err(|e| format!("read header: {e}"))?;
         buf.push(tmp[0]);
         if buf.len() >= 4 && &buf[buf.len() - 4..] == b"\r\n\r\n" {
             break;
@@ -1016,9 +1007,7 @@ async fn tls_connect_with_token(
         .unwrap_or(0);
     let mut body_buf = vec![0u8; content_length];
     if content_length > 0 {
-        tls.read_exact(&mut body_buf)
-            .await
-            .map_err(|e| format!("read body: {e}"))?;
+        tls.read_exact(&mut body_buf).await.map_err(|e| format!("read body: {e}"))?;
     }
     String::from_utf8(body_buf).map_err(|e| format!("utf8: {e}"))
 }
@@ -1150,11 +1139,8 @@ async fn tls_client_authenticates_and_dispatches() {
     );
     let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
     // The response should NOT be an auth error (code -1 = APP_ERROR for "Authentication required")
-    let is_auth_error = parsed
-        .get("error")
-        .and_then(|e| e.get("code"))
-        .and_then(|c| c.as_i64())
-        == Some(-1);
+    let is_auth_error =
+        parsed.get("error").and_then(|e| e.get("code")).and_then(|c| c.as_i64()) == Some(-1);
     assert!(
         !is_auth_error,
         "token should have been accepted; got auth error: {resp}"

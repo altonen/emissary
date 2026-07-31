@@ -133,10 +133,6 @@ pub struct I2pControlState {
     router_info_b64: String,
     /// Startup time for uptime calculation.
     startup_time: std::time::Instant,
-    /// Cumulative metrics snapshot (fed by transport/tunnel event tracking).
-    metrics_snapshot: super::observability::MetricsSnapshot,
-    /// Rolling traffic window (fed by transport byte accounting).
-    rolling_window: Arc<super::observability::RollingWindow>,
     /// Shared log ring for I2PControl snapshot/clear.
     #[allow(dead_code)]
     log_ring: Arc<super::observability::LogRing>,
@@ -151,8 +147,6 @@ impl I2pControlState {
     /// this call. The state takes ownership of the `Arc` clones and never
     /// falls back to fake adapters.
     pub fn new_production(password: String, controls: ProductionControls) -> Self {
-        let metrics_snapshot = super::observability::MetricsSnapshot::new();
-        let rolling_window = Arc::new(super::observability::RollingWindow::default());
         let log_ring = Arc::new(super::observability::LogRing::default());
         Self {
             token_service: TokenService::new(),
@@ -166,8 +160,6 @@ impl I2pControlState {
             router_info_bytes: Vec::new(),
             router_info_b64: String::new(),
             startup_time: std::time::Instant::now(),
-            metrics_snapshot,
-            rolling_window,
             log_ring,
             service_registry: controls.service_registry,
         }
@@ -183,8 +175,6 @@ impl I2pControlState {
             FakeAddressBookControl, FakeControlPlane, FakeTunnelManagerControl,
         };
         use super::router_info::FakeRouterInfoControl;
-        let metrics_snapshot = super::observability::MetricsSnapshot::new();
-        let rolling_window = Arc::new(super::observability::RollingWindow::default());
         let log_ring = Arc::new(super::observability::LogRing::default());
         Self {
             token_service: TokenService::new(),
@@ -198,8 +188,6 @@ impl I2pControlState {
             router_info_bytes: Vec::new(),
             router_info_b64: String::new(),
             startup_time: std::time::Instant::now(),
-            metrics_snapshot,
-            rolling_window,
             log_ring,
             service_registry: ServiceRegistry::new(),
         }
@@ -215,8 +203,6 @@ impl I2pControlState {
             FakeAddressBookControl, FakeControlPlane, FakeTunnelManagerControl,
         };
         use super::router_info::FakeRouterInfoControl;
-        let metrics_snapshot = super::observability::MetricsSnapshot::new();
-        let rolling_window = Arc::new(super::observability::RollingWindow::default());
         let log_ring = Arc::new(super::observability::LogRing::default());
         Self {
             token_service: TokenService::new(),
@@ -230,8 +216,6 @@ impl I2pControlState {
             router_info_bytes: Vec::new(),
             router_info_b64: String::new(),
             startup_time: std::time::Instant::now(),
-            metrics_snapshot,
-            rolling_window,
             log_ring,
             service_registry: ServiceRegistry::new(),
         }
@@ -278,16 +262,6 @@ impl I2pControlState {
     /// Get a reference to the token service.
     pub fn token_service(&self) -> &TokenService {
         &self.token_service
-    }
-
-    /// Get a reference to the metrics snapshot for feeding/reading.
-    pub fn metrics_snapshot(&self) -> &super::observability::MetricsSnapshot {
-        &self.metrics_snapshot
-    }
-
-    /// Get a reference to the rolling window for feeding/reading.
-    pub fn rolling_window(&self) -> &Arc<super::observability::RollingWindow> {
-        &self.rolling_window
     }
 
     /// Get a reference to the router info control.

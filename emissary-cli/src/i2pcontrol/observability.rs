@@ -454,6 +454,7 @@ struct Bucket {
 
 /// Rolling window data point.
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub struct RollingData {
     pub inbound_1s: u64,
     pub outbound_1s: u64,
@@ -467,6 +468,7 @@ pub struct RollingData {
     pub outbound_1d: u64,
 }
 
+#[allow(dead_code)]
 impl RollingWindow {
     /// Create a new rolling window.
     ///

@@ -1,6 +1,6 @@
 # I2PControl Inspection Architecture
 
-Status: M009 implemented (RouterInfo availability and truthfulness closed)
+Status: M014 implemented (truthful live sources and local resource bounds), M015 independent closure pending
 
 This document describes the read-only inspection architecture for I2PControl Proposal 170 in Emissary.
 
@@ -21,7 +21,8 @@ This document describes the read-only inspection architecture for I2PControl Pro
 │  I2PControl HTTPS Server (axum)             │
 │  ├── Authentication (token service)         │
 │  ├── JSON-RPC dispatch                      │
-│  └── Concurrency limiter (Semaphore)        │
+│  ├── Handler limiter (Semaphore)            │
+│  └── Pre-spawn connection bound             │
 ├─────────────────────────────────────────────┤
 │  RouterInfo Handler                         │
 │  ├── Selector parsing (presence-only)       │
@@ -31,8 +32,8 @@ This document describes the read-only inspection architecture for I2PControl Pro
 ├─────────────────────────────────────────────┤
 │  Data Sources                               │
 │  ├── I2pControlState (startup values)       │
-│  ├── MetricsSnapshot (cumulative counters)  │
-│  ├── RollingWindow (1s/15s/1m/1h/1d)       │
+│  ├── EventMetrics (canonical live counters) │
+│  ├── Recent traffic (unavailable unless fed)│
 │  ├── LogRing (bounded, redacted, clearable) │
 │  ├── RouterInfoControl trait (fakes/adapters)│
 │  └── AddressBookControl trait (M003)        │
@@ -85,24 +86,20 @@ All methods return `Result<T, InspectionError>` to distinguish unavailable,
 failed, and successfully-empty states. The `InspectionGroup` enum identifies
 snapshot groups for grouped request dispatch.
 
-### MetricsSnapshot
+### EventMetrics
 
-Cloneable, thread-safe cumulative metrics source:
-- Atomic counters for transport/transit bytes
-- Atomic gauges for connected routers, participating tunnels
-- Atomic counters for tunnel build successes/failures
-- Non-destructive snapshot reads
-- Process-lifetime monotonicity
+Read-only adapter over the application-owned `EventHandle`:
+- Cumulative transport/transit bytes
+- Atomic gauges for connected routers and participating tunnels
+- Tunnel build successes/failures
+- Current firewall status
+- Non-destructive reads of canonical runtime state
 
-### RollingWindow
+### Recent traffic
 
-Fixed-bucket rolling traffic accumulator:
-- 1-second bucket granularity
-- 86400 buckets (24-hour coverage)
-- O(buckets) read, not O(events)
-- Deterministic eviction of expired buckets
-- Monotonic clock (not wall-clock)
-- Read-only during queries
+Recent-window selectors are returned only when an existing production source is wired.
+The current production adapter has no canonical recent-window source and returns the
+existing unavailable error instead of fabricating zeroes.
 
 ### LogRing
 
@@ -131,7 +128,7 @@ I2pControlState retains values for handler reads
 Transport sessions → EventHandle::transport_inbound_bandwidth(bytes)
                    → EventHandle::transport_outbound_bandwidth(bytes)
     ↓
-MetricsSnapshot (separate atomics, fed by application layer)
+EventMetrics adapter over the canonical event handle
     ↓
 Handler reads MetricsSnapshot::snapshot()
 ```
@@ -139,11 +136,8 @@ Handler reads MetricsSnapshot::snapshot()
 ### Rolling traffic
 
 ```
-Transport sessions → EventHandle atomics
-    ↓
-Application layer feeds RollingWindow::record(inbound, outbound)
-    ↓
-Handler reads RollingWindow::read() for all intervals
+No canonical production recent-window source is currently wired; interval selectors
+therefore return unavailable rather than a fabricated zero.
 ```
 
 ### Log events
@@ -178,8 +172,7 @@ Handler calls LogRing::clear() for log clear
 - `router_info_selectors_complete` test verifies selector count
 - `unrelated_keys_absent` test verifies only-requested-key behavior
 - LogRing tests: push/eviction/clear/redaction/concurrency
-- MetricsSnapshot tests: cumulative/non-destructive/clone
-- RollingWindow tests: empty/record/default intervals
+- EventMetrics adapter tests: live nonzero counters
 - Budget enforcement tests: pre-query estimation
 
 ## Completion

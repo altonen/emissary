@@ -86,16 +86,17 @@ Real tunnel data-plane implementations are deferred outside the I2PControl scope
 | Network status | Implemented | EventMetrics firewall status |
 | Share ratio | Implemented | Retained configuration |
 | Configured BW | Implemented | Retained configuration |
-| UDP transport (active, firewalled, currentPeers, totalPeers) | Implemented | Core inspection snapshot |
+| UDP transport | Unavailable | No transport-specific canonical source; aggregate connection counts are not used |
 | UDP transport (peers, stats, cookie, hidden) | Unavailable | No Emissary equivalent for Java-I2P peer categories |
-| TCP transport (active) | Implemented | Core inspection snapshot |
+| TCP transport | Unavailable | No transport-specific canonical source |
 | TCP transport (hosts, status, version, firewalled, peers) | Unavailable | No Emissary equivalent |
 | NetDB | Unavailable | NetDB task is spawned; no inspection interface |
-| Bandwidth (all intervals) | Implemented | MetricsSnapshot + RollingWindow |
-| Tunnels (participating, configured) | Implemented | Core inspection snapshot + TunnelManager |
+| Bandwidth totals | Implemented | Live EventMetrics adapter |
+| Bandwidth recent windows | Unavailable | No canonical production rolling-window source |
+| Tunnels (participating, configured) | Implemented | Live EventMetrics + TunnelManager |
 | Tunnels (exploratory, client, queue) | Unavailable | Tunnel pool tasks are spawned; no inspection interface |
 | I2PTunnel | Implemented | TunnelManager administrative store |
-| Peers (known, active, RouterInfo lookup) | Implemented | Core inspection snapshot (bounded) |
+| Peers (known, active, RouterInfo lookup) | Unavailable | No bounded live source exposed by Emissary core |
 | Peers (banned, limits, activeStats) | Unavailable | No canonical ban owner or per-peer transport stats |
 | Logs | Implemented | LogRing with redaction |
 | Address book | Implemented | M003 adapter |

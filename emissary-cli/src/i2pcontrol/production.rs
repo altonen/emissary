@@ -599,8 +599,9 @@ impl RouterInfoControl for ProductionRouterInfoControl {
             }
         })?;
         // active_participating comes from the live event-metrics transit tunnel
-        // count. exploratory/client breakdowns have no existing canonical live
-        // source and return zero rather than a stale snapshot value.
+        // count. The handler rejects unsupported exploratory/client/queue
+        // selectors before calling this method, so these fields are never
+        // serialized as fabricated success values.
         let active_participating = self.metrics.transit_tunnel_count();
         Ok(TunnelSummary {
             active_participating,
