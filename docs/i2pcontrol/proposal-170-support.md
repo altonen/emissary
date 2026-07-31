@@ -1,6 +1,6 @@
 # Proposal 170 Support Status
 
-Status: M015 closed — Proposal 170 contract complete with explicit unavailable inspection semantics
+Status: M016 implementation complete; M017 independent final-head reclosure pending
 
 This document tracks the implementation status of Proposal 170 I2PControl expansion in Emissary.
 
@@ -112,7 +112,7 @@ with boolean values for the six exact Proposal 170 keys:
 | `I2PTunnel` | `{client: {…}, server: {…}}` | `TunnelManagerControl::list()` (live query) | Live query at request time |
 | `HTTPProxy` | `{enabled, address, port}` | HTTP proxy `Listening`/`Stopped` | `enabled: true` only after bind |
 | `SOCKS` | `{enabled, address, port}` | SOCKS proxy `Listening`/`Stopped` | `enabled: true` only after bind |
-| `SAM` | `{enabled, sessions}` | core listener plus `SamServer` session owner | Listener is implemented; active-session map is blocked pending an allowed bounded owner seam |
+| `SAM` | `{enabled, sessions}` | core listener plus bounded `SamServer` observation handle | Implemented; overflow fails explicitly and never returns a partial session map |
 | `BOB` | `false` (boolean) | exact Proposal 170 value (not implemented) | Unchanged |
 | `I2CP` | `{enabled}` | core `ProtocolAddressInfo::i2cp` | `enabled: true` only while bound |
 

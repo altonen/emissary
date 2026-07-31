@@ -42,6 +42,10 @@ pub use config::{
 };
 pub use error::Error;
 pub use profile::Profile;
+pub use sam::{
+    SamObservedSession, SamObservedSocket, SamSessionObservationError, SamSessionObservationHandle,
+    SamSessionObservationSnapshot, SAM_SESSION_OBSERVATION_LIMIT, SAM_SOCKET_OBSERVATION_LIMIT,
+};
 
 #[cfg(feature = "fuzz")]
 pub use {

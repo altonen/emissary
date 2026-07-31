@@ -21,7 +21,7 @@
 //! https://geti2p.net/en/docs/api/samv3
 
 use crate::{
-    crypto::base32_decode,
+    crypto::{base32_decode, base32_encode, base64_encode},
     error::{ChannelError, ConnectionError, Error},
     events::EventHandle,
     netdb::NetDbHandle,
@@ -47,6 +47,8 @@ use thingbuf::mpsc::{channel, with_recycle, Receiver, Sender};
 
 use alloc::{
     boxed::Box,
+    collections::BTreeMap,
+    format,
     string::{String, ToString},
     sync::Arc,
     vec::Vec,
@@ -58,6 +60,11 @@ use core::{
     pin::Pin,
     task::{Context, Poll},
 };
+
+#[cfg(feature = "std")]
+use parking_lot::RwLock;
+#[cfg(not(feature = "std"))]
+use spin::rwlock::RwLock;
 
 mod parser;
 mod pending;
@@ -79,6 +86,229 @@ const LOG_TARGET: &str = "emissary::sam";
 
 /// SAMv3 command channel size.
 const COMMAND_CHANNEL_SIZE: usize = 256;
+
+/// Maximum number of active SAM sessions exposed to I2PControl.
+pub const SAM_SESSION_OBSERVATION_LIMIT: usize = 1000;
+
+/// Maximum number of sockets retained for one observed SAM session.
+pub const SAM_SOCKET_OBSERVATION_LIMIT: usize = 8;
+
+/// Error returned when the bounded SAM observation state can no longer represent reality.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SamSessionObservationError {
+    /// The bounded state overflowed or received incomplete socket metadata.
+    Overflow,
+}
+
+/// A socket in a SAM session observation snapshot.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SamObservedSocket {
+    /// i2pd-compatible SAM socket type: session, stream, or acceptor.
+    pub socket_type: u8,
+
+    /// Remote TCP peer address.
+    pub peer: Arc<str>,
+}
+
+/// A SAM session in an observation snapshot.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SamObservedSession {
+    /// i2pd-compatible destination nickname.
+    pub name: Arc<str>,
+
+    /// i2pd-compatible `.b32.i2p` destination address.
+    pub address: Arc<str>,
+
+    /// Active SAM sockets belonging to this session.
+    pub sockets: Vec<SamObservedSocket>,
+}
+
+/// Bounded, read-only SAM observation snapshot.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SamSessionObservationSnapshot {
+    /// Active sessions keyed by their SAM session identifier.
+    pub sessions: BTreeMap<Arc<str>, SamObservedSession>,
+
+    /// Monotonic publication generation.
+    pub generation: u64,
+}
+
+#[derive(Clone)]
+pub struct SamSessionObservationHandle {
+    state: Arc<RwLock<SamSessionObservationState>>,
+}
+
+#[derive(Clone)]
+pub(crate) struct SamSessionObservationPublisher {
+    state: Arc<RwLock<SamSessionObservationState>>,
+}
+
+struct SamSessionObservationState {
+    sessions: BTreeMap<Arc<str>, SamObservedSessionState>,
+    generation: u64,
+    overflowed: bool,
+}
+
+struct SamObservedSessionState {
+    name: Arc<str>,
+    address: Arc<str>,
+    sockets: BTreeMap<u64, SamObservedSocket>,
+}
+
+impl SamSessionObservationHandle {
+    /// Read a bounded snapshot without holding the lock across any await point.
+    pub fn snapshot(&self) -> Result<SamSessionObservationSnapshot, SamSessionObservationError> {
+        let state = self.state.read();
+        if state.overflowed {
+            return Err(SamSessionObservationError::Overflow);
+        }
+
+        let sessions = state
+            .sessions
+            .iter()
+            .map(|(session_id, session)| {
+                (
+                    Arc::clone(session_id),
+                    SamObservedSession {
+                        name: Arc::clone(&session.name),
+                        address: Arc::clone(&session.address),
+                        sockets: session.sockets.values().cloned().collect(),
+                    },
+                )
+            })
+            .collect();
+
+        Ok(SamSessionObservationSnapshot {
+            sessions,
+            generation: state.generation,
+        })
+    }
+
+    /// Construct an empty bounded source for test-only I2PControl state.
+    #[doc(hidden)]
+    pub fn empty_for_test() -> Self {
+        let (_, handle) = SamSessionObservationPublisher::new();
+        handle
+    }
+}
+
+impl SamSessionObservationPublisher {
+    fn new() -> (Self, SamSessionObservationHandle) {
+        let state = Arc::new(RwLock::new(SamSessionObservationState {
+            sessions: BTreeMap::new(),
+            generation: 0,
+            overflowed: false,
+        }));
+
+        (
+            Self {
+                state: Arc::clone(&state),
+            },
+            SamSessionObservationHandle { state },
+        )
+    }
+
+    fn activate_session(
+        &self,
+        session_id: &Arc<str>,
+        destination_id: &DestinationId,
+        options: &HashMap<String, String>,
+        socket_id: u64,
+        peer: Option<SocketAddr>,
+    ) -> Result<(), SamSessionObservationError> {
+        let Some(peer) = peer else {
+            return self.overflow();
+        };
+        let mut state = self.state.write();
+        if state.sessions.len() >= SAM_SESSION_OBSERVATION_LIMIT
+            || state.sessions.contains_key(session_id)
+        {
+            state.overflowed = true;
+            return Err(SamSessionObservationError::Overflow);
+        }
+
+        let mut sockets = BTreeMap::new();
+        sockets.insert(
+            socket_id,
+            SamObservedSocket {
+                socket_type: 1,
+                peer: Arc::from(peer.to_string()),
+            },
+        );
+        state.sessions.insert(
+            Arc::clone(session_id),
+            SamObservedSessionState {
+                name: Arc::from(
+                    options
+                        .get("inbound.nickname")
+                        .or_else(|| options.get("outbound.nickname"))
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            base64_encode(destination_id.to_vec()).chars().take(4).collect()
+                        }),
+                ),
+                address: Arc::from(format!(
+                    "{}.b32.i2p",
+                    base32_encode(destination_id.to_vec())
+                )),
+                sockets,
+            },
+        );
+        state.generation = state.generation.wrapping_add(1);
+        Ok(())
+    }
+
+    fn add_socket(
+        &self,
+        session_id: &Arc<str>,
+        socket_id: u64,
+        socket_type: u8,
+        peer: Option<SocketAddr>,
+    ) -> Result<(), SamSessionObservationError> {
+        let Some(peer) = peer else {
+            return self.overflow();
+        };
+        let mut state = self.state.write();
+        let Some(session) = state.sessions.get_mut(session_id) else {
+            state.overflowed = true;
+            return Err(SamSessionObservationError::Overflow);
+        };
+        if session.sockets.len() >= SAM_SOCKET_OBSERVATION_LIMIT {
+            state.overflowed = true;
+            return Err(SamSessionObservationError::Overflow);
+        }
+        session.sockets.insert(
+            socket_id,
+            SamObservedSocket {
+                socket_type,
+                peer: Arc::from(peer.to_string()),
+            },
+        );
+        state.generation = state.generation.wrapping_add(1);
+        Ok(())
+    }
+
+    fn remove_socket(&self, session_id: &Arc<str>, socket_id: u64) {
+        let mut state = self.state.write();
+        if let Some(session) = state.sessions.get_mut(session_id) {
+            if session.sockets.remove(&socket_id).is_some() {
+                state.generation = state.generation.wrapping_add(1);
+            }
+        }
+    }
+
+    fn remove_session(&self, session_id: &Arc<str>) {
+        let mut state = self.state.write();
+        if state.sessions.remove(session_id).is_some() {
+            state.generation = state.generation.wrapping_add(1);
+        }
+    }
+
+    fn overflow(&self) -> Result<(), SamSessionObservationError> {
+        self.state.write().overflowed = true;
+        Err(SamSessionObservationError::Overflow)
+    }
+}
 
 /// Session context.
 ///
@@ -270,6 +500,9 @@ pub struct SamServer<R: Runtime> {
     /// Session ID to `DestinationId` mappings.
     session_id_destinations: HashMap<Arc<str>, DestinationId>,
 
+    /// Private publisher for the bounded I2PControl SAM observation handle.
+    observation_publisher: SamSessionObservationPublisher,
+
     /// SAMv3 datagram socket handle.
     socket_handle: UdpSocketHandle,
 
@@ -327,6 +560,7 @@ impl<R: Runtime> SamServer<R> {
 
         let (datagram_tx, datagram_rx) = channel(1024);
         let (sub_session_tx, sub_session_rx) = channel(64);
+        let (observation_publisher, _) = SamSessionObservationPublisher::new();
 
         Ok(Self {
             active_destinations: HashSet::new(),
@@ -343,6 +577,7 @@ impl<R: Runtime> SamServer<R> {
             pending_sessions: SessionContext::new(),
             profile_storage,
             session_id_destinations: HashMap::new(),
+            observation_publisher,
             socket_handle,
             sub_session_rx,
             sub_session_tx,
@@ -359,6 +594,13 @@ impl<R: Runtime> SamServer<R> {
     pub fn udp_local_address(&self) -> Option<SocketAddr> {
         self.socket_handle.local_address()
     }
+
+    /// Clone the read-only SAM observation handle before moving the server into its runtime.
+    pub fn observation_handle(&self) -> SamSessionObservationHandle {
+        SamSessionObservationHandle {
+            state: Arc::clone(&self.observation_publisher.state),
+        }
+    }
 }
 
 impl<R: Runtime> Future for SamServer<R> {
@@ -371,8 +613,9 @@ impl<R: Runtime> Future for SamServer<R> {
             match this.listener.poll_accept(cx) {
                 Poll::Pending => break,
                 Poll::Ready(None) => return Poll::Ready(()),
-                Poll::Ready(Some((stream, _))) => {
-                    this.pending_inbound_connections.push(PendingSamConnection::new(stream));
+                Poll::Ready(Some((stream, peer))) => {
+                    this.pending_inbound_connections
+                        .push(PendingSamConnection::new_with_peer(stream, peer));
                 }
             }
         }
@@ -768,12 +1011,31 @@ impl<R: Runtime> Future for SamServer<R> {
                 Poll::Pending => break,
                 Poll::Ready(None) => return Poll::Ready(()),
                 Poll::Ready(Some(Ok(context))) => {
+                    let destination_id = context.destination.destination.id();
+                    if let Err(error) = this.observation_publisher.activate_session(
+                        &context.session_id,
+                        &destination_id,
+                        &context.options,
+                        context.socket.observation_id(),
+                        context.socket.peer_addr(),
+                    ) {
+                        tracing::warn!(
+                            target: LOG_TARGET,
+                            session_id = %context.session_id,
+                            ?error,
+                            "SAM observation source overflowed while activating session",
+                        );
+                    }
+
                     match this.pending_sessions.remove(&context.session_id) {
                         Some(tx) => {
                             this.active_sessions.insert(
                                 Arc::clone(&context.session_id),
                                 tx,
-                                SamSession::new(context),
+                                SamSession::new_with_observation(
+                                    context,
+                                    this.observation_publisher.clone(),
+                                ),
                             );
                         }
                         None => {
@@ -783,6 +1045,8 @@ impl<R: Runtime> Future for SamServer<R> {
                                 "pending session doesn't exist"
                             );
                             debug_assert!(false);
+
+                            this.observation_publisher.remove_session(&context.session_id);
 
                             if let Some(destination_id) =
                                 this.session_id_destinations.remove(&context.session_id)
@@ -811,6 +1075,7 @@ impl<R: Runtime> Future for SamServer<R> {
                         "session terminated",
                     );
                     this.active_sessions.remove(&session_id);
+                    this.observation_publisher.remove_session(&session_id);
 
                     if let Some(destination_id) = this.session_id_destinations.remove(&session_id) {
                         this.active_destinations.remove(&destination_id);
@@ -848,5 +1113,189 @@ impl<R: Runtime> Future for SamServer<R> {
         }
 
         Poll::Pending
+    }
+}
+
+#[cfg(test)]
+mod observation_tests {
+    use super::*;
+
+    fn session_id(value: &str) -> Arc<str> {
+        Arc::from(value)
+    }
+
+    fn destination_id(byte: u8) -> DestinationId {
+        DestinationId::from([byte; 32])
+    }
+
+    fn options() -> HashMap<String, String> {
+        HashMap::new()
+    }
+
+    fn peer() -> SocketAddr {
+        "127.0.0.1:7656".parse().unwrap()
+    }
+
+    #[test]
+    fn observation_starts_empty() {
+        let (_, handle) = SamSessionObservationPublisher::new();
+        let snapshot = handle.snapshot().unwrap();
+        assert!(snapshot.sessions.is_empty());
+        assert_eq!(snapshot.generation, 0);
+    }
+
+    #[test]
+    fn cloned_handles_read_the_same_state() {
+        let (publisher, handle) = SamSessionObservationPublisher::new();
+        let clone = handle.clone();
+        let id = session_id("session");
+        publisher
+            .activate_session(&id, &destination_id(1), &options(), 1, Some(peer()))
+            .unwrap();
+        assert_eq!(handle.snapshot().unwrap(), clone.snapshot().unwrap());
+    }
+
+    #[test]
+    fn activation_publishes_exact_session_fields() {
+        let (publisher, handle) = SamSessionObservationPublisher::new();
+        let id = session_id("session");
+        publisher
+            .activate_session(&id, &destination_id(2), &options(), 1, Some(peer()))
+            .unwrap();
+        let mut snapshot = handle.snapshot().unwrap();
+        let session = snapshot.sessions.remove(&id).unwrap();
+        assert_eq!(session.name.as_ref(), &base64_encode([2u8; 32])[..4]);
+        assert_eq!(
+            session.address,
+            format!("{}.b32.i2p", base32_encode([2u8; 32]))
+        );
+        assert_eq!(session.sockets.len(), 1);
+        assert_eq!(session.sockets[0].socket_type, 1);
+        assert_eq!(session.sockets[0].peer.as_ref(), "127.0.0.1:7656");
+    }
+
+    #[test]
+    fn inbound_nickname_has_priority() {
+        let (publisher, handle) = SamSessionObservationPublisher::new();
+        let id = session_id("session");
+        let mut options = options();
+        options.insert("inbound.nickname".into(), "inbound".into());
+        options.insert("outbound.nickname".into(), "outbound".into());
+        publisher
+            .activate_session(&id, &destination_id(3), &options, 1, Some(peer()))
+            .unwrap();
+        assert_eq!(
+            handle.snapshot().unwrap().sessions[&id].name.as_ref(),
+            "inbound"
+        );
+    }
+
+    #[test]
+    fn outbound_nickname_is_used_when_inbound_is_absent() {
+        let (publisher, handle) = SamSessionObservationPublisher::new();
+        let id = session_id("session");
+        let mut options = options();
+        options.insert("outbound.nickname".into(), "outbound".into());
+        publisher
+            .activate_session(&id, &destination_id(4), &options, 1, Some(peer()))
+            .unwrap();
+        assert_eq!(
+            handle.snapshot().unwrap().sessions[&id].name.as_ref(),
+            "outbound"
+        );
+    }
+
+    #[test]
+    fn missing_peer_fails_closed() {
+        let (publisher, handle) = SamSessionObservationPublisher::new();
+        let result = publisher.activate_session(
+            &session_id("session"),
+            &destination_id(5),
+            &options(),
+            1,
+            None,
+        );
+        assert_eq!(result, Err(SamSessionObservationError::Overflow));
+        assert_eq!(handle.snapshot(), Err(SamSessionObservationError::Overflow));
+    }
+
+    #[test]
+    fn socket_add_and_remove_are_visible() {
+        let (publisher, handle) = SamSessionObservationPublisher::new();
+        let id = session_id("session");
+        publisher
+            .activate_session(&id, &destination_id(6), &options(), 1, Some(peer()))
+            .unwrap();
+        publisher.add_socket(&id, 2, 2, Some(peer())).unwrap();
+        assert_eq!(handle.snapshot().unwrap().sessions[&id].sockets.len(), 2);
+        publisher.remove_socket(&id, 2);
+        assert_eq!(handle.snapshot().unwrap().sessions[&id].sockets.len(), 1);
+    }
+
+    #[test]
+    fn session_removal_is_visible() {
+        let (publisher, handle) = SamSessionObservationPublisher::new();
+        let id = session_id("session");
+        publisher
+            .activate_session(&id, &destination_id(7), &options(), 1, Some(peer()))
+            .unwrap();
+        publisher.remove_session(&id);
+        assert!(handle.snapshot().unwrap().sessions.is_empty());
+    }
+
+    #[test]
+    fn per_session_socket_bound_is_explicit() {
+        let (publisher, handle) = SamSessionObservationPublisher::new();
+        let id = session_id("session");
+        publisher
+            .activate_session(&id, &destination_id(8), &options(), 1, Some(peer()))
+            .unwrap();
+        for socket_id in 2..=SAM_SOCKET_OBSERVATION_LIMIT as u64 + 1 {
+            publisher.add_socket(&id, socket_id, 2, Some(peer())).unwrap();
+        }
+        assert_eq!(
+            publisher.add_socket(&id, 99, 2, Some(peer())),
+            Err(SamSessionObservationError::Overflow)
+        );
+        assert_eq!(handle.snapshot(), Err(SamSessionObservationError::Overflow));
+    }
+
+    #[test]
+    fn session_bound_is_explicit() {
+        let (publisher, handle) = SamSessionObservationPublisher::new();
+        for session_number in 0..SAM_SESSION_OBSERVATION_LIMIT {
+            publisher
+                .activate_session(
+                    &session_id(&format!("session-{session_number}")),
+                    &destination_id(9),
+                    &options(),
+                    session_number as u64,
+                    Some(peer()),
+                )
+                .unwrap();
+        }
+        assert_eq!(
+            publisher.activate_session(
+                &session_id("overflow"),
+                &destination_id(9),
+                &options(),
+                2000,
+                Some(peer())
+            ),
+            Err(SamSessionObservationError::Overflow)
+        );
+        assert_eq!(handle.snapshot(), Err(SamSessionObservationError::Overflow));
+    }
+
+    #[test]
+    fn generation_changes_only_on_successful_publications() {
+        let (publisher, handle) = SamSessionObservationPublisher::new();
+        let id = session_id("session");
+        publisher
+            .activate_session(&id, &destination_id(10), &options(), 1, Some(peer()))
+            .unwrap();
+        let generation = handle.snapshot().unwrap().generation;
+        publisher.add_socket(&id, 2, 2, Some(peer())).unwrap();
+        assert!(handle.snapshot().unwrap().generation > generation);
     }
 }

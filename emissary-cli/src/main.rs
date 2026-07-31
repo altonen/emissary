@@ -250,12 +250,7 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
     {
         let info = router.protocol_address_info();
         i2pcontrol::observers::observe_i2cp_listener(&service_registry, info.i2cp);
-        i2pcontrol::observers::observe_sam_listener(
-            &service_registry,
-            info.sam_tcp,
-            info.sam_udp,
-            0,
-        );
+        i2pcontrol::observers::observe_sam_listener(&service_registry, info.sam_tcp, info.sam_udp);
     }
 
     // if sam was enabled, start all enabled proxies, client tunnels and the address book
@@ -463,7 +458,7 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
                 // same backing storage as the clone held by I2pControlState.
                 let registry_for_i2pcontrol = service_registry.clone();
 
-                let ctx = i2pcontrol::server::ServerInitContext::new(
+                let mut ctx = i2pcontrol::server::ServerInitContext::new(
                     router.router_id().to_base64().to_owned(),
                     local_router_info.clone(),
                 )
@@ -471,7 +466,12 @@ async fn setup_router<R: Runtime>(arguments: Arguments) -> anyhow::Result<Router
                 .with_share_ratio(share_ratio)
                 .with_configured_bandwidth(bw_in, bw_out)
                 .with_service_registry(registry_for_i2pcontrol)
+                .with_sam_listener_enabled(router.protocol_address_info().sam_tcp.is_some())
                 .with_log_ring(log_ring.expect("I2PControl logger ring is initialized"));
+
+                if let Some(handle) = router.sam_session_observation_handle() {
+                    ctx = ctx.with_sam_session_observation(handle);
+                }
 
                 let instance =
                     i2pcontrol::server::init_server(&server_config, &base_path, ctx).await?;

@@ -24,6 +24,10 @@
 
 use std::collections::HashSet;
 
+use emissary_core::{
+    SamSessionObservationHandle, SAM_SESSION_OBSERVATION_LIMIT, SAM_SOCKET_OBSERVATION_LIMIT,
+};
+
 use crate::i2pcontrol::{
     control_plane::TunnelManagerControl,
     rpc::{self, JsonRpcErrorResponse, JsonRpcRequest, JsonRpcSuccess, RequestId},
@@ -40,9 +44,6 @@ const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
 /// Maximum number of tunnel definitions per I2PTunnel response.
 const MAX_TUNNEL_DEFINITIONS: usize = 1000;
-
-/// Maximum number of SAM sessions.
-const MAX_SAM_SESSIONS: usize = 1000;
 
 /// Test if a string is a valid ClientServicesInfo selector key.
 pub fn is_valid_client_services_selector(s: &str) -> bool {
@@ -67,7 +68,8 @@ fn estimate_response_budget(key_set: &HashSet<&str>) -> Result<(), String> {
     }
     // SAM: sessions list (~100 bytes per session)
     if key_set.contains("SAM") {
-        estimated_bytes += MAX_SAM_SESSIONS * 100 + 100;
+        estimated_bytes +=
+            SAM_SESSION_OBSERVATION_LIMIT * (100 + SAM_SOCKET_OBSERVATION_LIMIT * 80) + 100;
     }
     // BOB: single boolean (~10 bytes)
     if key_set.contains("BOB") {
@@ -142,7 +144,14 @@ pub(crate) async fn handle_client_services_info(
     let snapshot = state.service_snapshot();
 
     // Assemble response using live tunnel manager for I2PTunnel
-    match assemble_response(&snapshot, &requested_keys, state.tunnel_manager()).await {
+    match assemble_response_with_observation(
+        &snapshot,
+        &requested_keys,
+        state.tunnel_manager(),
+        state.sam_session_observation(),
+    )
+    .await
+    {
         Ok(result) => {
             let response = JsonRpcSuccess::new(id, serde_json::Value::Object(result));
             serde_json::to_value(&response).unwrap()
@@ -159,18 +168,27 @@ pub(crate) async fn handle_client_services_info(
 /// For I2PTunnel, queries the live TunnelManagerControl at request time
 /// rather than relying on a startup-only registry snapshot. This ensures
 /// Create/Edit/Delete mutations are visible to subsequent queries.
+#[allow(dead_code)]
 pub async fn assemble_response(
     snapshot: &ServiceSnapshot,
     requested_keys: &[&str],
     tunnel_manager: &dyn TunnelManagerControl,
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    assemble_response_with_observation(snapshot, requested_keys, tunnel_manager, None).await
+}
+
+/// Assemble a response with the canonical bounded SAM observation source.
+pub async fn assemble_response_with_observation(
+    snapshot: &ServiceSnapshot,
+    requested_keys: &[&str],
+    tunnel_manager: &dyn TunnelManagerControl,
+    sam_observation: Option<&SamSessionObservationHandle>,
 ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
     let mut result = serde_json::Map::new();
 
     if requested_keys.is_empty() {
         return Ok(result);
     }
-
-    let key_set: HashSet<&str> = requested_keys.iter().copied().collect();
 
     for &key in requested_keys {
         let category = match key {
@@ -191,7 +209,7 @@ pub async fn assemble_response(
             ServiceCategory::I2PTunnel => resolve_i2ptunnel_live(tunnel_manager).await?,
             ServiceCategory::HttpProxy => resolve_httpproxy(entry),
             ServiceCategory::Socks => resolve_socks(entry),
-            ServiceCategory::Sam => resolve_sam(entry, &key_set)?,
+            ServiceCategory::Sam => resolve_sam(entry, sam_observation)?,
             ServiceCategory::Bob => resolve_bob(),
             ServiceCategory::I2cp => resolve_i2cp(entry),
         };
@@ -340,15 +358,9 @@ fn resolve_socks(
 ///
 /// `enabled: true` only when the SAM listener is actively bound.
 /// `Configured` and `Starting` report `enabled: false`.
-///
-/// The core `SamServer` tracks active sessions internally but does not yet
-/// expose a public bounded session accessor. The empty object below is the
-/// retained compatibility behavior while M016's contract/ownership blocker
-/// remains unresolved; it must not be interpreted as proof that no active
-/// sessions exist.
 fn resolve_sam(
     entry: Option<&crate::i2pcontrol::service_registry::ServiceEntry>,
-    _key_set: &HashSet<&str>,
+    sam_observation: Option<&SamSessionObservationHandle>,
 ) -> Result<serde_json::Value, String> {
     let entry = match entry {
         Some(e) => e,
@@ -373,18 +385,36 @@ fn resolve_sam(
             }))
         }
         ObservedServiceState::Listening => {
-            // SAM listener is active. Session snapshot requires a bounded
-            // read-only accessor at the canonical SamServer, which is not
-            // currently available through an allowed ownership seam.
-            let session_count = entry.metadata.session_count.unwrap_or(0);
-            if session_count > MAX_SAM_SESSIONS {
-                return Err(format!(
-                    "SAM session count ({session_count}) exceeds limit ({MAX_SAM_SESSIONS})"
-                ));
+            let observation = sam_observation.ok_or_else(|| {
+                "SAM listener is active but its canonical observation source is unavailable"
+                    .to_string()
+            })?;
+            let snapshot = observation.snapshot().map_err(|_| {
+                "SAM observation source overflowed; refusing an incomplete snapshot".to_string()
+            })?;
+            if snapshot.sessions.len() > SAM_SESSION_OBSERVATION_LIMIT {
+                return Err("SAM observation source exceeded its session bound".to_string());
             }
+            let sessions = snapshot
+                .sessions
+                .into_iter()
+                .map(|(session_id, session)| {
+                    (
+                        session_id.to_string(),
+                        serde_json::json!({
+                            "name": session.name.as_ref(),
+                            "address": session.address.as_ref(),
+                            "sockets": session.sockets.into_iter().map(|socket| serde_json::json!({
+                                "type": socket.socket_type,
+                                "peer": socket.peer.as_ref(),
+                            })).collect::<Vec<_>>(),
+                        }),
+                    )
+                })
+                .collect::<serde_json::Map<_, _>>();
             Ok(serde_json::json!({
                 "enabled": true,
-                "sessions": {}
+                "sessions": sessions
             }))
         }
         ObservedServiceState::Failed(_) => Ok(serde_json::json!({
@@ -793,7 +823,7 @@ mod tests {
 
     #[test]
     fn resolve_sam_disabled_when_none() {
-        let value = resolve_sam(None, &HashSet::new()).unwrap();
+        let value = resolve_sam(None, None).unwrap();
         assert_eq!(value["enabled"], false);
         assert!(value["sessions"].is_object());
     }
@@ -808,7 +838,7 @@ mod tests {
                 ..Default::default()
             },
         };
-        let value = resolve_sam(Some(&entry), &HashSet::new()).unwrap();
+        let value = resolve_sam(Some(&entry), None).unwrap();
         assert_eq!(value["enabled"], false);
         assert!(value["sessions"].is_object());
     }
@@ -823,7 +853,7 @@ mod tests {
                 ..Default::default()
             },
         };
-        let value = resolve_sam(Some(&entry), &HashSet::new()).unwrap();
+        let value = resolve_sam(Some(&entry), None).unwrap();
         assert_eq!(value["enabled"], false);
     }
 

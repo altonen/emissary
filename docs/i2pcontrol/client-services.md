@@ -119,7 +119,15 @@ Reports the SAM bridge listener and session state.
 {
   "SAM": {
     "enabled": true,
-    "sessions": {}
+    "sessions": {
+      "chat": {
+        "name": "chat",
+        "address": "example.b32.i2p",
+        "sockets": [
+          { "type": 1, "peer": "127.0.0.1:7656" }
+        ]
+      }
+    }
   }
 }
 ```
@@ -127,13 +135,13 @@ Reports the SAM bridge listener and session state.
 `enabled` reflects the actual bound TCP listener state. `Configured`
 and `Starting` report `enabled: false`.
 
-The current implementation returns an empty object for `sessions` because
-the core `SamServer` does not expose a bounded snapshot through an allowed
-ownership seam. This is a qualified compatibility response, not evidence
-that no active sessions exist. M016 records this as a contract/ownership
-blocker: Proposal 170 requires active-session information, and the adopted
-i2pd shape cannot be populated safely without additional forbidden
-observer/cache plumbing.
+The session map is a bounded snapshot published by the canonical core
+`SamServer`. It contains only active primary sessions. A zero-session map is
+therefore a genuine observation; if the bounded source overflows or cannot
+produce a complete snapshot, the request fails instead of returning a partial
+or fabricated map. Socket `type` values follow i2pd's active SAM socket
+vocabulary (`1` session, `2` stream, `3` acceptor), and `peer` is the accepted
+TCP peer address.
 
 ### `BOB`
 
@@ -191,10 +199,11 @@ exact Proposal 170 response shape.
 - Listener enabled: a bound TCP/UDP address on the configured port.
   This corresponds to `SamServer::tcp_local_address()` returning
   `Some(_)`.
-- Active sessions: The core `SamServer` tracks active sessions via
-  `SessionContext<R, Arc<str>>` but does not expose a public bounded
-  session snapshot accessor. The current empty object is qualified
-  compatibility behavior, not a claim that the active-session set is empty.
+- Active sessions: The core `SamServer` publishes a bounded, read-only
+  metadata projection at activation and removal transitions. The I2PControl
+  state receives only a clonable snapshot handle; no session handles, sockets,
+  destinations, keys, payloads, or command channels cross the composition
+  boundary.
 
 ### I2PTunnel live query
 
@@ -225,6 +234,7 @@ implementation. It is created in the application composition root
 - SOCKS proxy spawn sites,
 - I2CP listener snapshot from `Router::protocol_address_info()`,
 - SAM listener snapshot from `Router::protocol_address_info()`.
+- SAM session snapshots from the core-owned `SamSessionObservationHandle`.
 
 The handler queries `TunnelManagerControl::list()` at request time for
 I2PTunnel inventory rather than reading from the registry.
@@ -245,7 +255,8 @@ Response size is bounded before dispatch:
 
 - `MAX_RESPONSE_BYTES` = 1 MiB (estimated)
 - `MAX_TUNNEL_DEFINITIONS` = 1000 per I2PTunnel map
-- `MAX_SAM_SESSIONS` = 1000 per SAM snapshot
+- `SAM_SESSION_OBSERVATION_LIMIT` = 1000 sessions
+- `SAM_SOCKET_OBSERVATION_LIMIT` = 8 sockets per session
 
 Complete results that exceed safe bounds fail explicitly with
 `INTERNAL_ERROR` and are never silently truncated.

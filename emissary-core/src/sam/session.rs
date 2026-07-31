@@ -37,7 +37,7 @@ use crate::{
             PendingSession, PendingSessionState, PublicKeyContext, SamSessionCommand,
             SamSessionCommandRecycle, SamSessionKind,
         },
-        SubSessionCommand,
+        SamSessionObservationPublisher, SubSessionCommand,
     },
 };
 
@@ -109,6 +109,9 @@ pub struct SamSession<R: Runtime> {
     /// set is being queried are stored in the pending session state.
     pending_outbound: HashMap<DestinationId, PendingSession<R>>,
 
+    /// Observed stream socket IDs grouped by remote destination.
+    observed_stream_sockets: HashMap<DestinationId, Vec<u64>>,
+
     /// Public key context for the session.
     public_key_context: PublicKeyContext,
 
@@ -142,11 +145,30 @@ pub struct SamSession<R: Runtime> {
 
     /// Waker.
     waker: Option<Waker>,
+
+    /// Publisher for the bounded SAM observation source.
+    observation_publisher: Option<SamSessionObservationPublisher>,
 }
 
 impl<R: Runtime> SamSession<R> {
     /// Create new [`SamSession`].
+    #[allow(dead_code)]
     pub fn new(context: SamSessionContext<R>) -> Self {
+        Self::new_inner(context, None)
+    }
+
+    /// Create new [`SamSession`] with the server-owned observation publisher.
+    pub(crate) fn new_with_observation(
+        context: SamSessionContext<R>,
+        observation_publisher: SamSessionObservationPublisher,
+    ) -> Self {
+        Self::new_inner(context, Some(observation_publisher))
+    }
+
+    fn new_inner(
+        context: SamSessionContext<R>,
+        observation_publisher: Option<SamSessionObservationPublisher>,
+    ) -> Self {
         let SamSessionContext {
             address_book,
             datagram_tx,
@@ -273,6 +295,7 @@ impl<R: Runtime> SamSession<R> {
             options,
             pending_host_lookups: HashMap::new(),
             pending_outbound: HashMap::new(),
+            observed_stream_sockets: HashMap::new(),
             receiver,
             session_id,
             session_kind: match session_kind {
@@ -295,6 +318,44 @@ impl<R: Runtime> SamSession<R> {
             stream_manager: StreamManager::new(dest, *signing_key),
             sub_session_tx,
             waker: None,
+            observation_publisher,
+        }
+    }
+
+    fn observe_socket(&mut self, socket: &SamSocket<R>, socket_type: u8) -> bool {
+        let Some(publisher) = &self.observation_publisher else {
+            return true;
+        };
+        match publisher.add_socket(
+            &self.session_id,
+            socket.observation_id(),
+            socket_type,
+            socket.peer_addr(),
+        ) {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::warn!(
+                    target: LOG_TARGET,
+                    session_id = %self.session_id,
+                    ?error,
+                    "SAM observation source overflowed while adding socket",
+                );
+                false
+            }
+        }
+    }
+
+    fn remove_observed_socket(&mut self, socket_id: u64) {
+        if let Some(publisher) = &self.observation_publisher {
+            publisher.remove_socket(&self.session_id, socket_id);
+        }
+    }
+
+    fn remove_observed_streams(&mut self, destination_id: &DestinationId) {
+        if let Some(socket_ids) = self.observed_stream_sockets.remove(destination_id) {
+            for socket_id in socket_ids {
+                self.remove_observed_socket(socket_id);
+            }
         }
     }
 
@@ -391,6 +452,14 @@ impl<R: Runtime> SamSession<R> {
             return;
         }
 
+        let socket_id = socket.observation_id();
+        if self.observe_socket(&socket, 2) {
+            self.observed_stream_sockets
+                .entry(destination_id.clone())
+                .or_default()
+                .push(socket_id);
+        }
+
         tracing::info!(
             target: LOG_TARGET,
             session_id = %self.session_id,
@@ -449,6 +518,8 @@ impl<R: Runtime> SamSession<R> {
             return drop(socket);
         };
 
+        let socket_id = socket.observation_id();
+        self.observe_socket(&socket, 3);
         if let Err(error) = self.stream_manager.register_listener(ListenerKind::Ephemeral {
             pending_routing_path_handle: self.destination.pending_routing_path_handle(),
             socket,
@@ -462,6 +533,7 @@ impl<R: Runtime> SamSession<R> {
                 session_id = %self.session_id,
                 "failed to register ephemeral listener",
             );
+            self.remove_observed_socket(socket_id);
         }
     }
 
@@ -488,6 +560,8 @@ impl<R: Runtime> SamSession<R> {
             return drop(socket);
         };
 
+        let socket_id = socket.observation_id();
+        self.observe_socket(&socket, 3);
         if let Err(error) = self.stream_manager.register_listener(ListenerKind::Persistent {
             pending_routing_path_handle: self.destination.pending_routing_path_handle(),
             socket,
@@ -502,6 +576,7 @@ impl<R: Runtime> SamSession<R> {
                 session_id = %self.session_id,
                 "failed to register persistent listener",
             );
+            self.remove_observed_socket(socket_id);
         }
     }
 
@@ -773,6 +848,7 @@ impl<R: Runtime> SamSession<R> {
                             "unable to open stream, lease set not found",
                         );
 
+                        self.remove_observed_socket(socket.observation_id());
                         Some(socket)
                     }
                     PendingSessionState::AwaitingSession { stream_id } => {
@@ -1280,6 +1356,7 @@ impl<R: Runtime> Future for SamSession<R> {
                 },
                 Poll::Ready(Some(StreamManagerEvent::StreamRejected { destination_id })) => {
                     self.pending_outbound.remove(&destination_id);
+                    self.remove_observed_streams(&destination_id);
                 }
                 Poll::Ready(Some(StreamManagerEvent::StreamClosed { destination_id })) => {
                     tracing::debug!(
@@ -1288,6 +1365,7 @@ impl<R: Runtime> Future for SamSession<R> {
                         ?destination_id,
                         "stream closed",
                     );
+                    self.remove_observed_streams(&destination_id);
                 }
                 Poll::Ready(Some(StreamManagerEvent::ShutDown)) => {
                     tracing::info!(
