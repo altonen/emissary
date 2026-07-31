@@ -25,7 +25,8 @@
 use std::collections::HashSet;
 
 use emissary_core::{
-    SamSessionObservationHandle, SAM_SESSION_OBSERVATION_LIMIT, SAM_SOCKET_OBSERVATION_LIMIT,
+    SamSessionObservationHandle, SamSessionObservationSnapshot, SAM_SESSION_OBSERVATION_LIMIT,
+    SAM_SOCKET_OBSERVATION_LIMIT,
 };
 
 use crate::i2pcontrol::{
@@ -392,26 +393,7 @@ fn resolve_sam(
             let snapshot = observation.snapshot().map_err(|_| {
                 "SAM observation source overflowed; refusing an incomplete snapshot".to_string()
             })?;
-            if snapshot.sessions.len() > SAM_SESSION_OBSERVATION_LIMIT {
-                return Err("SAM observation source exceeded its session bound".to_string());
-            }
-            let sessions = snapshot
-                .sessions
-                .into_iter()
-                .map(|(session_id, session)| {
-                    (
-                        session_id.to_string(),
-                        serde_json::json!({
-                            "name": session.name.as_ref(),
-                            "address": session.address.as_ref(),
-                            "sockets": session.sockets.into_iter().map(|socket| serde_json::json!({
-                                "type": socket.socket_type,
-                                "peer": socket.peer.as_ref(),
-                            })).collect::<Vec<_>>(),
-                        }),
-                    )
-                })
-                .collect::<serde_json::Map<_, _>>();
+            let sessions = serialize_sam_sessions(snapshot)?;
             Ok(serde_json::json!({
                 "enabled": true,
                 "sessions": sessions
@@ -426,6 +408,34 @@ fn resolve_sam(
             "sessions": {}
         })),
     }
+}
+
+fn serialize_sam_sessions(
+    snapshot: SamSessionObservationSnapshot,
+) -> Result<serde_json::Value, String> {
+    if snapshot.sessions.len() > SAM_SESSION_OBSERVATION_LIMIT {
+        return Err("SAM observation source exceeded its session bound".to_string());
+    }
+
+    let sessions = snapshot
+        .sessions
+        .into_iter()
+        .map(|(session_id, session)| {
+            (
+                session_id.to_string(),
+                serde_json::json!({
+                    "name": session.name.as_ref(),
+                    "address": session.address.as_ref(),
+                    "sockets": session.sockets.into_iter().map(|socket| serde_json::json!({
+                        "type": socket.socket_type,
+                        "peer": socket.peer.as_ref(),
+                    })).collect::<Vec<_>>(),
+                }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+
+    Ok(serde_json::Value::Object(sessions))
 }
 
 /// Resolve BOB selector.
@@ -869,6 +879,32 @@ mod tests {
         };
         let error = resolve_sam(Some(&entry), None).unwrap_err();
         assert!(error.contains("canonical observation source is unavailable"));
+    }
+
+    #[test]
+    fn serialize_sam_sessions_preserves_pinned_active_shape() {
+        use std::{collections::BTreeMap, sync::Arc};
+
+        let snapshot = SamSessionObservationSnapshot {
+            sessions: BTreeMap::from([(
+                Arc::from("chat"),
+                emissary_core::SamObservedSession {
+                    name: Arc::from("chat"),
+                    address: Arc::from("chat.b32.i2p"),
+                    sockets: vec![emissary_core::SamObservedSocket {
+                        socket_type: 2,
+                        peer: Arc::from("127.0.0.1:7656"),
+                    }],
+                },
+            )]),
+            generation: 1,
+        };
+
+        let value = serialize_sam_sessions(snapshot).unwrap();
+        assert_eq!(value["chat"]["name"], "chat");
+        assert_eq!(value["chat"]["address"], "chat.b32.i2p");
+        assert_eq!(value["chat"]["sockets"][0]["type"], 2);
+        assert_eq!(value["chat"]["sockets"][0]["peer"], "127.0.0.1:7656");
     }
 
     #[test]
