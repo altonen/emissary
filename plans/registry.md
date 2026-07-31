@@ -1,6 +1,6 @@
 # Emissary Active Planning Registry
 
-This file is the compact control surface for active planning. It links current documents and blockers without duplicating detailed requirements.
+This file is the compact control surface for active planning.
 
 Canonical direction:
 
@@ -17,7 +17,6 @@ Canonical direction:
 - **blocked** — a named dependency or evidence requirement prevents progress.
 - **closing** — implementation landed and independent closure evidence is being gathered.
 - **closed** — closure record accepted.
-- **conditionally closed** — substantial work landed, but a genuinely external limitation prevents strict closure.
 - **corrective pass required** — a prior closure was invalidated by a material implementation or evidence defect.
 - **superseded** — replaced by another document.
 - **archived** — inactive and retained for traceability.
@@ -26,13 +25,13 @@ Canonical direction:
 
 | Subsystem | Status | Roadmap | Current milestone | Dependencies or blockers |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | active narrow corrective work | `plans/subsystems/i2pcontrol-proposal-170-roadmap.md` | M016 blocked | SAM active-session contract is pinned, but the exact i2pd map cannot be populated through an allowed Emissary owner seam |
+| I2PControl Proposal 170 | active narrow corrective work | `plans/subsystems/i2pcontrol-proposal-170-roadmap.md` | M016 ready | bounded SAM session-observation handle explicitly authorized |
 
 ## Dependency-ready implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies |
 |---|---|---|---|---|
-| — | — | — | — | — |
+| I2PControl Proposal 170 | 016 — bounded SAM session observation corrective pass | ready | `plans/implementation/i2pcontrol-proposal-170/016-sam-fencing-and-connection-proof-corrective-pass.md` | atomic fencing and connection proof already complete at `9047fee`; architecture-owner approval for one bounded SAM observation handle |
 
 ## Active closure work
 
@@ -40,105 +39,69 @@ Canonical direction:
 |---|---|---|---|---|---|
 | — | — | — | — | — | — |
 
-## Blocked implementation plans
+## Blocked plans
 
-| Subsystem | Milestone | Status | Implementation plan | Blocker |
+| Subsystem | Milestone | Status | Plan | Blocker |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | 016 — SAM, fencing, and connection-proof corrective pass | blocked | `plans/implementation/i2pcontrol-proposal-170/016-sam-fencing-and-connection-proof-corrective-pass.md` | Official Proposal 170 and pinned i2pd require active SAM session information (`name`, `address`, `sockets`), but safely supplying it requires a new shared owner/observer seam forbidden by M016; no permitted existing unavailable response is defined |
-| I2PControl Proposal 170 | 017 — final-head independent reclosure | blocked | `plans/implementation/i2pcontrol-proposal-170/017-final-head-independent-reclosure.md` | M016 remains blocked; no frozen complete implementation head or accepted contract disposition |
+| I2PControl Proposal 170 | 017 — final-head independent reclosure | blocked | `plans/implementation/i2pcontrol-proposal-170/017-final-head-independent-reclosure.md` | amended M016 must land on a frozen head and move to `closing`; reviewer must be distinct and auditable |
 
-## M016/M017 scope guard
+## M016 scope guard
 
-M016/M017 are confined to exact Proposal 170 correctness.
+M016 now owns one remaining finding only:
 
-Primary production boundary:
+| Finding | Severity | Owner | State |
+|---|---|---|---|
+| Listening SAM can return successful empty sessions while active sessions exist because no canonical read source reaches I2PControl | medium | M016 | ready for bounded observation-handle implementation |
 
+Resolved at `9047feecde046dac8e0208bbf1acf2e3883f97ae` and not active:
+
+- same-category service generation validation/write race;
+- below-limit TLS connection test and missing saturation/restoration proof.
+
+### Allowed production boundary
+
+- `emissary-core/src/sam/mod.rs`
+- `emissary-core/src/sam/session.rs`
+- one existing SAM stream/socket module only when required for the exact sanitized socket summary
+- the smallest router/composition file that constructs and moves `SamServer`
 - `emissary-cli/src/i2pcontrol/client_services.rs`
-- `emissary-cli/src/i2pcontrol/service_registry.rs`
-- `emissary-cli/src/i2pcontrol/server.rs`
-- the smallest existing I2PControl DTO/control trait file required by the exact SAM mapping
+- the smallest existing I2PControl DTO/control trait and composition seam required to pass the read handle
 
-Permitted exception:
+### Authorized exception
 
-- one minimal bounded read-only SAM-owner accessor only if the official Proposal 170 and pinned adopted i2pd implementation establish an exact active-session map that cannot be populated through an existing handle.
+One fixed-capacity, read-only SAM session-observation handle is authorized. Its private writer may update sanitized metadata only at existing session/socket lifecycle transitions.
 
-The workstream must not add or modify:
+The handle must not expose lifecycle authority, mutable session handles, sockets, stream objects, private keys, destinations, payloads, authentication data, or command channels.
 
-- `.github/workflows/**`;
-- CI jobs, nightly checks, platform matrices, required checks, coverage gates, or generated evidence bundles;
-- release, crates.io, GitHub publishing, packaging, or version automation;
-- router, transport, NetDB, tunnel-pool, peer-selection, congestion, cryptographic, or general security architecture;
-- frontend management surfaces;
-- runtime address-book precedence;
-- missing tunnel data planes or BOB;
-- general metrics, logging, task-supervision, inspection, service-registry, connection-management, or verification frameworks;
-- unrelated files through a repository-wide formatting pass.
+### Prohibited
 
-## Corrective finding ownership
+- `.github/workflows/**` and CI/nightly/platform/coverage/evidence expansion;
+- release, publishing, packaging, or version automation;
+- repository-wide formatting;
+- SAM protocol, routing, tunnel, listener, or lifecycle redesign;
+- generic observer/event/cache/registry/polling/persistence frameworks;
+- unrelated router, transport, NetDB, tunnel, frontend, resolver, cryptographic, or security work;
+- Proposal 170 wire extensions.
 
-| Finding | Severity | Owner |
+## Historical records and authority
+
+M001–M004 remain historical foundations. M005–M007 are superseded. M008–M009 remain retained. M010–M012 residual behavior was materially corrected by M014 and `9047fee`. M013 is superseded.
+
+| Milestone | Closure/current record | Current disposition |
 |---|---|---|
-| Active SAM can return successful empty sessions when the current source is unavailable, without pinned contract authority | medium, contract-dependent | M016 |
-| Same-category service generation validation and entry replacement are not atomic | medium | M016 |
-| TLS connection-limit test does not exceed the configured limit | medium evidence defect | M016 |
-| M015 reviewed an older head and claimed zero findings despite the above defects | closure defect | M017 |
-| Post-M015 broad formatting commit was outside the frozen review | scope/evidence reconciliation | M017 |
-| Reviewer independence was not auditable beyond a generic assertion | closure defect | M017 |
-
-## Deferred and out-of-scope work
-
-The following remain intentionally outside Proposal 170 corrective scope:
-
-- real runtime implementations for missing tunnel types;
-- lifecycle migration of existing startup-managed tunnels;
-- runtime resolver adoption and precedence for Proposal administrative address books;
-- frontend management surfaces;
-- protocol additions beyond Proposal 170;
-- broader router, NetDB, transport, tunnel, peer-selection, congestion, cryptographic, or security work;
-- release or publishing automation;
-- CI expansion;
-- cleanup or reversal of unrelated repository-wide formatting unless its own owner determines that separately.
-
-## Historical records and current authority
-
-M001–M004 remain historical foundations.
-
-M005–M007 are superseded.
-
-M008 materially corrected production composition and is not reopened absent a direct regression.
-
-M009 remains the availability/error boundary.
-
-M010–M012 residual truthfulness/resource defects were substantially corrected by M014.
-
-M013 was superseded by M015.
-
-M014 materially landed but its strict closure is reopened only for the three M016 findings.
-
-M015 remains a historical closure record but is not the current closure authority. M017 supersedes it as the final gate.
-
-| Milestone | Historical closure | Current disposition |
-|---|---|---|
-| 008 | `plans/closure/i2pcontrol-proposal-170/008-closure.md` | retained |
-| 009 | `plans/closure/i2pcontrol-proposal-170/009-closure.md` | retained |
-| 010 | `plans/closure/i2pcontrol-proposal-170/010-closure.md` | residual issues substantially corrected by M014 |
-| 011 | `plans/closure/i2pcontrol-proposal-170/011-closure.md` | M016 owns remaining SAM/fencing defects |
-| 012 | `plans/closure/i2pcontrol-proposal-170/012-closure.md` | M016 owns remaining saturation-proof defect |
-| 013 | `plans/closure/i2pcontrol-proposal-170/013-closure.md` | superseded |
-| 014 | `plans/closure/i2pcontrol-proposal-170/014-closure.md` | corrective pass required; M016 owns the remaining SAM contract/ownership blocker and related residual evidence |
+| 014 | `plans/closure/i2pcontrol-proposal-170/014-closure.md` | corrective pass required until the remaining SAM truthfulness finding is resolved |
 | 015 | `plans/closure/i2pcontrol-proposal-170/015-closure.md` | strict closure invalidated; superseded by M017 |
+| 016 | `plans/closure/i2pcontrol-proposal-170/016-closure.md` | pre-amendment blocker record superseded by amended ready plan |
+| 017 | no closure record | blocked final gate |
 
 ## Registry maintenance rules
 
-1. Register only dependency-ready work as `ready`.
-2. Keep prewritten dependent work `blocked` until its exact activation rule is satisfied.
-3. Move implementation to `closing`, not `closed`, when code lands.
-4. Final closure review must be independent from the final implementation executor and auditable in the closure record.
-5. Mark `closed` only with an accepted closure record at the actual final reviewed head and zero unresolved high/medium findings.
-6. Do not conceal implementation or contract defects behind `conditionally closed`.
-7. Preserve exact scope and blocker ownership.
-8. Do not expand planning into CI, release, broad security, or repository-wide formatting loops.
-9. For M016/M017, targeted local package verification is sufficient; absence of remote CI is not itself a blocker.
-10. If the SAM contract cannot be established exactly, stop M016 with a named blocker rather than inventing wire behavior.
-11. If M017 rejects closure, amend M016 narrowly before creating another milestone.
-12. Do not rewrite M015 into a passing closure; preserve it as historical evidence.
+1. M016 is the only ready implementation handoff.
+2. Keep M017 blocked until a complete M016 implementation head is frozen.
+3. When M016 lands, move it to `closing`, move M017 to `ready`, and identify the implementation executor.
+4. M017 must be performed by a distinct, auditable reviewer against the actual final head.
+5. Mark the subsystem closed only with zero unresolved high/medium findings.
+6. Do not add another milestone for defects that fit the amended M016 boundary.
+7. Do not conceal a field-level SAM blocker with empty, partial, stale, or default success.
+8. Verification remains local and package-scoped; remote CI is not required.
+9. Preserve M015 and the pre-amendment M016 blocker record as historical evidence rather than rewriting them into passing closure records.
