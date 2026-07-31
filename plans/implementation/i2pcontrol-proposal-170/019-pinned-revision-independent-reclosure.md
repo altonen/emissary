@@ -1,6 +1,6 @@
 # I2PControl Proposal 170 Milestone 019 — Pinned-Revision Independent Reclosure
 
-Status: ready
+Status: closed against pinned revision
 
 Planning baseline: `2816857633a927b629c051e07e7efa5baa8d6e07`
 
@@ -330,14 +330,16 @@ M019 may close only when:
 19. zero unresolved high/medium findings remain;
 20. final status states closure against the pinned Open proposal revision, not permanent future conformance.
 
-## 12. Activation and handoff rule
+## 12. Review and closure record
 
-M019 remains blocked until M018 lands and freezes a complete implementation head.
+M019 was blocked until M018 landed and froze a complete implementation head.
+That dependency was satisfied at `ea35de9`; the review is now complete.
 
-Once activated:
+During the completed review:
 
 1. do not modify production code during the review;
 2. record findings before documentation closure edits;
 3. reject and return high/medium defects to M018;
 4. create `019-closure.md` only after the actual final head passes;
-5. update registry and roadmap to `closed against pinned revision` only after the closure record is accepted.
+5. the registry and roadmap were updated to `closed against pinned revision`
+   only after this closure record was accepted.

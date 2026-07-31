@@ -1,6 +1,6 @@
 # RouterInfo Method
 
-Status: M018 exact-wire implementation; M019 independent closure pending
+Status: exact-wire implementation accepted against the pinned revision
 
 This document describes the Proposal 170 `RouterInfo` JSON-RPC method implementation in Emissary.
 

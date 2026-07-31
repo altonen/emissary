@@ -1,6 +1,6 @@
 # Proposal 170 AddressBook Administrative API
 
-Status: M018 canonical AddressBook wire implementation; M019 independent closure pending
+Status: closed against the pinned Proposal 170 revision
 
 This document describes the Proposal 170 AddressBook administrative API for Emissary's I2PControl service.
 

@@ -1,6 +1,6 @@
 # I2PControl for Emissary
 
-Status: M018 implementation complete; M019 pinned-revision independent closure pending
+Status: closed against the pinned 2026-05-20 Proposal 170 revision
 
 Proposal 170 is still **Open**. This documentation is pinned to the
 2026-05-20 revision (created and last updated 2026-05-20). M017's broad
@@ -133,8 +133,9 @@ The current implementation distinguishes three claims:
 - **Source available** — Emissary has a truthful current source for the value.
 - **Runtime implemented** — the operation has a real runtime backend.
 
-M018 reconciles the wire contract. M019 is the independent final-head review;
-the subsystem is not yet closed.
+M018 reconciled the wire contract and M019 independently accepted the final
+head against the pinned revision. See the planning records for the bounded
+closure statement and source metadata.
 
 Retained implementation evidence includes:
 

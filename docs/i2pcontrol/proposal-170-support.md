@@ -1,6 +1,6 @@
 # Proposal 170 Support Status
 
-Status: M018 implementation complete; M019 pinned-revision independent closure pending
+Status: closed against the pinned 2026-05-20 Proposal 170 revision
 
 Proposal 170 remains Open and this status is pinned to the 2026-05-20 revision.
 M017's broad closure is invalidated historical evidence.
@@ -168,5 +168,5 @@ configured-vs-listening semantics, and integration evidence.
 | M015 | Superseded | Historical reclosure; superseded by M017 |
 | M016 | Closed | Bounded SAM session observation corrective pass |
 | M017 | Invalidated | Historical final-head review; broad closure superseded by M018/M019 |
-| M018 | Closing | Exact wire-contract reconciliation implementation |
-| M019 | Ready after M018 handoff | Pinned-revision independent reclosure |
+| M018 | Closed | Exact wire-contract reconciliation implementation |
+| M019 | Closed against pinned revision | Pinned-revision independent reclosure |

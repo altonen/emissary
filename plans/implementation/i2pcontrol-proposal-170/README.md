@@ -17,22 +17,23 @@ Authoritative direction:
 | 015 — Focused independent reclosure | invalid historical closure | `015-focused-independent-reclosure.md` | superseded |
 | 016 — Bounded SAM session observation corrective pass | implementation retained | `016-sam-fencing-and-connection-proof-corrective-pass.md` | bounded SAM component accepted |
 | 017 — Final-head independent reclosure | corrective pass required | `017-final-head-independent-reclosure.md` | closure invalidated by exact Proposal 170 contract findings |
-| 018 — Exact wire-contract reconciliation | closing | `018-exact-wire-contract-reconciliation.md` | implementation frozen at `ea35de9`; disposition recorded |
-| 019 — Pinned-revision independent reclosure | ready | `019-pinned-revision-independent-reclosure.md` | distinct reviewer must recheck pinned source, final head, and SAM evidence |
+| 018 — Exact wire-contract reconciliation | closed | `018-exact-wire-contract-reconciliation.md` | implementation accepted at `ea35de9`; M019 closure recorded |
+| 019 — Pinned-revision independent reclosure | closed against pinned revision | `019-pinned-revision-independent-reclosure.md` | final source/head/SAM review accepted |
 
 Earlier milestones remain historical or superseded as recorded in the subsystem roadmap.
 
 ## Current execution order
 
 ```text
-M018 exact wire-contract reconciliation
+M018 exact wire-contract reconciliation (closed)
     |
     v
-M019 pinned-revision independent reclosure
+M019 pinned-revision independent reclosure (closed against pinned revision)
 ```
 
-M018 implementation is frozen and M019 is ready for its independent review. Do
-not combine M019's final acceptance with the M018 implementation disposition.
+M018 implementation was frozen at `ea35de9`; M019 independently reviewed the
+actual final head and recorded acceptance in
+`plans/closure/i2pcontrol-proposal-170/019-closure.md`.
 
 ## Why M017 is invalidated
 
@@ -95,7 +96,7 @@ M019 independently checks:
 
 Any unresolved high/medium finding rejects closure and returns work to M018.
 
-Final status must be `closed against pinned revision`, because Proposal 170 remains Open.
+Final status is `closed against pinned revision`, because Proposal 170 remains Open.
 
 ## Verification rule
 

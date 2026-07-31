@@ -1,6 +1,6 @@
 # I2PControl Proposal 170 Roadmap
 
-Status: active exact-contract corrective work
+Status: closed against pinned revision
 
 Current planning baseline: `2816857633a927b629c051e07e7efa5baa8d6e07`
 
@@ -104,7 +104,7 @@ Plan:
 
 - `plans/implementation/i2pcontrol-proposal-170/018-exact-wire-contract-reconciliation.md`
 
-Status: closing
+Status: closed
 
 ### Objective
 
@@ -166,8 +166,9 @@ No compatibility extension or unavailable source counts as canonical operational
 - literal official-example fixtures pass;
 - M017 is consistently marked invalidated;
 - final implementation head is frozen;
-- M018 moves to `closing`;
-- M019 becomes `ready`.
+- M018 moved to `closing` and M019 became `ready` after the implementation
+  head was frozen;
+- M019 independently accepted the head and recorded final closure.
 
 ## 7. M019 — Pinned-revision independent reclosure
 
@@ -175,7 +176,7 @@ Plan:
 
 - `plans/implementation/i2pcontrol-proposal-170/019-pinned-revision-independent-reclosure.md`
 
-Status: ready
+Status: closed against pinned revision
 
 ### Activation
 
@@ -287,12 +288,12 @@ Prohibited:
 | 015 | invalid historical closure | superseded |
 | 016 | bounded SAM implementation retained | accepted component |
 | 017 | corrective pass required | closure invalidated by exact-contract findings |
-| 018 | ready | sole implementation handoff |
-| 019 | blocked | final pinned-revision closure gate |
+| 018 | closed | exact wire-contract reconciliation accepted at `ea35de9` |
+| 019 | closed against pinned revision | final pinned-revision closure accepted at `db5e067` |
 
 ## 12. Completion definition
 
-The Proposal 170 workstream may be marked `closed against pinned revision` only when M019 confirms:
+The Proposal 170 workstream is marked `closed against pinned revision` because M019 confirmed:
 
 - exact current source revision;
 - exact 43 RouterInfo additions;

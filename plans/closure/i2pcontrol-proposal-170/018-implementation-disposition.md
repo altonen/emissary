@@ -1,6 +1,6 @@
 # M018 Implementation Disposition — Exact Wire-Contract Reconciliation
 
-Status: closing
+Status: closed
 
 Frozen implementation head: `ea35de9` (`fix(i2pcontrol): reconcile Proposal 170 wire contract`)
 
@@ -110,6 +110,7 @@ known within the M018 scope. M019 must independently recheck the pinned
 source, this disposition, the final head, and whether the qualified SAM
 evidence satisfies strict closure.
 
-M018 is therefore `closing`, not final subsystem `closed`. M019 is moved to
-`ready` because the implementation head is frozen, the disposition is present,
-and its distinct reviewer/final-head/source recheck are the remaining gate.
+M018 is therefore `closed` as the exact-wire implementation handoff. M019
+performed the distinct reviewer/final-head/source recheck and accepted the
+subsystem against the pinned open revision in
+`plans/closure/i2pcontrol-proposal-170/019-closure.md`.

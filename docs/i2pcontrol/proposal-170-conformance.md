@@ -1,10 +1,10 @@
 # Proposal 170 Conformance Matrix
 
-Status: normative inventory for M018 implementation; M019 independent closure pending
+Status: normative inventory for the pinned-revision closure
 
 Proposal 170 remains Open and this inventory is pinned to the revision created
 and last updated on 2026-05-20. M017's broad closure is invalidated historical
-evidence; M019 is the independent final-head review.
+evidence; M019 independently accepted the final head against that revision.
 
 Coverage is reported in three dimensions: **wire implemented** (exact request
 and response contract), **source available** (truthful current data source),

@@ -1,6 +1,6 @@
 # I2PControl TunnelManager
 
-Status: M018 canonical wire implementation; M019 independent closure pending
+Status: closed against the pinned Proposal 170 revision
 
 This document describes the Proposal 170 TunnelManager API handler in Emissary.
 
