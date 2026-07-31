@@ -7,73 +7,108 @@ Authoritative direction:
 - `plans/003-planning-process.md`
 - `plans/adrs/ADR-0001-proposal-170-contract-and-stub-boundary.md`
 - `plans/subsystems/i2pcontrol-proposal-170-roadmap.md`
+- `plans/closure/i2pcontrol-proposal-170/017-closure-invalidation.md`
 
 ## Current milestones
 
 | Milestone | Status | Plan | Activation dependency |
 |---|---|---|---|
-| 014 — Spec-constrained truthfulness and local hardening | closed | `014-spec-constrained-truthfulness-and-local-hardening.md` | accepted by M017 final-head review |
-| 015 — Focused independent reclosure | strict closure invalidated | `015-focused-independent-reclosure.md` | historical record; superseded by M017 |
-| 016 — Bounded SAM session observation corrective pass | closed | `016-sam-fencing-and-connection-proof-corrective-pass.md` | implementation frozen at `355e243`; accepted by M017 |
-| 017 — Final-head independent reclosure | closed | `017-final-head-independent-reclosure.md` | final reviewed head `dbbd107`; zero unresolved high/medium findings |
+| 014 — Spec-constrained truthfulness and local hardening | implementation retained | `014-spec-constrained-truthfulness-and-local-hardening.md` | broad final acceptance reopened by M018/M019 |
+| 015 — Focused independent reclosure | invalid historical closure | `015-focused-independent-reclosure.md` | superseded |
+| 016 — Bounded SAM session observation corrective pass | implementation retained | `016-sam-fencing-and-connection-proof-corrective-pass.md` | bounded SAM component accepted |
+| 017 — Final-head independent reclosure | corrective pass required | `017-final-head-independent-reclosure.md` | closure invalidated by exact Proposal 170 contract findings |
+| 018 — Exact wire-contract reconciliation | ready | `018-exact-wire-contract-reconciliation.md` | sole implementation handoff |
+| 019 — Pinned-revision independent reclosure | blocked | `019-pinned-revision-independent-reclosure.md` | frozen complete M018 head and distinct auditable reviewer |
 
 Earlier milestones remain historical or superseded as recorded in the subsystem roadmap.
 
 ## Current execution order
 
 ```text
-M016 bounded SAM observation implementation
+M018 exact wire-contract reconciliation
     |
     v
-M017 independent final-head closure
+M019 pinned-revision independent reclosure
 ```
 
-M016 was implemented at frozen production head `355e243`; M017 accepted the final reviewed head `b2f45de`.
+Execute only M018. Do not begin M019 until the M018 implementation/test head is frozen and the registry marks M018 `closing`.
 
-## M016 current scope
+## Why M017 is invalidated
 
-The fencing race and TLS saturation-evidence defect were resolved at `9047feecde046dac8e0208bbf1acf2e3883f97ae`.
+M017 accepted bounded SAM observation, atomic service fencing, TLS connection bounds, live metrics/logs, and truthful unavailable behavior. Those components remain retained.
 
-M016 now owns only truthful current SAM session reporting.
+Its broad Proposal 170 closure was invalid because exact public contract comparison was incomplete:
 
-Authorized design:
+- RouterInfo canonical keys are missing or renamed;
+- the 121-key legacy/base catalog is mislabeled as Proposal 170 instead of the exact 43 additions;
+- AddressBook uses a different parameter model;
+- TunnelManager uses different action casing and result shapes;
+- ClientServicesInfo uses a nested selector envelope rather than direct parameter presence.
 
-- one fixed-capacity observation state owned by canonical SAM runtime composition;
-- one private publisher used only at existing session/socket lifecycle transitions;
-- one clonable read-only handle captured before `SamServer` moves into the router runtime;
-- on-demand bounded snapshots passed through existing composition to I2PControl;
-- exact pinned i2pd session fields only;
-- no lifecycle authority or sensitive material.
+See:
 
-Primary files are limited to the smallest SAM core files, the router composition seam, and `emissary-cli/src/i2pcontrol/client_services.rs` plus the smallest required DTO/composition support.
+- `plans/closure/i2pcontrol-proposal-170/017-closure-invalidation.md`.
 
-M016 must not add:
+## M018 handoff rule
 
-- Proposal 170 extensions;
-- generic observer, event, cache, registry, polling, persistence, or supervisor infrastructure;
-- router, transport, NetDB, tunnel, frontend, resolver, cryptographic, or broad security changes;
+M018 owns only exact wire reconciliation and directly affected evidence/documentation.
+
+Required areas:
+
+- exact 43-key RouterInfo manifest and direct parameter presence;
+- exact AddressBook canonical modes;
+- exact lowercase TunnelManager actions and structured results;
+- exact direct-parameter ClientServicesInfo requests;
+- compatibility aliases clearly separated from canonical behavior;
+- literal official-example fixtures;
+- strongest feasible production-composition SAM lifecycle evidence;
+- separate wire/source/runtime support claims.
+
+Compatibility forms may remain, but cannot substitute for canonical Proposal 170 forms or count toward canonical coverage.
+
+M018 must not add:
+
+- missing tunnel data planes;
+- broad router, transport, NetDB, peer, tunnel, cryptographic, resolver, frontend, SAM, or I2CP architecture;
+- generic protocol/schema/fixture/inspection frameworks;
 - repository-wide formatting;
-- CI, release, publishing, platform, coverage, or generated-evidence machinery.
+- CI, release, publishing, platform, coverage, or generated-evidence machinery;
+- fabricated values for unavailable sources.
 
-## M017 closure rule
+## M019 closure rule
 
-M017 reviews the actual final head after M016. The reviewer must be distinct from the final M016 implementation executor and identify the separate agent/run or equivalent evidence.
+M019 must independently refetch the still-open Proposal 170 source and verify that the implementation matches the pinned revision.
 
-Any high/medium finding rejects closure and returns work to the amended M016 boundary when possible.
+The reviewer must be distinct from the final M018 implementation executor and identify the separate agent/run.
 
-Only an accepted `plans/closure/i2pcontrol-proposal-170/017-closure.md` may return the subsystem to `closed`.
+M019 independently checks:
+
+- exact 43 RouterInfo strings and types;
+- AddressBook primary-source response adjudication;
+- all seven lowercase TunnelManager actions and structured results;
+- direct ClientServicesInfo selection with any value;
+- compatibility extension isolation;
+- truthful unavailable and unsupported behavior;
+- SAM current-session/removal evidence;
+- final changed-file scope and targeted command outcomes.
+
+Any unresolved high/medium finding rejects closure and returns work to M018.
+
+Final status must be `closed against pinned revision`, because Proposal 170 remains Open.
 
 ## Verification rule
 
-Use targeted local checks for touched core and CLI packages. Do not add them to GitHub Actions.
+Use targeted local checks for touched packages. Do not add them to GitHub Actions.
 
 ```bash
-cargo check -p emissary-core --features std,events
-cargo test -p emissary-core
-cargo clippy -p emissary-core --features std,events --all-targets -- -D warnings
+cargo fmt --all -- --check
 cargo check -p emissary-cli --no-default-features --features i2pcontrol
 cargo test -p emissary-cli --no-default-features --features i2pcontrol
 cargo clippy -p emissary-cli --no-default-features --features i2pcontrol --all-targets -- -D warnings
 ```
 
-Run formatting checks only on the intended scope when unrelated repository baseline differences prevent the full workspace command. Do not reformat unrelated files.
+Run core commands only when M018 uses its narrow core exception or existing core integration targets.
+
+Known unrelated formatting differences may be replaced by touched-file nightly rustfmt checks with the baseline limitation recorded. Do not reformat unrelated files.
+
+Remote CI, release verification, platform matrices, coverage gates, fuzz campaigns, network farms, and generated evidence bundles are not required.
