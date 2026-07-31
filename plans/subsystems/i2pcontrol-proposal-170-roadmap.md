@@ -247,7 +247,7 @@ The completion statement must continue to distinguish the implemented Proposal 1
 | 008–009 | historical closed | existing plans | retained |
 | 010–012 | historical corrective records | existing plans | M014 materially corrected residual behavior; M016 owns only listed remaining defects |
 | 013 | superseded | `013-production-conformance-and-independent-reclosure.md` | superseded by later gates |
-| 014 | corrective pass required | `014-spec-constrained-truthfulness-and-local-hardening.md` | materially landed; M016 owns three residual findings |
+| 014 | corrective pass required | `014-spec-constrained-truthfulness-and-local-hardening.md` | formal closure recorded; M016 owns the remaining SAM contract/ownership blocker and related residual evidence |
 | 015 | strict closure invalidated | `015-focused-independent-reclosure.md` | historical closure record; superseded by M017 |
 | 016 | ready | `016-sam-fencing-and-connection-proof-corrective-pass.md` | only active implementation handoff |
 | 017 | blocked | `017-final-head-independent-reclosure.md` | blocked on frozen M016 head and auditable independent reviewer |
