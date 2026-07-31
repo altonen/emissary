@@ -1,93 +1,58 @@
-# M016 Closure Record — SAM, Fencing, and Connection-Proof Corrective Pass
+# M016 Pre-Amendment Blocker Record — SAM, Fencing, and Connection Proof
 
-Status: blocked
+Status: superseded as current disposition
 
-Frozen implementation head: `9047feecde046dac8e0208bbf1acf2e3883f97ae`
+Historical frozen implementation head: `9047feecde046dac8e0208bbf1acf2e3883f97ae`
 
-Implementation commit: `9047feecde046dac8e0208bbf1acf2e3883f97ae`
+Current implementation authority:
 
-## Scope and source reconciliation
+- `plans/implementation/i2pcontrol-proposal-170/016-sam-fencing-and-connection-proof-corrective-pass.md`
 
-The implementation is confined to the M016 boundary: ClientServicesInfo SAM
-documentation/qualification, the service registry, the I2PControl server’s
-pre-spawn connection bound, and the existing adversarial test.
+## Historical result
 
-Authoritative sources pinned before this disposition:
+This record captured the state before the architecture owner authorized a bounded SAM session-observation handle.
 
-- Official Proposal 170, created and last updated 2026-05-20:
-  <https://i2p.net/en/proposals/170-i2pcontrol-expansion/>
-- Current upstream i2pd commit `7866f644d3d3dea3d1adf5374a6ea378c8efd536`,
-  `daemon/I2PControl.cpp`, `SAMInfoHandler`:
-  <https://gitlab.com/PurpleI2P/i2pd/-/blob/7866f644d3d3dea3d1adf5374a6ea378c8efd536/daemon/I2PControl.cpp>
+At the historical frozen head:
 
-Proposal 170 describes SAM as returning active-session information. The pinned
-i2pd implementation serializes each session under its session ID with
-`name`, `address`, and `sockets[]`, where each socket has `type` and `peer`.
+- atomic same-category service generation fencing passed;
+- real TLS connection saturation, rejection, and permit restoration passed;
+- the adopted Proposal 170/i2pd active SAM session map remained blocked because the then-current M016 scope prohibited the shared observation seam required to expose it.
 
-The Emissary `SamServer` is moved directly into the runtime by `Router::new()`
-and exposes only listener addresses. Supplying the adopted map later would
-require shared mutable observation state, an event stream, cache, or
-lifecycle/owner handle. Those are explicitly forbidden by M016, and no
-existing Proposal 170 unavailable/error envelope is defined for this case.
+Pinned sources used for that conclusion:
 
-## Requirement-to-evidence matrix
+- official Proposal 170, `ClientServicesInfo`;
+- i2pd commit `7866f644d3d3dea3d1adf5374a6ea378c8efd536`, `daemon/I2PControl.cpp`, `SAMInfoHandler`.
 
-| Requirement | Evidence | Status |
-|---|---|---|
-| Pin official Proposal 170 and adopted i2pd SAM behavior | Sources above and exact serialization path | PASS |
-| Do not treat an example empty object as unavailable-source proof | Production comments/docs call the empty result qualified compatibility behavior, not proof of zero sessions | PASS |
-| Implement exact active SAM map or permitted unavailable behavior | Exact map cannot be populated through an allowed owner seam; no permitted unavailable behavior is defined | BLOCKED |
-| Preserve fixed passive registry ownership | `ServiceRegistryState` contains fixed entries/generations only | PASS |
-| Atomically fence generation and replace entry | One `RwLock<ServiceRegistryState>` guards allocation, validation, replacement, and snapshots | PASS |
-| Cross-category isolation and stale rejection | Registry unit/integration regressions, including `stale_generation_cannot_overwrite_new_state` | PASS |
-| Keep production connection limit at 128 | `init_server` installs `MAX_CONNECTION_TASKS` (128) | PASS |
-| Test-only small connection limit | `ServerInstance::new_for_test_with_connection_limit` | PASS |
-| Prove saturation/rejection before TLS/JSON-RPC | `tls_connection_bound_enforced` holds two incomplete handshakes at limit 2 and rejects the third | PASS |
-| Prove permit restoration | Same test drops a held connection and completes authenticated TLS JSON-RPC | PASS |
-| Preserve TLS auth/protected dispatch/plaintext rejection | Full adversarial suite | PASS |
-| Avoid unrelated CI/release/formatting changes | Changed-file review; unrelated formatter output restored | PASS |
+The pinned i2pd behavior serializes active sessions under their session identifiers with the adopted `name`, `address`, and `sockets` fields; each socket contains the adopted `type` and `peer` fields.
 
-## Verification outcomes
+## Amendment
 
-```text
-cargo check -p emissary-cli --no-default-features --features i2pcontrol        PASS (warning-free)
-cargo test -p emissary-cli --no-default-features --features i2pcontrol         PASS (1107 tests, 15 suites)
-cargo clippy -p emissary-cli --no-default-features --features i2pcontrol --all-targets -- -D warnings
-                                                                                PASS
-rustfmt +nightly --check <four touched Rust files>                              PASS
-```
+The architecture owner subsequently authorized one fixed-capacity, read-only SAM session-observation handle with a private SAM-owned publisher.
 
-The repository-wide `cargo fmt --all -- --check` remains blocked by unrelated
-baseline formatting differences, including `examples/rust-tutorial/src/main.rs`,
-from the repository’s nightly-only rustfmt settings. No repository-wide
-formatter rewrite is included in this corrective pass.
+The amended plan permits:
 
-## Invariant, compatibility, and security review
+- sanitized metadata updates at existing session/socket lifecycle transitions;
+- a cloneable read-only handle captured before `SamServer` is moved into the router runtime;
+- bounded on-demand snapshots through existing composition into I2PControl;
+- exact pinned i2pd fields only;
+- explicit failure on overflow rather than partial or empty success.
 
-No Proposal 170 method, selector, request key, response key, status, or error
-envelope was added. Unsupported tunnel data planes remain unchanged. The
-connection semaphore is instance-owned and separate from the handler semaphore.
-Registry state remains fixed-size, passive, and secret-free. The retained SAM
-empty object is explicitly qualified and is not accepted as evidence of an
-empty active-session set.
+It still prohibits:
 
-## Unresolved findings
+- SAM protocol or lifecycle redesign;
+- mutable session, socket, stream, key, destination, payload, authentication, or command-channel exposure;
+- generic observer, event, cache, registry, polling, persistence, or supervisor infrastructure;
+- unrelated core/security work;
+- CI, release, or repository-formatting expansion.
 
-- High: none.
-- Medium: M016-F1 remains blocked. The adopted contract requires active-session
-  information, but the exact safe map cannot be sourced under M016’s allowed
-  ownership boundary; inventing a successful empty fallback or adding a new
-  observer/cache seam would violate the plan.
-- Low: none.
+## Current disposition
 
-## Planning disposition and downstream review
+This file remains historical evidence of why implementation stopped under the earlier scope. It is not an accepted M016 closure and no longer blocks execution.
 
-M016 is formally `blocked`, not closed. M015 remains untouched as a historical
-invalidated closure record. M017 remains `blocked`: its activation rule requires
-a complete M016 implementation or accepted contract disposition, a frozen
-complete implementation head, and an auditable independent reviewer. No other
-future plan is dependency-ready or can be unblocked by this disposition.
+Current status is:
 
-The next action is contract/architecture-owner review of the named SAM seam;
-this record does not authorize expanding M016 into a generic observer, cache,
-event stream, or lifecycle API.
+- M016: `ready` under the amended bounded observation-handle plan;
+- M017: `blocked` until amended M016 lands on a frozen head and moves to `closing`;
+- M014: `corrective pass required` until the SAM truthfulness finding is resolved and independently reclosed.
+
+After amended M016 lands, create a new closure/evidence record or explicitly append a final implementation disposition. Do not convert this historical blocker into acceptance evidence.
