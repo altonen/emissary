@@ -1,6 +1,6 @@
 # I2PControl Inspection Architecture
 
-Status: M014 implemented (truthful live sources and local resource bounds), M015 independent closure pending
+Status: M014 implementation accepted by M017 (truthful live sources and local resource bounds)
 
 This document describes the read-only inspection architecture for I2PControl Proposal 170 in Emissary.
 

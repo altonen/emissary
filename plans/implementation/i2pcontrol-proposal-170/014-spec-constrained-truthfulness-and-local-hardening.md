@@ -1,6 +1,8 @@
 # I2PControl Proposal 170 Milestone 014 — Spec-Constrained Truthfulness and Local Hardening
 
-Status: corrective pass required
+Status: closed
+
+Closure authority: `plans/closure/i2pcontrol-proposal-170/017-closure.md`
 
 Planning baseline: `2f0508dc73b8d8e5d7429effcbe4dbee8797833c`
 

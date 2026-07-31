@@ -143,6 +143,10 @@ or fabricated map. Socket `type` values follow i2pd's active SAM socket
 vocabulary (`1` session, `2` stream, `3` acceptor), and `peer` is the accepted
 TCP peer address.
 
+If the listener is marked active but the canonical observation handle is not
+available, the request returns an internal error rather than a successful empty
+session map.
+
 ### `BOB`
 
 Always returns the exact boolean `false` because Emissary does not

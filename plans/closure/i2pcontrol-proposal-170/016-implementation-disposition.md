@@ -1,6 +1,6 @@
 # M016 Implementation Disposition — Bounded SAM Session Observation
 
-Status: closing
+Status: closed by M017 final-head review
 
 Frozen implementation head: `355e243` (`fix(i2pcontrol): expose bounded SAM session observations`)
 
@@ -13,9 +13,9 @@ not acceptance evidence.
 Implementation executor: Codex implementation run for M016, recorded in the
 repository session that produced `355e243`.
 
-The implementation head is frozen for the independent M017 review. M017 is
-now ready and must be performed by a distinct, auditable reviewer. This
-record does not independently close the Proposal 170 workstream.
+The implementation head was frozen for the independent M017 review. M017
+performed the distinct, auditable final-head review recorded in
+`plans/closure/i2pcontrol-proposal-170/017-closure.md`.
 
 ## Pinned field semantics
 
@@ -82,11 +82,11 @@ frontend, or cryptographic work was added.
 
 M016-F1 is implemented and has no remaining high or medium defect identified
 in this implementation pass. M016-F2 and M016-F3 remain resolved at
-`9047fee`. Independent M017 review is still required before the subsystem can
-be marked closed.
+`9047fee`. M017 accepted the final head with no unresolved high or medium
+findings.
 
 ## Disposition
 
-`closing`: implementation is complete at the frozen head and the downstream
-independent final-head reclosure plan is unblocked. M017 owns final acceptance
-or rejection and must not repair production defects while closing the plan.
+`closed`: implementation is complete at the frozen head and the downstream
+independent final-head review accepted the actual final head in
+`plans/closure/i2pcontrol-proposal-170/017-closure.md`.
