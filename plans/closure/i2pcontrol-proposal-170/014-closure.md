@@ -8,78 +8,68 @@ Implementation evidence heads:
 
 - `69b4569` — spec-constrained truthfulness and local hardening
 - `e59fa23` — live RouterInfo metrics and TLS integration evidence
-- `9047fee` — subsequent narrow fencing and connection-proof corrective changes
+- `9047fee` — atomic fencing and connection saturation proof
 
-This record formally evaluates M014 under the repository planning process. The
-principal M014 implementation landed, but the milestone cannot be marked closed
-because a medium contract/ownership finding remains and was correctly handed to
-M016. M015's historical closure is not reused as acceptance evidence because its
-reviewed head was later invalidated.
+## Disposition
+
+The principal M014 implementation landed, but M014 cannot be marked closed while a listening SAM bridge can return successful `sessions: {}` despite active sessions existing in the canonical SAM runtime.
+
+M015 is not acceptance evidence because it reviewed an older head and accepted the SAM empty-output interpretation without a canonical active-session source.
 
 ## Requirement-to-evidence matrix
 
 | Requirement | Evidence | Status |
 |---|---|---|
-| Remove startup-owned RouterInfo success | `ProductionRouterInfoControl` uses live production adapters and explicit unavailable results for unsupported inspection groups | PASS |
-| Preserve transport-specific truthfulness | UDP/TCP snapshots return unavailable rather than infer state from aggregate connected-router metrics | PASS |
-| Use live production metrics | `EventMetrics` is composed into the production control plane; RouterInfo reads the live adapter | PASS |
-| Use the tracing-backed bounded log ring | logger-owned `LogRing` is passed through composition and used by RouterInfo retrieval/clear | PASS |
-| Keep service ownership independent by category | fixed-category registry uses one state lock and atomic generation validation/replacement; unit regressions cover isolation and stale writes | PASS |
-| Keep SAM output spec-constrained and truthful | Proposal 170 and adopted i2pd require active-session information, but the current allowed Emissary owner exposes only listener addresses; the successful empty map is therefore not accepted as a truthful unavailable fallback | CORRECTIVE PASS REQUIRED |
-| Bound accepted connection work before spawn | instance-owned semaphore is acquired before TLS task spawn; the limit-2 adversarial test proves rejection and permit restoration | PASS |
-| Preserve TLS/authentication boundaries | real TLS authentication/protected dispatch and plaintext rejection remain covered by `adversarial` | PASS |
-| Preserve unsupported tunnel and administrative behavior | existing TunnelManager, AddressBook, and explicit unsupported backend suites remain passing | PASS |
-| Keep scope within Proposal 170 | no router, transport, NetDB, tunnel data-plane, frontend, resolver, CI, release, or broad security changes entered M014 | PASS |
+| Remove startup-owned RouterInfo success | production adapter uses live sources or explicit unavailable behavior | PASS |
+| Preserve transport-specific truthfulness | UDP/TCP do not infer state from aggregate connections | PASS |
+| Use live production metrics | EventMetrics adapter is wired through composition | PASS |
+| Use tracing-backed bounded log ring | application ring reaches RouterInfo retrieval and clear | PASS |
+| Keep service ownership independent and atomic | one registry state lock validates generation and replaces entries | PASS |
+| Keep SAM output truthful | active-session map still lacks a completed canonical bounded read path | CORRECTIVE PASS REQUIRED |
+| Bound accepted connection work before spawn | instance-owned semaphore plus real saturation/restoration regression | PASS |
+| Preserve TLS/authentication boundaries | TLS authentication, protected dispatch, and plaintext rejection remain covered | PASS |
+| Preserve unsupported tunnel and administrative behavior | existing suites remain unchanged and passing | PASS |
+| Keep scope within Proposal 170 | no router, transport, NetDB, tunnel data-plane, frontend, resolver, CI, release, or broad security expansion | PASS |
 
-## Verification outcomes
+## Verification evidence
 
-Commands run on the current checkout:
+Recorded targeted outcomes at the current corrective implementation state:
 
 ```text
-cargo fmt --all -- --check
-  BLOCKED by unrelated repository-wide stable/nightly rustfmt differences;
-  no formatting changes were made outside the affected scope.
-cargo check -p emissary-cli --no-default-features --features i2pcontrol
-  PASS
-cargo test -p emissary-cli --no-default-features --features i2pcontrol
-  PASS (1107 tests, 15 suites)
+cargo check -p emissary-cli --no-default-features --features i2pcontrol        PASS
+cargo test -p emissary-cli --no-default-features --features i2pcontrol         PASS
 cargo clippy -p emissary-cli --no-default-features --features i2pcontrol --all-targets -- -D warnings
-  PASS
+                                                                                PASS
 ```
 
-The format result is an environmental/repository-baseline limitation, not a
-failure in the touched I2PControl implementation. The required feature-gated
-build, tests, and lint checks pass.
+Repository-wide formatting remained affected by unrelated baseline stable/nightly differences. No unrelated formatting rewrite is required for this closure.
 
-## Invariant, compatibility, and security review
-
-The Proposal 170 wire contract remains unchanged: no method, selector, action,
-key, status, error extension, or tunnel data plane was added. Current values are
-read from live canonical production handles where available; unsupported or
-unsafe inspection remains an existing unavailable/error result. I2PControl
-connection work is locally bounded before spawn and remains separate from the
-handler bound. No sensitive SAM material is exposed.
-
-## Unresolved findings
+## Remaining finding
 
 - High: none.
-- Medium: active SAM can be reported as a successful empty `sessions` object
-  even though the canonical SAM owner does not expose the required active-session
-  map. M016 has pinned the Proposal 170/i2pd behavior and recorded that resolving
-  this requires either an allowed minimal owner read or an authoritatively
-  permitted existing unavailable response. The current M016 scope forbids
-  inventing a cache, observer, event stream, or lifecycle seam.
+- Medium: active SAM session state can be represented as successful empty output because I2PControl has no completed bounded current observation path.
 - Low: none.
 
-## Planning disposition and downstream status
+## Authorized corrective path
 
-M014 is formally evaluated as `corrective pass required`, not `closed`, because
-the medium SAM truthfulness finding remains. M016 stays `blocked` on the named
-contract/ownership blocker, and M017 stays `blocked` because it requires a
-complete frozen M016 head plus an independent final-head review. No future plan
-can be unblocked by this record.
+The architecture owner has now authorized one fixed-capacity, read-only SAM session-observation handle under amended M016:
 
-The next authorized action is the narrow M016 contract/architecture-owner
-decision and implementation path described in its plan. This record does not
-authorize broad observation infrastructure or changes outside the Proposal 170
-administrative boundary.
+- `plans/implementation/i2pcontrol-proposal-170/016-sam-fencing-and-connection-proof-corrective-pass.md`
+
+The authorized handle may:
+
+- maintain sanitized adopted i2pd metadata at existing SAM session/socket lifecycle transitions;
+- expose bounded on-demand snapshots through a cloneable read-only handle;
+- be captured before `SamServer` moves into the router runtime;
+- fail explicitly on overflow rather than return partial or empty success.
+
+It may not expose mutable authority or sensitive session internals, add generic observation infrastructure, change SAM protocol behavior, or expand unrelated scope.
+
+## Downstream status
+
+- M014 remains `corrective pass required`.
+- M016 is `ready` under the amended bounded observation-handle plan.
+- M017 remains `blocked` until M016 lands on a frozen head and moves to `closing`.
+- Only M017 may independently accept final closure at the actual final head.
+
+This record does not itself authorize closure. It identifies the exact remaining finding and the narrow implementation plan that must resolve it.
