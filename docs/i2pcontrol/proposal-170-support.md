@@ -1,6 +1,6 @@
 # Proposal 170 Support Status
 
-Status: M015 closed — Proposal 170 contract complete with explicit unavailable inspection semantics
+Status: Proposal 170 workstream closed by M017 final-head reclosure
 
 This document tracks the implementation status of Proposal 170 I2PControl expansion in Emissary.
 
@@ -112,7 +112,7 @@ with boolean values for the six exact Proposal 170 keys:
 | `I2PTunnel` | `{client: {…}, server: {…}}` | `TunnelManagerControl::list()` (live query) | Live query at request time |
 | `HTTPProxy` | `{enabled, address, port}` | HTTP proxy `Listening`/`Stopped` | `enabled: true` only after bind |
 | `SOCKS` | `{enabled, address, port}` | SOCKS proxy `Listening`/`Stopped` | `enabled: true` only after bind |
-| `SAM` | `{enabled, sessions}` | core listener plus `SamServer` session owner | Listener is implemented; active-session map is blocked pending an allowed bounded owner seam |
+| `SAM` | `{enabled, sessions}` | core listener plus bounded `SamServer` observation handle | M016 current active-session map; overflow or missing source fails explicitly |
 | `BOB` | `false` (boolean) | exact Proposal 170 value (not implemented) | Unchanged |
 | `I2CP` | `{enabled}` | core `ProtocolAddressInfo::i2cp` | `enabled: true` only while bound |
 
@@ -151,3 +151,7 @@ configured-vs-listening semantics, and integration evidence.
 | M011 | Closed | ClientServicesInfo live state |
 | M012 | Closed | Real TLS and request resource hardening |
 | M013 | Closed | Production conformance and independent reclosure |
+| M014 | Closed | Spec-constrained truthfulness and local hardening |
+| M015 | Superseded | Historical reclosure; superseded by M017 |
+| M016 | Closed | Bounded SAM session observation corrective pass |
+| M017 | Closed | Final-head independent reclosure |

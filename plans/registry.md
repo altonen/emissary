@@ -25,25 +25,25 @@ Canonical direction:
 
 | Subsystem | Status | Roadmap | Current milestone | Dependencies or blockers |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | active narrow corrective work | `plans/subsystems/i2pcontrol-proposal-170-roadmap.md` | M016 ready | bounded SAM session-observation handle explicitly authorized |
+| I2PControl Proposal 170 | closed | `plans/subsystems/i2pcontrol-proposal-170-roadmap.md` | M017 closed | final-head review accepted; zero unresolved high/medium findings |
 
 ## Dependency-ready implementation plans
 
 | Subsystem | Milestone | Status | Implementation plan | Dependencies |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | 016 — bounded SAM session observation corrective pass | ready | `plans/implementation/i2pcontrol-proposal-170/016-sam-fencing-and-connection-proof-corrective-pass.md` | atomic fencing and connection proof already complete at `9047fee`; architecture-owner approval for one bounded SAM observation handle |
+| I2PControl Proposal 170 | none | — | — | No active dependency-ready implementation plan; workstream closed by M017 |
 
 ## Active closure work
 
 | Subsystem | Milestone | Status | Implementation plan | Evidence commit | Closure record |
 |---|---|---|---|---|---|
-| — | — | — | — | — | — |
+| I2PControl Proposal 170 | none | — | — | — | No active closure work |
 
 ## Blocked plans
 
 | Subsystem | Milestone | Status | Plan | Blocker |
 |---|---|---|---|---|
-| I2PControl Proposal 170 | 017 — final-head independent reclosure | blocked | `plans/implementation/i2pcontrol-proposal-170/017-final-head-independent-reclosure.md` | amended M016 must land on a frozen head and move to `closing`; reviewer must be distinct and auditable |
+| I2PControl Proposal 170 | none | — | — | — |
 
 ## M016 scope guard
 
@@ -51,7 +51,7 @@ M016 now owns one remaining finding only:
 
 | Finding | Severity | Owner | State |
 |---|---|---|---|
-| Listening SAM can return successful empty sessions while active sessions exist because no canonical read source reaches I2PControl | medium | M016 | ready for bounded observation-handle implementation |
+| Listening SAM can return successful empty sessions while active sessions exist because no canonical read source reaches I2PControl | medium | M016 | resolved at `355e243`; accepted by M017 |
 
 Resolved at `9047feecde046dac8e0208bbf1acf2e3883f97ae` and not active:
 
@@ -89,19 +89,18 @@ M001–M004 remain historical foundations. M005–M007 are superseded. M008–M0
 
 | Milestone | Closure/current record | Current disposition |
 |---|---|---|
-| 014 | `plans/closure/i2pcontrol-proposal-170/014-closure.md` | corrective pass required until the remaining SAM truthfulness finding is resolved |
+| 014 | `plans/closure/i2pcontrol-proposal-170/014-closure.md` and `plans/closure/i2pcontrol-proposal-170/017-closure.md` | closed by M017 after the SAM truthfulness finding was resolved |
 | 015 | `plans/closure/i2pcontrol-proposal-170/015-closure.md` | strict closure invalidated; superseded by M017 |
-| 016 | `plans/closure/i2pcontrol-proposal-170/016-closure.md` | pre-amendment blocker record superseded by amended ready plan |
-| 017 | no closure record | blocked final gate |
+| 016 | `plans/closure/i2pcontrol-proposal-170/016-implementation-disposition.md` and `plans/closure/i2pcontrol-proposal-170/017-closure.md` | closed at final reviewed head `dbbd107`; pre-amendment blocker retained as history |
+| 017 | `plans/closure/i2pcontrol-proposal-170/017-closure.md` | closed; final-head independent review accepted |
 
 ## Registry maintenance rules
 
-1. M016 is the only ready implementation handoff.
-2. Keep M017 blocked until a complete M016 implementation head is frozen.
-3. When M016 lands, move it to `closing`, move M017 to `ready`, and identify the implementation executor.
-4. M017 must be performed by a distinct, auditable reviewer against the actual final head.
-5. Mark the subsystem closed only with zero unresolved high/medium findings.
-6. Do not add another milestone for defects that fit the amended M016 boundary.
-7. Do not conceal a field-level SAM blocker with empty, partial, stale, or default success.
-8. Verification remains local and package-scoped; remote CI is not required.
-9. Preserve M015 and the pre-amendment M016 blocker record as historical evidence rather than rewriting them into passing closure records.
+1. M016 and M017 are closed by the accepted final-head closure record.
+2. Keep the historical M015 and pre-amendment M016 records unchanged as history.
+3. The subsystem remains closed unless a new finding is recorded against a new head.
+4. Mark the subsystem closed only with zero unresolved high/medium findings.
+5. Do not add another milestone for defects that fit the amended M016 boundary.
+6. Do not conceal a field-level SAM blocker with empty, partial, stale, or default success.
+7. Verification remains local and package-scoped; remote CI is not required.
+8. Preserve M015 and the pre-amendment M016 blocker record as historical evidence rather than rewriting them into passing closure records.

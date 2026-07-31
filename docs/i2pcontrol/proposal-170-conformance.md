@@ -1,6 +1,6 @@
 # Proposal 170 Conformance Matrix
 
-Status: normative inventory for the Proposal 170 workstream (M015 closed)
+Status: normative inventory for the closed Proposal 170 workstream (M017 accepted)
 
 This document records every Proposal 170 method, selector, parameter, action, tunnel type,
 JSON type, nullability rule, validation rule, data source, expected milestone owner, and
@@ -199,7 +199,7 @@ fixture/test ID. It is the single source of truth for contract completeness.
 | I2PTunnel selector | `I2PTunnel` | selector | object (`{client: {}, server: {}}`) | non-null when returned | Only returned if requested | Live `TunnelManagerControl::list()` | M011 | `fixture_csi_i2ptunnel` | Live query at request time (M011) |
 | HTTPProxy selector | `HTTPProxy` | selector | object (`{enabled, address, port}`) | non-null when returned | Only returned if requested; `enabled: true` only after bind | Service registry listener observation | M011 | `fixture_csi_httpproxy` | `enabled: true` only for `Listening` state (M011) |
 | SOCKS selector | `SOCKS` | selector | object (`{enabled, address, port}`) | non-null when returned | Only returned if requested; `enabled: true` only after bind | Service registry listener observation | M011 | `fixture_csi_socks` | `enabled: true` only for `Listening` state (M011) |
-| SAM selector | `SAM` | selector | object (`{enabled, sessions}`) | non-null when returned | Only returned if requested | Service registry listener; active sessions require canonical SAM owner snapshot | M016 | `fixture_csi_sam` | Active-session map remains blocked; empty compatibility output is not proof of zero sessions |
+| SAM selector | `SAM` | selector | object (`{enabled, sessions}`) | non-null when returned | Only returned if requested | Service registry listener plus canonical bounded `SamServer` snapshot | M016 | `fixture_csi_sam` | Active primary sessions and sanitized sockets are current; overflow is an explicit internal error |
 | BOB selector | `BOB` | selector | boolean (`false`) | non-null when returned | Only returned if requested | Exact Proposal 170 value | M006 | `fixture_csi_bob` | Not implemented in Emissary |
 | I2CP selector | `I2CP` | selector | object (`{enabled}`) | non-null when returned | Only returned if requested | Service registry I2CP listener observation | M011 | `fixture_csi_i2cp` | `enabled: true` only while bound (M011) |
 

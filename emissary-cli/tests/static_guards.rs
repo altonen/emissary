@@ -642,21 +642,21 @@ fn no_startup_only_i2ptunnel_population() {
 /// Guard: no unconditional SAM sessions placeholder in production handler.
 ///
 /// Catches the defect where resolve_sam always returns "sessions": {}
-/// without checking the observer source. The SAM session snapshot
+/// without checking the observation source. The SAM session snapshot
 /// requires a bounded accessor at the canonical SamServer.
 #[test]
 fn no_unconditional_sam_sessions_placeholder() {
     let src = read_source("src/i2pcontrol/client_services.rs");
     let non_test = src.split("#[cfg(test)]").next().unwrap_or(&src);
     // The SAM resolver should not have an unconditional "sessions": {}
-    // that ignores the session_count. Check that session_count is checked.
+    // that ignores the canonical bounded snapshot.
     if let Some(sam_start) = non_test.find("fn resolve_sam") {
         if let Some(sam_end) = non_test[sam_start..].find("\nfn ") {
             let sam_body = &non_test[sam_start..sam_start + sam_end];
-            // The function should check session_count against MAX_SAM_SESSIONS
+            // The function should retain the shared session bound.
             assert!(
-                sam_body.contains("MAX_SAM_SESSIONS"),
-                "resolve_sam must check session count against MAX_SAM_SESSIONS bound"
+                sam_body.contains("SAM_SESSION_OBSERVATION_LIMIT"),
+                "resolve_sam must check the shared SAM session observation bound"
             );
         }
     }

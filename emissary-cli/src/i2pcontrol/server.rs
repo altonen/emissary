@@ -53,7 +53,7 @@ use super::{
     tls::TlsConfig,
 };
 
-use emissary_core::crypto::base64_encode;
+use emissary_core::{crypto::base64_encode, SamSessionObservationHandle};
 
 const LOG_TARGET: &str = "emissary::i2pcontrol::server";
 
@@ -141,6 +141,9 @@ pub struct I2pControlState {
     log_ring: Arc<super::observability::LogRing>,
     /// Passive client-service registry for ClientServicesInfo.
     service_registry: ServiceRegistry,
+
+    /// Canonical bounded SAM observation source, absent when SAM is disabled.
+    sam_session_observation: Option<SamSessionObservationHandle>,
 }
 
 impl I2pControlState {
@@ -149,7 +152,17 @@ impl I2pControlState {
     /// All adapter objects are constructed and loaded by the caller before
     /// this call. The state takes ownership of the `Arc` clones and never
     /// falls back to fake adapters.
+    #[allow(dead_code)]
     pub fn new_production(password: String, controls: ProductionControls) -> Self {
+        Self::new_production_with_sam_observation(password, controls, None)
+    }
+
+    /// Create production state with the canonical bounded SAM observation source.
+    pub fn new_production_with_sam_observation(
+        password: String,
+        controls: ProductionControls,
+        sam_session_observation: Option<SamSessionObservationHandle>,
+    ) -> Self {
         let log_ring = Arc::new(super::observability::LogRing::default());
         Self {
             token_service: TokenService::new(),
@@ -165,6 +178,7 @@ impl I2pControlState {
             startup_time: std::time::Instant::now(),
             log_ring,
             service_registry: controls.service_registry,
+            sam_session_observation,
         }
     }
 
@@ -193,6 +207,7 @@ impl I2pControlState {
             startup_time: std::time::Instant::now(),
             log_ring,
             service_registry: ServiceRegistry::new(),
+            sam_session_observation: Some(SamSessionObservationHandle::empty_for_test()),
         }
     }
 
@@ -221,6 +236,7 @@ impl I2pControlState {
             startup_time: std::time::Instant::now(),
             log_ring,
             service_registry: ServiceRegistry::new(),
+            sam_session_observation: Some(SamSessionObservationHandle::empty_for_test()),
         }
     }
 
@@ -283,6 +299,11 @@ impl I2pControlState {
     /// at request time rather than relying on a startup-only snapshot.
     pub fn tunnel_manager(&self) -> &dyn TunnelManagerControl {
         &*self.tunnel_manager
+    }
+
+    /// Get the canonical bounded SAM observation source, if SAM is enabled.
+    pub fn sam_session_observation(&self) -> Option<&SamSessionObservationHandle> {
+        self.sam_session_observation.as_ref()
     }
 
     /// Replace the address book control plane (for testing).
@@ -597,6 +618,10 @@ pub struct ServerInitContext {
     ///
     /// When `None`, a fresh default ring is created (suitable for tests).
     pub log_ring: Option<Arc<super::observability::LogRing>>,
+    /// Canonical bounded SAM observation source, supplied by the core router.
+    pub sam_session_observation: Option<SamSessionObservationHandle>,
+    /// Whether the core router actually bound the SAM listener.
+    pub sam_listener_enabled: bool,
 }
 
 impl ServerInitContext {
@@ -612,6 +637,8 @@ impl ServerInitContext {
             configured_bandwidth_out: 0,
             service_registry: None,
             log_ring: None,
+            sam_session_observation: None,
+            sam_listener_enabled: false,
         }
     }
 
@@ -651,6 +678,18 @@ impl ServerInitContext {
         self.log_ring = Some(ring);
         self
     }
+
+    /// Inject the canonical bounded SAM observation source.
+    pub fn with_sam_session_observation(mut self, handle: SamSessionObservationHandle) -> Self {
+        self.sam_session_observation = Some(handle);
+        self
+    }
+
+    /// Record whether the core router bound the SAM listener.
+    pub fn with_sam_listener_enabled(mut self, enabled: bool) -> Self {
+        self.sam_listener_enabled = enabled;
+        self
+    }
 }
 
 /// Initialize the I2PControl server: validate config, set up TLS, bind the port.
@@ -670,6 +709,12 @@ pub async fn init_server(
     ctx: ServerInitContext,
 ) -> Result<ServerInstance, I2pControlError> {
     config.validate()?;
+
+    if ctx.sam_listener_enabled && ctx.sam_session_observation.is_none() {
+        return Err(I2pControlError::Config(
+            "I2PControl requires the core SAM observation handle when SAM is enabled".into(),
+        ));
+    }
 
     // Build TLS config (validates cert/key material) and retain the acceptor
     let tls_config = super::tls::build_tls_config(&config.tls, base_path)?;
@@ -737,7 +782,7 @@ pub async fn init_server(
     let service_registry = ctx.service_registry.unwrap_or_default();
 
     // --- Construct production state with all required dependencies ---
-    let mut state = I2pControlState::new_production(
+    let mut state = I2pControlState::new_production_with_sam_observation(
         config.password.clone(),
         ProductionControls {
             address_books,
@@ -746,6 +791,7 @@ pub async fn init_server(
             control_plane,
             service_registry,
         },
+        ctx.sam_session_observation,
     );
     state.set_startup_values(ctx.router_id, router_info_bytes, router_info_b64);
 
@@ -1301,7 +1347,7 @@ mod tests {
         let ri: Arc<dyn RouterInfoControl> = Arc::new(FakeRouterInfoControl::new());
         let cp: Arc<dyn ControlPlane> = Arc::new(FakeControlPlane::new());
 
-        let state = I2pControlState::new_production(
+        let state = I2pControlState::new_production_with_sam_observation(
             "testpass".to_string(),
             ProductionControls {
                 address_books: ab,
@@ -1310,6 +1356,7 @@ mod tests {
                 control_plane: cp,
                 service_registry: ServiceRegistry::new(),
             },
+            Some(SamSessionObservationHandle::empty_for_test()),
         );
 
         assert_eq!(state.router_id(), "");
@@ -1413,7 +1460,7 @@ mod tests {
         let ri: Arc<dyn RouterInfoControl> = Arc::new(FakeRouterInfoControl::new());
         let cp: Arc<dyn ControlPlane> = Arc::new(FakeControlPlane::new());
 
-        let state = I2pControlState::new_production(
+        let state = I2pControlState::new_production_with_sam_observation(
             "testpass".to_string(),
             ProductionControls {
                 address_books: ab,
@@ -1422,6 +1469,7 @@ mod tests {
                 control_plane: cp,
                 service_registry: ServiceRegistry::new(),
             },
+            Some(SamSessionObservationHandle::empty_for_test()),
         );
 
         let _ = state.tunnel_list().await.unwrap();
@@ -1499,7 +1547,7 @@ mod tests {
         let ri: Arc<dyn RouterInfoControl> = Arc::new(FakeRouterInfoControl::new());
         let cp: Arc<dyn ControlPlane> = Arc::new(FakeControlPlane::new());
 
-        let state = I2pControlState::new_production(
+        let state = I2pControlState::new_production_with_sam_observation(
             "testpass".to_string(),
             ProductionControls {
                 address_books: ab,
@@ -1508,6 +1556,7 @@ mod tests {
                 control_plane: cp,
                 service_registry: ServiceRegistry::new(),
             },
+            Some(SamSessionObservationHandle::empty_for_test()),
         );
 
         let result = state.tunnel_list().await;
@@ -1600,7 +1649,7 @@ mod tests {
         let ri: Arc<dyn RouterInfoControl> = Arc::new(FakeRouterInfoControl::new());
         let cp: Arc<dyn ControlPlane> = Arc::new(FakeControlPlane::new());
 
-        let state = I2pControlState::new_production(
+        let state = I2pControlState::new_production_with_sam_observation(
             "testpass".to_string(),
             ProductionControls {
                 address_books: ab,
@@ -1609,6 +1658,7 @@ mod tests {
                 control_plane: cp,
                 service_registry: ServiceRegistry::new(),
             },
+            Some(SamSessionObservationHandle::empty_for_test()),
         );
 
         let result = state.address_book_list(AdministrativeAddressBookType::Private).await;

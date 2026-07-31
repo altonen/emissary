@@ -156,6 +156,9 @@ pub struct Router<R: Runtime> {
 
     /// Handle to [`TunnelManager`].
     _tunnel_manager_handle: TunnelManagerHandle,
+
+    /// Read-only SAM session observation handle for administrative consumers.
+    sam_session_observation: Option<crate::SamSessionObservationHandle>,
 }
 
 impl<R: Runtime> Router<R> {
@@ -395,6 +398,7 @@ impl<R: Runtime> Router<R> {
             R::spawn(i2cp_server);
         }
 
+        let mut sam_session_observation = None;
         if let Some(SamConfig {
             tcp_port,
             udp_port,
@@ -416,6 +420,7 @@ impl<R: Runtime> Router<R> {
 
             address_info.sam_tcp = sam_server.tcp_local_address();
             address_info.sam_udp = sam_server.udp_local_address();
+            sam_session_observation = Some(sam_server.observation_handle());
 
             R::spawn(sam_server)
         }
@@ -440,6 +445,7 @@ impl<R: Runtime> Router<R> {
                 shutdown_count: 0usize,
                 transport_manager: transport_manager_builder.build(),
                 _tunnel_manager_handle: tunnel_manager_handle,
+                sam_session_observation,
             },
             event_subscriber,
             serialized_router_info,
@@ -471,6 +477,11 @@ impl<R: Runtime> Router<R> {
     /// Get reference to [`ProtocolAddressInfo`].
     pub fn protocol_address_info(&self) -> &ProtocolAddressInfo {
         &self.address_info
+    }
+
+    /// Clone the read-only bounded SAM session observation handle, if SAM is enabled.
+    pub fn sam_session_observation_handle(&self) -> Option<crate::SamSessionObservationHandle> {
+        self.sam_session_observation.clone()
     }
 
     /// Get local router ID.

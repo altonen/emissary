@@ -1,6 +1,6 @@
 # RouterInfo Selector Source Map
 
-Status: M010 implemented (bounded core router inspection), M014 corrected (stale source removal)
+Status: M014 corrected and accepted by M017 (stale source removal and explicit unavailable paths)
 
 This document is the single source of truth for every Proposal 170 RouterInfo
 selector's wire key, output type, nullability, semantic definition, canonical

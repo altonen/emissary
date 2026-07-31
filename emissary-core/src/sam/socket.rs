@@ -27,12 +27,16 @@ use futures::Stream;
 use alloc::{collections::VecDeque, vec, vec::Vec};
 use core::{
     mem,
+    net::SocketAddr,
     pin::Pin,
+    sync::atomic::{AtomicU64, Ordering},
     task::{Context, Poll},
 };
 
 /// Logging target for the file.
 const LOG_TARGET: &str = "emissary::sam::socket";
+
+static NEXT_OBSERVATION_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Write state
 enum WriteState {
@@ -67,6 +71,12 @@ pub struct SamSocket<R: Runtime> {
     /// Read offset.
     read_offset: usize,
 
+    /// Stable identifier used by the bounded SAM observation source.
+    observation_id: u64,
+
+    /// TCP peer address, when accepted from a client.
+    peer: Option<SocketAddr>,
+
     /// TCP stream.
     stream: R::TcpStream,
 
@@ -76,14 +86,32 @@ pub struct SamSocket<R: Runtime> {
 
 impl<R: Runtime> SamSocket<R> {
     /// Create new [`SamSocket`] from an active TCP stream.
+    #[allow(dead_code)]
     pub fn new(stream: R::TcpStream) -> Self {
+        Self::new_with_peer(stream, None)
+    }
+
+    /// Create new [`SamSocket`] with its accepted TCP peer address.
+    pub fn new_with_peer(stream: R::TcpStream, peer: Option<SocketAddr>) -> Self {
         Self {
             pending_messages: VecDeque::new(),
             read_buffer: vec![0u8; 4096],
             read_offset: 0usize,
+            observation_id: NEXT_OBSERVATION_ID.fetch_add(1, Ordering::Relaxed),
+            peer,
             stream,
             write_state: WriteState::GetMessage,
         }
+    }
+
+    /// Return the stable observation identifier for this socket.
+    pub fn observation_id(&self) -> u64 {
+        self.observation_id
+    }
+
+    /// Return the accepted TCP peer address, when available.
+    pub fn peer_addr(&self) -> Option<SocketAddr> {
+        self.peer
     }
 
     /// Convert [`SamSocket`] into `TcpStream`.

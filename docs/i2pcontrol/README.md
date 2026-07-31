@@ -1,6 +1,6 @@
 # I2PControl for Emissary
 
-Status: Proposal 170 complete (M015 independently closed)
+Status: Proposal 170 workstream closed by M017 final-head reclosure
 
 This document describes the I2PControl HTTPS JSON-RPC service foundation in Emissary.
 
@@ -121,11 +121,11 @@ M002 provides the administrative infrastructure consumed by later milestones:
 
 See [administrative-state.md](administrative-state.md), [tunnel-backends.md](tunnel-backends.md), and [security.md](security.md) for details.
 
-Proposal 170 is fully implemented. All methods are operational:
+Proposal 170 implementation and final subsystem closure were accepted by M017:
 
 - `RouterInfo` selectors (M009/M010: truthful sources, bounded inspection)
 - `TunnelManager` operations (M004: CRUD + lifecycle for all 12 types)
-- `ClientServicesInfo` selectors (M011: live tunnel/listener/session state)
+- `ClientServicesInfo` selectors (M011/M016: live tunnel/listener/session state)
 - `AddressBook` operations (M003: four persistent stores)
 - Real TLS serving (M012: TlsAcceptor retained and consumed)
 - Production composition (M008: no fakes, fail-closed, shared state)

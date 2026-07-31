@@ -37,6 +37,7 @@ use core::{
     fmt,
     future::Future,
     mem,
+    net::SocketAddr,
     pin::Pin,
     task::{Context, Poll},
     time::Duration,
@@ -225,10 +226,21 @@ pub struct PendingSamConnection<R: Runtime> {
 
 impl<R: Runtime> PendingSamConnection<R> {
     /// Create new [`PendingSamConnection`].
+    #[allow(dead_code)]
     pub fn new(stream: R::TcpStream) -> Self {
         Self {
             state: PendingConnectionState::AwaitingHandshake {
                 socket: Box::new(SamSocket::new(stream)),
+            },
+            keep_alive_timer: R::timer(KEEP_ALIVE_TIMEOUT),
+        }
+    }
+
+    /// Create new [`PendingSamConnection`] retaining the accepted TCP peer.
+    pub fn new_with_peer(stream: R::TcpStream, peer: SocketAddr) -> Self {
+        Self {
+            state: PendingConnectionState::AwaitingHandshake {
+                socket: Box::new(SamSocket::new_with_peer(stream, Some(peer))),
             },
             keep_alive_timer: R::timer(KEEP_ALIVE_TIMEOUT),
         }

@@ -73,3 +73,11 @@ It may not expose mutable authority or sensitive session internals, add generic 
 - Only M017 may independently accept final closure at the actual final head.
 
 This record does not itself authorize closure. It identifies the exact remaining finding and the narrow implementation plan that must resolve it.
+
+## Final follow-up disposition
+
+The remaining SAM observation finding was resolved by M016 and accepted by the
+independent M017 final-head review in
+`plans/closure/i2pcontrol-proposal-170/017-closure.md`. This record remains the
+historical corrective disposition for the pre-M016 head; M017 is the current
+closure authority.

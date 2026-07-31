@@ -197,15 +197,13 @@ pub(crate) fn observe_i2cp_listener(registry: &ServiceRegistry, bound: Option<So
 /// bound listener addresses returned by the core router.
 ///
 /// The core `SamServer` exposes the bound TCP/UDP addresses after
-/// startup via `tcp_local_address()` and `udp_local_address()`. Session
-/// count is recorded as 0 because core does not yet expose a bounded
-/// session snapshot; this is documented in the closure record.
+/// startup via `tcp_local_address()` and `udp_local_address()`. Active
+/// session data is read from the separate bounded core observation handle.
 #[allow(dead_code)]
 pub(crate) fn observe_sam_listener(
     registry: &ServiceRegistry,
     tcp: Option<SocketAddr>,
     udp: Option<SocketAddr>,
-    session_count: usize,
 ) {
     let handle = registry.allocate_handle(ServiceCategory::Sam);
     let active = tcp.is_some();
@@ -213,7 +211,7 @@ pub(crate) fn observe_sam_listener(
         host: tcp.and_then(|a| sanitize_host(Some(a.ip().to_string()))),
         port: tcp.map(|a| a.port()),
         enabled: active,
-        session_count: Some(session_count),
+        session_count: None,
         tunnel_definitions: None,
     };
     if tcp.is_none() && udp.is_none() {
@@ -380,20 +378,20 @@ mod tests {
     }
 
     #[test]
-    fn observe_sam_listening_records_session_count() {
+    fn observe_sam_listening_does_not_claim_session_count() {
         let reg = ServiceRegistry::new();
         let tcp: SocketAddr = "127.0.0.1:7656".parse().unwrap();
-        observe_sam_listener(&reg, Some(tcp), None, 4);
+        observe_sam_listener(&reg, Some(tcp), None);
         let snap = reg.snapshot();
         let entry = snap.get(ServiceCategory::Sam).unwrap();
         assert_eq!(entry.state, ObservedServiceState::Listening);
-        assert_eq!(entry.metadata.session_count, Some(4));
+        assert_eq!(entry.metadata.session_count, None);
     }
 
     #[test]
     fn observe_sam_disabled_when_no_address() {
         let reg = ServiceRegistry::new();
-        observe_sam_listener(&reg, None, None, 0);
+        observe_sam_listener(&reg, None, None);
         let snap = reg.snapshot();
         let entry = snap.get(ServiceCategory::Sam).unwrap();
         assert_eq!(entry.state, ObservedServiceState::Disabled);
